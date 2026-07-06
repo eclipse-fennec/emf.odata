@@ -60,13 +60,14 @@ class AbnfAcceptanceTest {
 	private static final List<Pattern> UNSUPPORTED = List.of(
 			Pattern.compile("\\$(it|this|root)"),                      // $it/$this/$root instance refs
 			Pattern.compile("\\$count\\(|\\$filter\\("),             // filtered $count / inline $filter segments
-			Pattern.compile("@[A-Za-z]"),                            // parameter aliases
+			Pattern.compile("@\\w+\\."),                             // @Ns.Term annotation refs (plain @alias parses)
+			Pattern.compile("/@|@\\w+/"),                            // instance-annotation values in paths
 			Pattern.compile("-\\s*[A-Za-z_(]"),                      // unary minus on expressions
 			Pattern.compile("(?i)\\bgeo(graphy|metry)?\\s*'"),       // spatial literals
 			Pattern.compile("\\bbinary'"),                           // binary literals
 			Pattern.compile("[A-Za-z_][\\w.]*'[^']*,"),              // enum FLAG combinations (comma list)
 			Pattern.compile("[Nn][Aa][Nn]|INF"),                     // nanInfinity literals
-			Pattern.compile("\\bdiv\\s+by\\b|\\bdivby\\b"),          // 4.01 divby operator
+			Pattern.compile("\\bdiv\\s+by\\b"),                      // spaced "div by" (only divby is one keyword)
 			Pattern.compile("\\.[\\w.]*\\("),                        // namespace-qualified function calls
 			Pattern.compile("(^|/)[A-Za-z_]\\w*\\.[A-Za-z_][\\w.]*(/|$| )"), // type-cast path segments
 			Pattern.compile("\"|\\{|\\["),                           // JSON-ish / string-with-quote forms

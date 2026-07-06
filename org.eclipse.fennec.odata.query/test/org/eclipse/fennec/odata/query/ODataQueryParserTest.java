@@ -24,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EPackage;
@@ -153,6 +154,44 @@ class ODataQueryParserTest {
 		CollectionLiteralExp set = assertInstanceOf(CollectionLiteralExp.class, includes.getOwnedSource());
 		assertEquals(0, set.getOwnedParts().size());
 		assertInstanceOf(PropertyCallExp.class, includes.getOwnedArguments().get(0));
+	}
+
+	@Test
+	@DisplayName("parameter alias: @name expands to its expression (4.01 11.2.5.1.3)")
+	void parameterAlias() {
+		OperationCallExp eq = assertInstanceOf(OperationCallExp.class,
+				parser.parseFilter("name eq @wanted", productClass, Map.of("@wanted", "'Milk'")));
+		assertEquals("=", eq.getName());
+		assertEquals("Milk", assertInstanceOf(StringLiteralExp.class,
+				eq.getOwnedArguments().get(0)).getStringSymbol());
+	}
+
+	@Test
+	@DisplayName("parameter alias: values may reference aliases, cycles are capped")
+	void parameterAliasNestingAndCycles() {
+		OperationCallExp gt = assertInstanceOf(OperationCallExp.class, parser.parseFilter(
+				"price gt @limit", productClass, Map.of("@limit", "@base add 1", "@base", "2")));
+		assertEquals(">", gt.getName());
+		assertThrows(ODataQueryParseException.class, () -> parser.parseFilter(
+				"price gt @self", productClass, Map.of("@self", "@self")), "alias cycle");
+	}
+
+	@Test
+	@DisplayName("parameter alias: unresolved @name is a client error, not a property")
+	void parameterAliasUnresolved() {
+		assertThrows(ODataQueryParseException.class,
+				() -> parser.parseFilter("name eq @missing", productClass));
+		assertThrows(ODataQueryParseException.class,
+				() -> parser.parseFilter("name eq @missing", productClass, Map.of("@other", "1")));
+	}
+
+	@Test
+	@DisplayName("divby (4.01 decimal division) → OCL '/'")
+	void divby() {
+		OperationCallExp eq = assertInstanceOf(OperationCallExp.class,
+				parser.parseFilter("price divby 2 eq 5", productClass));
+		OperationCallExp division = assertInstanceOf(OperationCallExp.class, eq.getOwnedSource());
+		assertEquals("/", division.getName());
 	}
 
 	@Test

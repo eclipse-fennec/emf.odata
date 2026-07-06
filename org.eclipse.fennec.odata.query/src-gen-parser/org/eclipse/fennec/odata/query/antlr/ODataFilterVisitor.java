@@ -252,6 +252,13 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitMemberPrimary(ODataFilterParser.MemberPrimaryContext ctx);
 	/**
+	 * Visit a parse tree produced by the {@code AliasPrimary}
+	 * labeled alternative in {@link ODataFilterParser#primary}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitAliasPrimary(ODataFilterParser.AliasPrimaryContext ctx);
+	/**
 	 * Visit a parse tree produced by the {@code ParenPrimary}
 	 * labeled alternative in {@link ODataFilterParser#primary}.
 	 * @param ctx the parse tree

@@ -17,6 +17,7 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.TerminalNode;
@@ -65,8 +66,10 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	private static final Map<String, String> COMPARISON_OPS = Map.of(
 			"eq", "=", "ne", "<>", "gt", ">", "ge", ">=", "lt", "<", "le", "<=",
 			"has", "has");
+	// div and divby both map to OCL "/": divby IS decimal division (4.01 5.1.1.2), and the
+	// current div mapping deliberately skips integer truncation (documented simplification)
 	private static final Map<String, String> ARITHMETIC_OPS = Map.of(
-			"add", "+", "sub", "-", "mul", "*", "div", "/", "mod", "mod");
+			"add", "+", "sub", "-", "mul", "*", "div", "/", "divby", "/", "mod", "mod");
 	/** OData canonical function → OCL(-stdlib or custom) operation name. */
 	private static final Map<String, String> FUNCTIONS = Map.ofEntries(
 			Map.entry("contains", "contains"),
@@ -96,6 +99,10 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	private final Deque<LambdaScope> scopes = new ArrayDeque<>();
 	/** Aliases introduced by $apply aggregate/compute stages — referable in later stages. */
 	private final Map<String, Variable> aliases = new HashMap<>();
+	/** Resolves a {@code @name} parameter alias to its expression (4.01 11.2.5.1.3). */
+	private Function<String, OclExpression> parameterAliasResolver = name -> {
+		throw new ODataQueryParseException("unresolved parameter alias '" + name + "'");
+	};
 
 	private record LambdaScope(String name, Variable variable, EClass elementClass) {
 	}
@@ -109,6 +116,11 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		Variable variable = FACTORY.createVariable();
 		variable.setName(alias);
 		aliases.put(alias, variable);
+	}
+
+	/** Installs the {@code @name} lookup — without one, any alias reference is an error. */
+	void parameterAliasResolver(Function<String, OclExpression> resolver) {
+		this.parameterAliasResolver = resolver;
 	}
 
 	// --- structure ---
@@ -178,6 +190,11 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	@Override
 	public OclExpression visitMulDivMod(ODataFilterParser.MulDivModContext ctx) {
 		return binary(ARITHMETIC_OPS.get(ctx.op.getText().toLowerCase()), visit(ctx.multiplicative()), visit(ctx.primary()));
+	}
+
+	@Override
+	public OclExpression visitAliasPrimary(ODataFilterParser.AliasPrimaryContext ctx) {
+		return parameterAliasResolver.apply(ctx.ALIAS().getText());
 	}
 
 	@Override

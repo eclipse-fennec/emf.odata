@@ -17,9 +17,9 @@
  * ODataToOclBuilder maps onto the m2x OCL AST (the internal predicate IR, req §3.5).
  *
  * v1 subset of the OASIS ABNF: logical (and/or/not), comparison (eq/ne/gt/ge/lt/le),
- * in-list, has, arithmetic (add/sub/mul/div/mod), grouping, member paths, function calls,
- * primitive literals (string/int/decimal/boolean/null). Lambdas (any/all), cast/isof and
- * date/guid literals follow (tracked in the E4 backlog).
+ * in-list, has, arithmetic (add/sub/mul/div/divby/mod), grouping, member paths, function
+ * calls, parameter aliases (@name), primitive literals (string/int/decimal/boolean/null).
+ * Lambdas (any/all), cast/isof and date/guid literals follow (tracked in the E4 backlog).
  */
 grammar ODataFilter;
 
@@ -73,14 +73,15 @@ comparison
 additive : additive op=(ADD | SUB) multiplicative   # AddSub
          | multiplicative                           # ToMultiplicative
          ;
-multiplicative : multiplicative op=(MUL | DIV | MOD) primary  # MulDivMod
-               | primary                                      # ToPrimary
+multiplicative : multiplicative op=(MUL | DIV | DIVBY | MOD) primary  # MulDivMod
+               | primary                                              # ToPrimary
                ;
 
 primary : literal                 # LiteralPrimary
         | typeFunc                # TypeFuncPrimary
         | functionCall            # FunctionPrimary
         | memberPath              # MemberPrimary
+        | ALIAS                   # AliasPrimary
         | LPAREN expr RPAREN      # ParenPrimary
         ;
 
@@ -125,6 +126,7 @@ IN   : I N ;
 ADD  : A D D ;
 SUB  : S U B ;
 MUL  : M U L ;
+DIVBY : D I V B Y ;
 DIV  : D I V ;
 MOD  : M O D ;
 ASC  : A S C ;
@@ -162,6 +164,8 @@ STRING  : '\'' ( ~'\'' | '\'\'' )* '\'' ;
 DECIMAL : '-'? [0-9]+ '.' [0-9]+ ;
 INT     : '-'? [0-9]+ ;
 IDENT   : [a-zA-Z_] [a-zA-Z0-9_]* ;
+// parameter alias (4.01 11.2.5.1.3): plain @name — @Ns.Term annotation refs stay unsupported
+ALIAS   : '@' [a-zA-Z_] [a-zA-Z0-9_]* ;
 
 fragment HEX : [0-9a-fA-F] ;
 fragment DATEPART : [0-9] [0-9] [0-9] [0-9] '-' [0-9] [0-9] '-' [0-9] [0-9] ;
@@ -186,5 +190,6 @@ fragment S : [sS] ;
 fragment T : [tT] ;
 fragment U : [uU] ;
 fragment V : [vV] ;
+fragment Y : [yY] ;
 
 WS : [ \t\r\n]+ -> skip ;

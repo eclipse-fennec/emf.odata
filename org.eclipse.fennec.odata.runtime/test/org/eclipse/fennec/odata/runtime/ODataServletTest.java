@@ -137,11 +137,17 @@ class ODataServletTest {
 
 	private Response call(String method, String path, Map<String, String> parameters, String accept,
 			String maxVersion) throws Exception {
+		return call(method, path, parameters, accept, maxVersion, Map.of());
+	}
+
+	private Response call(String method, String path, Map<String, String> parameters, String accept,
+			String maxVersion, Map<String, String> requestHeaders) throws Exception {
 		HttpServletRequest request = mock(HttpServletRequest.class);
 		when(request.getMethod()).thenReturn(method);
 		when(request.getPathInfo()).thenReturn(path);
 		when(request.getHeader("Accept")).thenReturn(accept);
 		when(request.getHeader("OData-MaxVersion")).thenReturn(maxVersion);
+		requestHeaders.forEach((name, value) -> when(request.getHeader(name)).thenReturn(value));
 		when(request.getRequestURI()).thenReturn("/odata" + path);
 		when(request.getParameterNames())
 				.thenAnswer(i -> java.util.Collections.enumeration(parameters.keySet()));
@@ -211,6 +217,14 @@ class ODataServletTest {
 				"the served protocol versions are announced on the container (13.1.2)");
 		assertTrue(metadata.body().indexOf("edmx:Reference") < metadata.body().indexOf("DataServices"),
 				"the Core vocabulary reference precedes DataServices");
+		assertTrue(metadata.body().contains("Org.OData.Capabilities.V1.ConformanceLevel")
+				&& metadata.body().contains("ConformanceLevelType/Minimal"),
+				"the conformance level is advertised (12 / 13.2.1 SHOULD)");
+		assertTrue(metadata.body().contains("Org.OData.Capabilities.V1.BatchSupported")
+				&& metadata.body().contains("Org.OData.Capabilities.V1.AsynchronousRequestsSupported"),
+				"unsupported capabilities are announced as false");
+		assertTrue(metadata.body().contains("Org.OData.Capabilities.V1.xml"),
+				"the Capabilities vocabulary reference resolves the terms");
 	}
 
 	@Test
@@ -436,6 +450,51 @@ class ODataServletTest {
 				"custom query options (no $, no option name) are ignored (11.2.12)");
 		assertEquals(501, get("/Product", Map.of("SEARCH", "milk")).status(),
 				"the whitelist normalizes too: SEARCH = $search → 501");
+	}
+
+	@Test
+	@DisplayName("4.01: @parameter aliases feed $filter; unresolved aliases are client errors")
+	void parameterAliases() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response aliased = get("/Product", Map.of("$filter", "name eq @wanted", "@wanted", "'Milk'"));
+		assertEquals(200, aliased.status(), aliased.body());
+		assertEquals("=", ((OperationCallExp) lastQuery.get().filter()).getName(),
+				"the alias value was expanded into the expression");
+
+		Response unresolved = get("/Product", Map.of("$filter", "name eq @missing"));
+		assertEquals(400, unresolved.status());
+		assertTrue(unresolved.body().contains("unresolved parameter alias"), unresolved.body());
+
+		Response hostileValue = get("/Product",
+				Map.of("$filter", "name eq @a", "@a", "((((((((((((((((((((1"));
+		assertEquals(400, hostileValue.status(), "alias values pass the pre-parse limits");
+	}
+
+	@Test
+	@DisplayName("4.01: Prefer maxpagesize (with and without odata. prefix) caps the page")
+	void preferMaxPageSize() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null),
+				product("p2", "Cheese", "4.50", null), product("p3", "Bread", "2.80", null));
+
+		Response paged = call("GET", "/Product", Map.of(), null, null,
+				Map.of("Prefer", "odata.maxpagesize=2"));
+		assertEquals(200, paged.status(), paged.body());
+		assertFalse(paged.body().contains("\"Bread\""), "page capped at 2: " + paged.body());
+		assertTrue(paged.body().contains("@odata.nextLink"), paged.body());
+		assertEquals("odata.maxpagesize=2", paged.headers().get("Preference-Applied"),
+				"the applied preference is echoed (8.2.8.7)");
+
+		Response prefixless = call("GET", "/Product", Map.of(), null, null,
+				Map.of("Prefer", "respond-async, maxpagesize=2"));
+		assertEquals(200, prefixless.status());
+		assertFalse(prefixless.body().contains("\"Bread\""),
+				"prefix-less preference name works too (13.2.1/4)");
+
+		Response unaffected = call("GET", "/Product", Map.of(), null, null,
+				Map.of("Prefer", "odata.maxpagesize=broken"));
+		assertEquals(200, unaffected.status(), "malformed preference values are hints — ignored");
+		assertTrue(unaffected.body().contains("\"Bread\""));
 	}
 
 	@Test

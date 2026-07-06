@@ -168,6 +168,9 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		for (String name : request.getParameterMap().keySet()) {
+			if (name.startsWith("@")) { // parameter alias value (11.2.5.1.3), consumed at parse time
+				continue;
+			}
 			String normalized = normalizeOption(name);
 			if (SUPPORTED_OPTIONS.contains(normalized)) {
 				continue;
@@ -236,15 +239,11 @@ public class ODataServlet extends HttpServlet {
 		EdmxRoot root = EdmxFactory.eINSTANCE.createEdmxRoot();
 		TEdmx edmx = EdmxFactory.eINSTANCE.createTEdmx();
 		edmx.setVersion(TVersion._40);
-		// the served protocol versions (Core.ODataVersions, 13.1.2 SHOULD) need the Core
-		// vocabulary reference — it must precede DataServices in the edmx element sequence
-		TInclude coreInclude = EdmxFactory.eINSTANCE.createTInclude();
-		coreInclude.setNamespace("Org.OData.Core.V1");
-		coreInclude.setAlias("Core");
-		TReference coreReference = EdmxFactory.eINSTANCE.createTReference();
-		coreReference.setUri("https://oasis-tcs.github.io/odata-vocabularies/vocabularies/Org.OData.Core.V1.xml");
-		coreReference.getInclude().add(coreInclude);
-		edmx.getReference().add(coreReference);
+		// the served protocol versions (Core.ODataVersions, 13.1.2 SHOULD) and the capability
+		// self-description (Capabilities, 13.2.1/13 SHOULD) need their vocabulary references —
+		// they must precede DataServices in the edmx element sequence
+		edmx.getReference().add(vocabularyReference("Org.OData.Core.V1", "Core"));
+		edmx.getReference().add(vocabularyReference("Org.OData.Capabilities.V1", "Capabilities"));
 		TDataServices dataServices = EdmxFactory.eINSTANCE.createTDataServices();
 		for (EPackage pkg : packages) { // one Schema per registered package (req §3.3 composition)
 			SchemaType schema = converter.toSchema(pkg);
@@ -253,6 +252,17 @@ public class ODataServlet extends HttpServlet {
 				versions.setTerm("Org.OData.Core.V1.ODataVersions");
 				versions.setString1("4.0 4.01");
 				container.getAnnotation().add(versions);
+				// what this v1 read-only service can and cannot do (12/13.2.1 advertisement)
+				AnnotationType conformance = EdmFactory.eINSTANCE.createAnnotationType();
+				conformance.setTerm("Org.OData.Capabilities.V1.ConformanceLevel");
+				conformance.setEnumMember1(List.of("Org.OData.Capabilities.V1.ConformanceLevelType/Minimal"));
+				container.getAnnotation().add(conformance);
+				container.getAnnotation().add(
+						boolCapability("Org.OData.Capabilities.V1.BatchSupported", false));
+				container.getAnnotation().add(
+						boolCapability("Org.OData.Capabilities.V1.AsynchronousRequestsSupported", false));
+				container.getAnnotation().add(
+						boolCapability("Org.OData.Capabilities.V1.KeyAsSegmentSupported", false));
 			}
 			dataServices.getSchema().add(schema);
 		}
@@ -273,6 +283,24 @@ public class ODataServlet extends HttpServlet {
 
 		response.setContentType("application/xml;charset=UTF-8");
 		response.getWriter().write(out.toString(StandardCharsets.UTF_8));
+	}
+
+	/** {@code edmx:Reference} to an OASIS vocabulary, so its terms are resolvable for clients. */
+	private static TReference vocabularyReference(String namespace, String alias) {
+		TInclude include = EdmxFactory.eINSTANCE.createTInclude();
+		include.setNamespace(namespace);
+		include.setAlias(alias);
+		TReference reference = EdmxFactory.eINSTANCE.createTReference();
+		reference.setUri("https://oasis-tcs.github.io/odata-vocabularies/vocabularies/" + namespace + ".xml");
+		reference.getInclude().add(include);
+		return reference;
+	}
+
+	private static AnnotationType boolCapability(String term, boolean value) {
+		AnnotationType annotation = EdmFactory.eINSTANCE.createAnnotationType();
+		annotation.setTerm(term);
+		annotation.setBool1(value);
+		return annotation;
 	}
 
 	private record Target(EClass entityType, QueryService queryService) {
@@ -306,15 +334,18 @@ public class ODataServlet extends HttpServlet {
 		boolean xml = wantsXml(request);
 		Set<String> select = selectOption(request, target.entityType());
 		Set<String> expand = expandOption(request, target.entityType());
+		Map<String, String> aliases = parameterAliases(request);
 
 		List<OrderBySegment> orderBy = parseChecked(option(request, "$orderby"),
-				value -> parser.parseOrderBy(value, target.entityType()));
+				value -> aliases.isEmpty() ? parser.parseOrderBy(value, target.entityType())
+						: parser.parseOrderBy(value, target.entityType(), aliases));
 		int skip = limits.effectiveSkip(option(request, "$skip"));
-		int top = limits.effectiveTop(option(request, "$top"));
+		int top = pageSize(request, response, limits.effectiveTop(option(request, "$top")));
 		// peek one row beyond the page: partial results MUST carry @odata.nextLink (13.1.1/3)
 		EntityQuery query = new EntityQuery(target.entityType(),
 				parseChecked(option(request, "$filter"),
-						filter -> parser.parseFilter(filter, target.entityType())),
+						filter -> aliases.isEmpty() ? parser.parseFilter(filter, target.entityType())
+								: parser.parseFilter(filter, target.entityType(), aliases)),
 				orderBy == null ? List.of() : orderBy,
 				skip, top + 1,
 				"true".equals(option(request, "$count")));
@@ -654,14 +685,15 @@ public class ODataServlet extends HttpServlet {
 		}
 		ApplyPipeline pipeline = parseChecked(option(request, "$apply"),
 				value -> parser.parseApply(value, target.entityType()));
+		Map<String, String> aliases = parameterAliases(request);
 		// $filter/$orderby run AFTER the pipeline (OASIS) — the pipeline aliases are in scope
 		List<OrderBySegment> orderBy = parseChecked(option(request, "$orderby"),
-				value -> parser.parseOrderByAfterApply(value, target.entityType(), pipeline));
+				value -> parser.parseOrderByAfterApply(value, target.entityType(), pipeline, aliases));
 		int skip = limits.effectiveSkip(option(request, "$skip"));
-		int top = limits.effectiveTop(option(request, "$top"));
+		int top = pageSize(request, response, limits.effectiveTop(option(request, "$top")));
 		ApplyQuery query = new ApplyQuery(target.entityType(), pipeline,
 				parseChecked(option(request, "$filter"),
-						value -> parser.parseFilterAfterApply(value, target.entityType(), pipeline)),
+						value -> parser.parseFilterAfterApply(value, target.entityType(), pipeline, aliases)),
 				orderBy == null ? List.of() : orderBy,
 				skip, top + 1, // peek: partial results MUST carry @odata.nextLink
 				"true".equals(option(request, "$count")));
@@ -721,6 +753,50 @@ public class ODataServlet extends HttpServlet {
 	private static String normalizeOption(String name) {
 		String normalized = name.toLowerCase(java.util.Locale.ROOT);
 		return normalized.startsWith("$") ? normalized : "$" + normalized;
+	}
+
+	/**
+	 * 4.01 parameter aliases (11.2.5.1.3): every {@code @name} query parameter, keyed as sent.
+	 * Values are expression texts and get parsed on use — so they pass the SAME pre-parse
+	 * limits as {@code $filter} itself (hostile-input guard).
+	 */
+	private Map<String, String> parameterAliases(HttpServletRequest request) {
+		Map<String, String> aliases = new HashMap<>();
+		for (Map.Entry<String, String[]> parameter : request.getParameterMap().entrySet()) {
+			if (parameter.getKey().startsWith("@") && parameter.getValue().length > 0) {
+				limits.checkExpression(parameter.getValue()[0]);
+				aliases.put(parameter.getKey(), parameter.getValue()[0]);
+			}
+		}
+		return aliases;
+	}
+
+	/**
+	 * Applies {@code Prefer: odata.maxpagesize} (4.01 8.2.8.7, prefix optional per 13.2.1/4):
+	 * caps the page below the {@code $top}/ceiling value and echoes {@code Preference-Applied}.
+	 */
+	private static int pageSize(HttpServletRequest request, HttpServletResponse response, int top) {
+		String prefer = request.getHeader("Prefer");
+		if (prefer == null) {
+			return top;
+		}
+		for (String preference : prefer.split(",")) {
+			String[] nameValue = preference.trim().split("=", 2);
+			String name = nameValue[0].trim().toLowerCase(java.util.Locale.ROOT);
+			if (!"odata.maxpagesize".equals(name) && !"maxpagesize".equals(name)) {
+				continue;
+			}
+			try {
+				int maxPageSize = Integer.parseInt(nameValue.length > 1 ? nameValue[1].trim() : "");
+				if (maxPageSize > 0 && maxPageSize < top) {
+					response.setHeader("Preference-Applied", "odata.maxpagesize=" + maxPageSize);
+					return maxPageSize;
+				}
+			} catch (NumberFormatException e) {
+				// preferences are hints — a malformed value is ignored, not an error
+			}
+		}
+		return top;
 	}
 
 	private <T> T parseChecked(String expression, java.util.function.Function<String, T> parse) {

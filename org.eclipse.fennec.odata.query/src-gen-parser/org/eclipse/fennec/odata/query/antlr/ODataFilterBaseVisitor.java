@@ -270,6 +270,13 @@ public class ODataFilterBaseVisitor<T> extends AbstractParseTreeVisitor<T> imple
 	 * <p>The default implementation returns the result of calling
 	 * {@link #visitChildren} on {@code ctx}.</p>
 	 */
+	@Override public T visitAliasPrimary(ODataFilterParser.AliasPrimaryContext ctx) { return visitChildren(ctx); }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation returns the result of calling
+	 * {@link #visitChildren} on {@code ctx}.</p>
+	 */
 	@Override public T visitParenPrimary(ODataFilterParser.ParenPrimaryContext ctx) { return visitChildren(ctx); }
 	/**
 	 * {@inheritDoc}
