@@ -47,6 +47,13 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitKeyLiteral(ODataFilterParser.KeyLiteralContext ctx);
 	/**
+	 * Visit a parse tree produced by the {@code CastSegment}
+	 * labeled alternative in {@link ODataFilterParser#resourceSegment}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitCastSegment(ODataFilterParser.CastSegmentContext ctx);
+	/**
 	 * Visit a parse tree produced by the {@code PropertySegment}
 	 * labeled alternative in {@link ODataFilterParser#resourceSegment}.
 	 * @param ctx the parse tree
@@ -74,6 +81,12 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 * @return the visitor result
 	 */
 	T visitRefSegment(ODataFilterParser.RefSegmentContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#castName}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitCastName(ODataFilterParser.CastNameContext ctx);
 	/**
 	 * Visit a parse tree produced by {@link ODataFilterParser#apply}.
 	 * @param ctx the parse tree

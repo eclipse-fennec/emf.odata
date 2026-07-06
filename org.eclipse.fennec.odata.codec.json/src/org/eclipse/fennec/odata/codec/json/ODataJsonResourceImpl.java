@@ -59,9 +59,10 @@ import org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile;
  *
  * <p>Deliberate v1 gaps (follow-ups): {@code @odata.context} emission and the
  * {@code metadata=minimal/full/none} profile variants belong to the server runtime (E6);
- * the single-field {@code "#Namespace.Type"} discriminator form for {@code @odata.type}
- * needs the codec's type-mapping registry; entity-URL-shaped {@code @odata.id} values need
- * the service root, which only the runtime knows.
+ * entity-URL-shaped {@code @odata.id} values need the service root, which only the runtime
+ * knows. The {@code "#Namespace.Type"} WRITE form for derived instances is available via
+ * {@link #typeDiscriminator(EObject)} (the runtime decides against the declared type);
+ * READING {@code #Ns.Type}-discriminated payloads is an E8 client work package.
  */
 public class ODataJsonResourceImpl extends CodecResource {
 
@@ -198,6 +199,18 @@ public class ODataJsonResourceImpl extends CodecResource {
 		if (!instances.isEmpty()) {
 			options.put(key, instances);
 		}
+	}
+
+	/**
+	 * The single-field {@code "#Namespace.Type"} discriminator ([OData-JSON] 4.5.8): required
+	 * in minimal-metadata payloads when the instance type DERIVES from the type the context
+	 * URL declares — then the type is not computable and must travel with the entity. The
+	 * namespace is the schema namespace of the instance's package profile (same source as
+	 * {@code $metadata}).
+	 */
+	public String typeDiscriminator(EObject object) {
+		ODataPackageProfile profile = odataProfile(object.eClass().getEPackage());
+		return "#" + profile.getNamespace() + "." + object.eClass().getName();
 	}
 
 	/** E1 profile via MetadataService when present, else a locally cached resolver run. */

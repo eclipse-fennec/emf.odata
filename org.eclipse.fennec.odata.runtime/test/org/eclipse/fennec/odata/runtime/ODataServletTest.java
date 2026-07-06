@@ -98,7 +98,9 @@ class ODataServletTest {
 				if (backendFailure.get() != null) {
 					throw backendFailure.get();
 				}
-				return new QueryResult(backendResult, query.count() ? backendResult.size() : -1);
+				List<EObject> entities = query.castType() == null ? backendResult
+						: backendResult.stream().filter(query.castType()::isInstance).toList();
+				return new QueryResult(entities, query.count() ? entities.size() : -1);
 			}
 
 			@Override
@@ -469,6 +471,51 @@ class ODataServletTest {
 		Response hostileValue = get("/Product",
 				Map.of("$filter", "name eq @a", "@a", "((((((((((((((((((((1"));
 		assertEquals(400, hostileValue.status(), "alias values pass the pre-parse limits");
+	}
+
+	@Test
+	@DisplayName("derived types ([OData-URL] 4.11): set cast filters + re-types the options, "
+			+ "keyed cast checks the instance, minimal metadata carries #Ns.Type")
+	void derivedTypeCasts() throws Exception {
+		EClass discounted = EcoreHelper.getEClass(pkg, "DiscountedProduct");
+		EObject sale = pkg.getEFactoryInstance().create(discounted);
+		sale.eSet(discounted.getEStructuralFeature("id"), "d1");
+		sale.eSet(discounted.getEStructuralFeature("name"), "SaleMilk");
+		sale.eSet(discounted.getEStructuralFeature("discount"), 20);
+		EObject milk = product("p1", "Milk", "1.20", null);
+		backendResult = List.of(milk, sale);
+
+		// set-level cast: only derived instances; the DERIVED type is the option context
+		Response cast = get("/Product/webshop.DiscountedProduct", Map.of("$filter", "discount gt 10"));
+		assertEquals(200, cast.status(), cast.body());
+		assertTrue(cast.body().contains("SaleMilk"), cast.body());
+		assertFalse(cast.body().contains("\"Milk\""), "base instances filtered out: " + cast.body());
+		assertTrue(cast.body().contains("$metadata#Product/webshop.DiscountedProduct"),
+				"context URL names the cast: " + cast.body());
+		assertEquals(discounted, lastQuery.get().castType(), "cast reaches the backend as IR");
+		assertEquals(400, get("/Product", Map.of("$filter", "discount gt 10")).status(),
+				"derived property is NOT addressable without the cast");
+
+		// un-cast payload: the derived instance must carry the #Ns.Type discriminator
+		Response plain = get("/Product", Map.of());
+		assertTrue(plain.body().contains("\"@odata.type\":\"#webshop.DiscountedProduct\""),
+				plain.body());
+		assertFalse(plain.body().contains("\"@odata.type\":\"#webshop.Product\""),
+				"non-derived instances stay discriminator-free (minimal metadata)");
+
+		// keyed cast: instance of the type → entity (no discriminator, type is in the context)
+		backendResult = List.of(sale);
+		Response keyed = get("/Product/webshop.DiscountedProduct('d1')", Map.of());
+		assertEquals(200, keyed.status(), keyed.body());
+		assertTrue(keyed.body().contains("#Product/webshop.DiscountedProduct/$entity"), keyed.body());
+		assertFalse(keyed.body().contains("@odata.type"), keyed.body());
+
+		// keyed cast on a base instance → 404; unknown/unrelated type → 404
+		backendResult = List.of(milk);
+		assertEquals(404, get("/Product/webshop.DiscountedProduct('p1')", Map.of()).status());
+		assertEquals(404, get("/Product/webshop.NoSuchType", Map.of()).status());
+		assertEquals(404, get("/Product/webshop.Category", Map.of()).status(),
+				"cast to a non-derived type identifies nothing");
 	}
 
 	@Test

@@ -104,6 +104,9 @@ public class InMemoryQueryService implements QueryService {
 				continue;
 			}
 			for (EObject entity : repository.entities(query.entityType())) {
+				if (query.castType() != null && !query.castType().isInstance(entity)) {
+					continue; // URL type cast: only instances of the derived type ([OData-URL] 4.11)
+				}
 				if (query.filter() == null || evaluator.matchesNullSafe(query.filter(), entity)) {
 					matches.add(entity);
 				}

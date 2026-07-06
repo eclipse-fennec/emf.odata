@@ -38,6 +38,14 @@ public record ResourcePath(String entitySet, String key, List<Segment> segments)
 	public record PropertySegment(String name, String key) implements Segment {
 	}
 
+	/**
+	 * A derived-type cast segment ({@code /Ns.SpecialProduct}, [OData-URL] 4.11), optionally
+	 * keyed ({@code /Ns.SpecialProduct(1)}); the qualified name stays raw — resolution against
+	 * the model is the caller's job.
+	 */
+	public record TypeCastSegment(String qualifiedName, String key) implements Segment {
+	}
+
 	/** Terminal {@code /$count} on a collection. */
 	public record CountSegment() implements Segment {
 	}

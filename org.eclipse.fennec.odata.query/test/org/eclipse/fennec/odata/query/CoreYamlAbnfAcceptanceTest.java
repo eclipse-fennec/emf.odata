@@ -71,9 +71,9 @@ class CoreYamlAbnfAcceptanceTest {
 			Pattern.compile("%[0-9A-Fa-f]{2}"),                      // percent-encoding = URL layer (URI parser)
 			Pattern.compile("/(?!any\\(|all\\()[A-Za-z_]\\w*\\("));  // bound/composed functions in paths (not lambdas)
 
-	/** v1 resource-path subset gaps (ADR-0005 backlog): casts, functions, multi-part keys, ... */
+	/** v1 resource-path subset gaps (ADR-0005 backlog): functions, multi-part keys, ... */
 	private static final List<Pattern> UNSUPPORTED_PATHS = List.of(
-			Pattern.compile("\\."),                    // type-cast segments / qualified functions
+			Pattern.compile("\\.[\\w.]*\\("),          // qualified function/action calls (casts parse)
 			Pattern.compile("\\(\\s*\\w+\\s*="),       // named/multi-part key predicates (ID=1)
 			Pattern.compile("\\([^)]*,"),              // multi-part keys / function parameters
 			Pattern.compile("\\(\\s*\\)"),             // parameterless function/action call segments
@@ -81,7 +81,7 @@ class CoreYamlAbnfAcceptanceTest {
 			Pattern.compile("\\$(all|crossjoin|entity|metadata|batch|root|filter|each|query)"),
 			Pattern.compile("'[^']*/"),                // slash inside string key (URL-decoding layer)
 			Pattern.compile("%[0-9A-Fa-f]{2}"),        // percent-encoding = URL-decoding layer
-			Pattern.compile("/\\d"),                   // Key-as-Segment convention (4.01 MAY)
+			Pattern.compile("/-?\\d"),                 // Key-as-Segment / ordered-collection index
 			Pattern.compile("/[^/()]*'"),              // Key-as-Segment with string key
 			Pattern.compile("=|\\{"));                 // parameter assignments / JSON in path
 

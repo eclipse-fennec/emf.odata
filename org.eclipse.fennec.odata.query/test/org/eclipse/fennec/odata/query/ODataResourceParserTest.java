@@ -60,6 +60,24 @@ class ODataResourceParserTest {
 	}
 
 	@Test
+	@DisplayName("derived-type cast segments: set cast, keyed cast, cast in navigation")
+	void typeCasts() {
+		ResourcePath setCast = parser.parse("Product/webshop.DiscountedProduct");
+		ResourcePath.TypeCastSegment cast =
+				(ResourcePath.TypeCastSegment) setCast.segments().get(0);
+		assertEquals("webshop.DiscountedProduct", cast.qualifiedName());
+		assertNull(cast.key());
+
+		ResourcePath keyedCast = parser.parse("Product/webshop.DiscountedProduct('d1')");
+		assertEquals("'d1'",
+				((ResourcePath.TypeCastSegment) keyedCast.segments().get(0)).key());
+
+		ResourcePath navCast = parser.parse("Category('c1')/products/shop.Special/$count");
+		assertEquals("shop.Special",
+				((ResourcePath.TypeCastSegment) navCast.segments().get(1)).qualifiedName());
+	}
+
+	@Test
 	@DisplayName("destructive: malformed paths, segment bombs, traversal shapes")
 	void destructive() {
 		for (String bad : new String[] {
@@ -68,7 +86,9 @@ class ODataResourceParserTest {
 				"Product?",
 				// $count/$value/$ref are terminal (OASIS ABNF; TC cases 4.4/4.7/4.8)
 				"Product/$count/name", "Product('p1')/name/$value/foo",
-				"Product('p1')/reviews/$ref/$count" }) {
+				"Product('p1')/reviews/$ref/$count",
+				// at most ONE cast per navigation step (OASIS ABNF; TC case 4.11)
+				"Product(1)/a.B/a.B", "Product/ns.T1/ns.T2" }) {
 			assertThrows(ODataQueryParseException.class, () -> parser.parse(bad), bad);
 		}
 		String bomb = "Product" + "/a".repeat(ODataResourceParser.MAX_SEGMENTS + 1);

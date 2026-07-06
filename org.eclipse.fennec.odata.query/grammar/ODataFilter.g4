@@ -28,15 +28,18 @@ orderby : orderbyItem (COMMA orderbyItem)* EOF ;
 orderbyItem : expr direction=(ASC | DESC)? ;
 
 // resource paths (ADR-0005, own URI parser — no Olingo): Set | Set(key) | …/nav(key)/prop
-// with terminal $count/$value/$ref segments; key literals reuse the expression tokens
+// with terminal $count/$value/$ref segments and derived-type casts (/Ns.Type, [OData-URL]
+// 4.11); key literals reuse the expression tokens
 resource : IDENT keyPredicate? (SLASH resourceSegment)* EOF ;
 keyPredicate : LPAREN keyLiteral RPAREN ;
 keyLiteral : STRING | INT | DECIMAL | GUID | DATETIMEOFFSET | DATE | TIMEOFDAY ;
-resourceSegment : IDENT keyPredicate?   # PropertySegment
-                | COUNT                 # CountSegment
-                | VALUE                 # ValueSegment
-                | REF                   # RefSegment
+resourceSegment : castName keyPredicate?  # CastSegment
+                | IDENT keyPredicate?     # PropertySegment
+                | COUNT                   # CountSegment
+                | VALUE                   # ValueSegment
+                | REF                     # RefSegment
                 ;
+castName : IDENT (DOT IDENT)+ ;
 
 // $apply pipeline (E4-AP-4): slash-separated transformations; the transformation names are
 // soft keywords (validated in the builder), disambiguated by their argument shapes

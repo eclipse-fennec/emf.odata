@@ -48,6 +48,8 @@ import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.model.metadata.api.MetadataService;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
+import org.eclipse.fennec.odata.csdl.OdataResolver;
+import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
@@ -116,6 +118,9 @@ public class ODataServlet extends HttpServlet {
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	private final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	private final CachingODataQueryParser parser = new CachingODataQueryParser();
+	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
+	private final Map<EPackage, ODataPackageProfile> profiles =
+			java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 	private final EntityShaper shaper = new EntityShaper();
 
 	private volatile MetadataService metadataService;
@@ -321,31 +326,37 @@ public class ODataServlet extends HttpServlet {
 		return new Target(entityType, queryService);
 	}
 
-	private void entitySet(String setName, HttpServletRequest request, HttpServletResponse response)
-			throws IOException {
+	private void entitySet(String setName, String castName, EClass castType,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
 		Target target = resolveTarget(setName, response);
 		if (target == null) {
 			return;
 		}
 		if (option(request, "$apply") != null) {
+			if (castType != null) { // aggregation over a cast collection: honest 501 over wrong rows
+				error(response, 501, "$apply on type-cast collections is not implemented");
+				return;
+			}
 			apply(setName, target, request, response);
 			return;
 		}
+		// a cast makes the DERIVED type the context: its properties are addressable in options
+		EClass context = castType != null ? castType : target.entityType();
 		boolean xml = wantsXml(request);
-		Set<String> select = selectOption(request, target.entityType());
-		Set<String> expand = expandOption(request, target.entityType());
+		Set<String> select = selectOption(request, context);
+		Set<String> expand = expandOption(request, context);
 		Map<String, String> aliases = parameterAliases(request);
 
 		List<OrderBySegment> orderBy = parseChecked(option(request, "$orderby"),
-				value -> aliases.isEmpty() ? parser.parseOrderBy(value, target.entityType())
-						: parser.parseOrderBy(value, target.entityType(), aliases));
+				value -> aliases.isEmpty() ? parser.parseOrderBy(value, context)
+						: parser.parseOrderBy(value, context, aliases));
 		int skip = limits.effectiveSkip(option(request, "$skip"));
 		int top = pageSize(request, response, limits.effectiveTop(option(request, "$top")));
 		// peek one row beyond the page: partial results MUST carry @odata.nextLink (13.1.1/3)
-		EntityQuery query = new EntityQuery(target.entityType(),
+		EntityQuery query = new EntityQuery(target.entityType(), castType,
 				parseChecked(option(request, "$filter"),
-						filter -> aliases.isEmpty() ? parser.parseFilter(filter, target.entityType())
-								: parser.parseFilter(filter, target.entityType(), aliases)),
+						filter -> aliases.isEmpty() ? parser.parseFilter(filter, context)
+								: parser.parseFilter(filter, context, aliases)),
 				orderBy == null ? List.of() : orderBy,
 				skip, top + 1,
 				"true".equals(option(request, "$count")));
@@ -355,11 +366,12 @@ public class ODataServlet extends HttpServlet {
 		List<EObject> page = hasMore ? result.entities().subList(0, top) : result.entities();
 
 		if (xml) { // XMI is a non-OData projection — trimmed, but without an embedded link
-			writeXmi(response, shaper.shapeAll(page, target.entityType(), select, expand));
+			writeXmi(response, shaper.shapeAll(page, context, select, expand));
 			return;
 		}
 		StringBuilder json = new StringBuilder("{\"@odata.context\":\"")
-				.append(contextRoot(request)).append("/$metadata#").append(setName).append('"');
+				.append(contextRoot(request)).append("/$metadata#").append(setName)
+				.append(castName != null ? "/" + castName : "").append('"');
 		if (result.totalCount() >= 0) {
 			json.append(",\"@odata.count\":").append(result.totalCount());
 		}
@@ -368,7 +380,7 @@ public class ODataServlet extends HttpServlet {
 			if (i > 0) {
 				json.append(',');
 			}
-			json.append(entityJson(page.get(i), target.entityType(), select, expand));
+			json.append(entityJson(page.get(i), context, select, expand));
 		}
 		json.append(']');
 		if (hasMore) {
@@ -404,13 +416,15 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		if (path.key() == null && path.segments().isEmpty()) {
-			entitySet(path.entitySet(), request, response);
+			entitySet(path.entitySet(), null, null, request, response);
 			return;
 		}
 		if (path.key() == null) {
-			if (path.segments().size() == 1
+			if (path.segments().get(0) instanceof ResourcePath.TypeCastSegment cast) {
+				castOnSet(path, cast, request, response); // Set/Ns.T… ([OData-URL] 4.11)
+			} else if (path.segments().size() == 1
 					&& path.segments().get(0) instanceof ResourcePath.CountSegment) {
-				setCount(path.entitySet(), request, response); // Set/$count (with optional $filter)
+				setCount(path.entitySet(), null, request, response); // Set/$count (with optional $filter)
 			} else {
 				error(response, HttpServletResponse.SC_NOT_FOUND,
 						"navigation requires an entity key");
@@ -432,19 +446,91 @@ public class ODataServlet extends HttpServlet {
 		}
 	}
 
-	/** {@code GET Set/$count}: the (optionally filtered) total as text/plain. */
-	private void setCount(String setName, HttpServletRequest request, HttpServletResponse response)
-			throws IOException {
+	/** {@code GET Set/$count}: the (optionally filtered, optionally cast) total as text/plain. */
+	private void setCount(String setName, EClass castType, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
 		Target target = resolveTarget(setName, response);
 		if (target == null) {
 			return;
 		}
+		EClass context = castType != null ? castType : target.entityType();
 		QueryResult result = target.queryService().execute(new EntityQuery(target.entityType(),
+				castType,
 				parseChecked(option(request, "$filter"),
-						filter -> parser.parseFilter(filter, target.entityType())),
+						filter -> parser.parseFilter(filter, context)),
 				List.of(), 0, 0, true));
 		response.setContentType("text/plain;charset=UTF-8");
 		response.getWriter().write(String.valueOf(result.totalCount()));
+	}
+
+	/**
+	 * Set-level derived-type cast ([OData-URL] 4.11): {@code Set/Ns.T} restricts the collection
+	 * to instances of the derived type (and makes it the context type for query options),
+	 * {@code Set/Ns.T(key)} addresses one instance and 404s when the entity is not of that
+	 * type, both continue into {@code /$count} or a navigation walk.
+	 */
+	private void castOnSet(ResourcePath path, ResourcePath.TypeCastSegment cast,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		Target target = resolveTarget(path.entitySet(), response);
+		if (target == null) {
+			return;
+		}
+		EClass castType = resolveCastType(cast.qualifiedName(), target.entityType());
+		if (castType == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "no type '"
+					+ ODataJson.sanitize(cast.qualifiedName()) + "' derived from the entity set's type");
+			return;
+		}
+		List<ResourcePath.Segment> rest = path.segments().subList(1, path.segments().size());
+		if (cast.key() != null) {
+			EObject entity = fetchByKey(target, cast.key(), response);
+			if (entity == null) {
+				return; // error already written
+			}
+			if (!castType.isInstance(entity)) {
+				error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
+				return;
+			}
+			if (rest.isEmpty()) {
+				singleEntity(path.entitySet() + "/" + cast.qualifiedName(), entity, castType,
+						request, response);
+			} else {
+				walk(new ResourcePath(path.entitySet(), cast.key(), rest), entity, request, response);
+			}
+			return;
+		}
+		if (rest.isEmpty()) {
+			entitySet(path.entitySet(), cast.qualifiedName(), castType, request, response);
+			return;
+		}
+		if (rest.size() == 1 && rest.get(0) instanceof ResourcePath.CountSegment) {
+			setCount(path.entitySet(), castType, request, response);
+			return;
+		}
+		error(response, HttpServletResponse.SC_NOT_FOUND, "navigation requires an entity key");
+	}
+
+	/**
+	 * Resolves a {@code Ns.Type} (or {@code Alias.Type}) cast segment against the registered
+	 * models; when {@code baseType} is given, the resolved class must derive from it (or be
+	 * it). Namespace derivation matches {@code $metadata} (profile-driven).
+	 */
+	private EClass resolveCastType(String qualifiedName, EClass baseType) {
+		int dot = qualifiedName.lastIndexOf('.');
+		String namespace = qualifiedName.substring(0, dot);
+		String localName = qualifiedName.substring(dot + 1);
+		for (EPackage pkg : packages) {
+			ODataPackageProfile profile = profiles.computeIfAbsent(pkg,
+					p -> new OdataResolver().resolve(p));
+			if (!namespace.equals(profile.getNamespace()) && !namespace.equals(profile.getAlias())) {
+				continue;
+			}
+			if (pkg.getEClassifier(localName) instanceof EClass cast
+					&& (baseType == null || baseType.isSuperTypeOf(cast))) {
+				return cast;
+			}
+		}
+		return null;
 	}
 
 	/** Loads one entity by raw key literal; writes the error response when absent/keyless. */
@@ -511,6 +597,32 @@ public class ODataServlet extends HttpServlet {
 							error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
 							return;
 						}
+					}
+				}
+				case ResourcePath.TypeCastSegment cast -> {
+					EClass castClass = resolveCastType(cast.qualifiedName(), null);
+					if (castClass == null) {
+						error(response, HttpServletResponse.SC_NOT_FOUND, "unknown type '"
+								+ ODataJson.sanitize(cast.qualifiedName()) + "'");
+						return;
+					}
+					if (current instanceof List<?> collection) { // collection cast: type filter
+						current = collection.stream().filter(castClass::isInstance).toList();
+						if (cast.key() != null) {
+							current = selectByKey(current, cast.key());
+							if (current == null) {
+								error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
+								return;
+							}
+						}
+					} else if (current instanceof EObject object && cast.key() == null) {
+						if (!castClass.isInstance(object)) { // single-entity cast: instance check
+							error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
+							return;
+						}
+					} else {
+						error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
+						return;
 					}
 				}
 				case ResourcePath.CountSegment count -> {
@@ -868,7 +980,14 @@ public class ODataServlet extends HttpServlet {
 		resource.getContents().add(copy);
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		resource.save(out, null);
-		return out.toString(StandardCharsets.UTF_8);
+		String json = out.toString(StandardCharsets.UTF_8);
+		if (entity.eClass() != entityType) {
+			// derived instance: the type is NOT computable from the context URL, so minimal
+			// metadata must transport the single-field discriminator ([OData-JSON] 4.5.8)
+			json = "{\"@odata.type\":\"" + resource.typeDiscriminator(entity) + "\""
+					+ (json.length() > 2 ? "," : "") + json.substring(1);
+		}
+		return json;
 	}
 
 	/**

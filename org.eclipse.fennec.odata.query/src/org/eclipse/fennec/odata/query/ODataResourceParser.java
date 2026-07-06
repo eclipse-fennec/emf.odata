@@ -24,6 +24,7 @@ import org.eclipse.fennec.odata.query.ResourcePath.CountSegment;
 import org.eclipse.fennec.odata.query.ResourcePath.PropertySegment;
 import org.eclipse.fennec.odata.query.ResourcePath.RefSegment;
 import org.eclipse.fennec.odata.query.ResourcePath.Segment;
+import org.eclipse.fennec.odata.query.ResourcePath.TypeCastSegment;
 import org.eclipse.fennec.odata.query.ResourcePath.ValueSegment;
 import org.eclipse.fennec.odata.query.antlr.ODataFilterLexer;
 import org.eclipse.fennec.odata.query.antlr.ODataFilterParser;
@@ -31,15 +32,15 @@ import org.eclipse.fennec.odata.query.antlr.ODataFilterParser;
 /**
  * The own OData resource-path parser (ADR-0005 — Olingo is archived, so URI parsing is first
  * party): {@code Set}, {@code Set(key)}, navigation/property segments with optional key
- * predicates, terminal {@code $count}/{@code $value}/{@code $ref}. Grammar rules live in
- * {@code ODataFilter.g4} (rule {@code resource}); the OASIS ABNF {@code resourcePath} test
- * cases run against it as acceptance suite.
+ * predicates, derived-type casts ({@code /Ns.Type}, optionally keyed), terminal
+ * {@code $count}/{@code $value}/{@code $ref}. Grammar rules live in {@code ODataFilter.g4}
+ * (rule {@code resource}); the OASIS ABNF {@code resourcePath} test cases run against it as
+ * acceptance suite.
  *
  * <p>Purely syntactic and stateless; malformed paths and paths exceeding
  * {@value #MAX_SEGMENTS} segments raise {@link ODataQueryParseException} (→ 400/404 at the
- * protocol layer). v1 gaps (documented, syntax rejects them): type-cast segments
- * ({@code Ns.Type}), multi-part/named key predicates, function-call segments, {@code $all}/
- * {@code $crossjoin}/{@code $entity} forms.
+ * protocol layer). v1 gaps (documented, syntax rejects them): multi-part/named key
+ * predicates, function-call segments, {@code $all}/{@code $crossjoin}/{@code $entity} forms.
  */
 public class ODataResourceParser {
 
@@ -65,11 +66,19 @@ public class ODataResourceParser {
 		List<Segment> segments = new ArrayList<>();
 		for (ODataFilterParser.ResourceSegmentContext segment : resource.resourceSegment()) {
 			// $count/$value/$ref close the path (ABNF: they are terminal alternatives)
-			if (!segments.isEmpty() && !(segments.get(segments.size() - 1) instanceof PropertySegment)) {
+			if (!segments.isEmpty() && !(segments.get(segments.size() - 1) instanceof PropertySegment
+					|| segments.get(segments.size() - 1) instanceof TypeCastSegment)) {
 				throw new ODataQueryParseException(
 						"no segment allowed after $count/$value/$ref: " + path);
 			}
+			// the ABNF grants at most ONE cast per navigation step — no /Ns.T1/Ns.T2 chains
+			if (segment instanceof ODataFilterParser.CastSegmentContext && !segments.isEmpty()
+					&& segments.get(segments.size() - 1) instanceof TypeCastSegment) {
+				throw new ODataQueryParseException("consecutive type-cast segments: " + path);
+			}
 			segments.add(switch (segment) {
+				case ODataFilterParser.CastSegmentContext cast ->
+					new TypeCastSegment(cast.castName().getText(), keyText(cast.keyPredicate()));
 				case ODataFilterParser.PropertySegmentContext property ->
 					new PropertySegment(property.IDENT().getText(), keyText(property.keyPredicate()));
 				case ODataFilterParser.CountSegmentContext c -> new CountSegment();

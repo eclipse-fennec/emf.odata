@@ -24,15 +24,20 @@ import org.eclipse.fennec.odata.query.OrderBySegment;
  * Backends MUST push the whole query down (or evaluate it themselves) — partial evaluation
  * with client-side re-filtering is not allowed. All members are read-only for the backend.
  *
- * @param entityType the queried entity EClass (never null)
+ * @param entityType the queried entity EClass — the SET's declared type, used for backend
+ *                   routing ({@code supports}); never null
+ * @param castType   derived-type restriction from a URL cast segment ([OData-URL] 4.11):
+ *                   only instances of this EClass (or its subtypes) match; null = no cast.
+ *                   Pushdown backends map this onto their discriminator mechanism
+ *                   (JPA: {@code TYPE(e) IN ...}).
  * @param filter     boolean-typed OCL predicate, or null for "all"
  * @param orderBy    sort segments, never null (may be empty)
  * @param skip       number of entities to skip (>= 0)
  * @param top        maximum number of entities to return, or -1 for no limit
  * @param count      whether the total match count (before skip/top) must be computed
  */
-public record EntityQuery(EClass entityType, OclExpression filter, List<OrderBySegment> orderBy,
-		int skip, int top, boolean count) {
+public record EntityQuery(EClass entityType, EClass castType, OclExpression filter,
+		List<OrderBySegment> orderBy, int skip, int top, boolean count) {
 
 	public EntityQuery {
 		Objects.requireNonNull(entityType, "entityType must not be null");
@@ -43,6 +48,12 @@ public record EntityQuery(EClass entityType, OclExpression filter, List<OrderByS
 		if (top < -1) {
 			throw new IllegalArgumentException("top must be >= 0 or -1 (unlimited), was: " + top);
 		}
+	}
+
+	/** Query without a derived-type cast (the common case). */
+	public EntityQuery(EClass entityType, OclExpression filter, List<OrderBySegment> orderBy,
+			int skip, int top, boolean count) {
+		this(entityType, null, filter, orderBy, skip, top, count);
 	}
 
 	/** Query for all instances of a type, no filter, no paging. */
