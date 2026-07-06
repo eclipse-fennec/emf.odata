@@ -29,18 +29,19 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
  * and expanded targets are co-copied with the SAME copier so every reference in the payload is
  * internal — no server-side resource URIs can leak into any output format. Non-expanded
  * non-containment references are omitted (the OData default); {@code $select} keeps the chosen
- * features, the expanded navigations and always the key.
+ * features, the expanded navigations and always the key — nested {@code $select} trees
+ * ([OData-URL] 5.1.3, 4.01) prune the selected structured values recursively.
  */
 public class EntityShaper {
 
 	/**
-	 * @param select        validated {@code $select} names, or null when absent
+	 * @param select        validated {@code $select} tree, or null when absent
 	 * @param expand        validated {@code $expand} navigation names (may be empty)
 	 * @param expandedRoots when non-null, receives the copies of expanded targets — callers
 	 *                      serializing to a single self-contained document (XMI) add them as
 	 *                      extra roots
 	 */
-	public EObject shape(EObject entity, EClass entityType, Set<String> select, Set<String> expand,
+	public EObject shape(EObject entity, EClass entityType, SelectTree select, Set<String> expand,
 			List<EObject> expandedRoots) {
 		EcoreUtil.Copier copier = new EcoreUtil.Copier();
 		EObject copy = copier.copy(entity);
@@ -63,14 +64,7 @@ public class EntityShaper {
 			}
 		}
 		if (select != null) {
-			for (EStructuralFeature feature : entityType.getEAllStructuralFeatures()) {
-				boolean keep = select.contains(feature.getName())
-						|| expand.contains(feature.getName())
-						|| feature instanceof EAttribute attribute && attribute.isID();
-				if (!keep && copy.eIsSet(feature)) {
-					copy.eUnset(feature);
-				}
-			}
+			prune(copy, entityType, select, expand);
 		}
 		if (expandedRoots != null) {
 			collectExpandedTargets(copy, entityType, expand, expandedRoots);
@@ -78,8 +72,36 @@ public class EntityShaper {
 		return copy;
 	}
 
+	/** Keeps selected/expanded/key features; nested trees prune the structured values. */
+	private void prune(EObject copy, EClass type, SelectTree select, Set<String> expand) {
+		for (EStructuralFeature feature : type.getEAllStructuralFeatures()) {
+			SelectTree child = select.child(feature.getName());
+			boolean keep = child != null || expand.contains(feature.getName())
+					|| feature instanceof EAttribute attribute && attribute.isID();
+			if (!keep) {
+				if (copy.eIsSet(feature)) {
+					copy.eUnset(feature);
+				}
+				continue;
+			}
+			if (child == null || child.isLeaf() || !(feature.getEType() instanceof EClass childType)) {
+				continue; // whole value selected (or kept as expand/key)
+			}
+			Object value = copy.eGet(feature);
+			if (value instanceof List<?> members) {
+				members.forEach(member -> {
+					if (member instanceof EObject object) {
+						prune(object, childType, child, Set.of());
+					}
+				});
+			} else if (value instanceof EObject object) {
+				prune(object, childType, child, Set.of());
+			}
+		}
+	}
+
 	/** All shaped copies plus the expanded targets as extra roots (self-contained document). */
-	public List<EObject> shapeAll(List<EObject> entities, EClass entityType, Set<String> select,
+	public List<EObject> shapeAll(List<EObject> entities, EClass entityType, SelectTree select,
 			Set<String> expand) {
 		List<EObject> roots = new ArrayList<>();
 		List<EObject> expandedRoots = new ArrayList<>();

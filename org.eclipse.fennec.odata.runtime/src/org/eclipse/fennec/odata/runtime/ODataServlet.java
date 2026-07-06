@@ -343,7 +343,7 @@ public class ODataServlet extends HttpServlet {
 		// a cast makes the DERIVED type the context: its properties are addressable in options
 		EClass context = castType != null ? castType : target.entityType();
 		boolean xml = wantsXml(request);
-		Set<String> select = selectOption(request, context);
+		SelectTree select = selectOption(request, context);
 		Set<String> expand = expandOption(request, context);
 		Map<String, String> aliases = parameterAliases(request);
 
@@ -742,7 +742,7 @@ public class ODataServlet extends HttpServlet {
 	/** {@code /{Set}({key})}: the key becomes a typed equality AST — never parsed as expression. */
 	private void singleEntity(String setName, EObject entity, EClass entityType,
 			HttpServletRequest request, HttpServletResponse response) throws IOException {
-		Set<String> select = selectOption(request, entityType);
+		SelectTree select = selectOption(request, entityType);
 		Set<String> expand = expandOption(request, entityType);
 		if (wantsXml(request)) {
 			writeXmi(response, shaper.shapeAll(List.of(entity), entityType, select, expand));
@@ -938,21 +938,14 @@ public class ODataServlet extends HttpServlet {
 
 	// --- $select / $expand / formats ---
 
-	/** Validated {@code $select} names, or null when the option is absent. */
-	private Set<String> selectOption(HttpServletRequest request, EClass entityType) {
+	/** Validated {@code $select} tree (nested selects incl., 4.01), or null when absent. */
+	private SelectTree selectOption(HttpServletRequest request, EClass entityType) {
 		String select = option(request, "$select");
 		if (select == null || select.isBlank()) {
 			return null;
 		}
-		Set<String> names = new LinkedHashSet<>();
-		for (String name : select.split(",")) {
-			String trimmed = name.trim();
-			if (entityType.getEStructuralFeature(trimmed) == null) {
-				throw new ODataQueryParseException("unknown $select property '" + trimmed + "'");
-			}
-			names.add(trimmed);
-		}
-		return names;
+		limits.checkExpression(select); // nested trees are parsed — same hostile-input guard
+		return SelectTree.parse(select, entityType);
 	}
 
 	/** Validated {@code $expand} navigation names (always a set, possibly empty). */
@@ -972,7 +965,7 @@ public class ODataServlet extends HttpServlet {
 		return names;
 	}
 
-	private String entityJson(EObject entity, EClass entityType, Set<String> select, Set<String> expand)
+	private String entityJson(EObject entity, EClass entityType, SelectTree select, Set<String> expand)
 			throws IOException {
 		EObject copy = shaper.shape(entity, entityType, select, expand, null);
 		ODataJsonResourceImpl resource = ODataJsonResourceImpl.minimalMetadata(

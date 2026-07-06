@@ -145,6 +145,17 @@ class InMemoryQueryServiceTest {
 	}
 
 	@Test
+	@DisplayName("eq/ne null on single-valued navigations (4.01 Intermediate MUST)")
+	void navigationNullComparison() {
+		assertEquals(List.of("Salt"), names(query("category eq null", null, 0, -1, false)),
+				"only the product without a category matches");
+		assertEquals(List.of("Milk", "Cheese", "Bread"),
+				names(query("category ne null", null, 0, -1, false)));
+		assertEquals(List.of("Salt"), names(query("null eq category", null, 0, -1, false)),
+				"null on the left works too");
+	}
+
+	@Test
 	@DisplayName("paths, lambdas, functions, enum and date literals evaluate")
 	void richPredicates() {
 		assertEquals(List.of("Milk", "Cheese"), names(query("category/name eq 'Dairy'", null, 0, -1, false)));

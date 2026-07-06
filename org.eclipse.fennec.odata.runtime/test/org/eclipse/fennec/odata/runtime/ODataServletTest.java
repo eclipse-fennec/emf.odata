@@ -519,6 +519,39 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("4.01: nested $select prunes structured values recursively")
+	void nestedSelect() throws Exception {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		dairy.eSet(categoryClass.getEStructuralFeature("name"), "Dairy");
+		backendResult = List.of(product("p1", "Milk", "1.20", dairy));
+
+		Response nested = get("/Product", Map.of(
+				"$expand", "category", "$select", "name,category($select=name)"));
+		assertEquals(200, nested.status(), nested.body());
+		assertTrue(nested.body().contains("\"Milk\"") && nested.body().contains("\"Dairy\""),
+				nested.body());
+		assertFalse(nested.body().contains("\"price\""), "unselected root property pruned");
+		assertTrue(nested.body().contains("\"id\":\"c1\""), "nested key survives the sub-select");
+
+		// nested select on a containment (reviews) without $expand
+		Response containment = get("/Product", Map.of("$select", "reviews($select=stars)"));
+		assertEquals(200, containment.status(), containment.body());
+
+		// recognized-but-unsupported and malformed nested options fail the request
+		assertEquals(400, get("/Product",
+				Map.of("$select", "category($filter=name eq 'x')")).status(),
+				"nested non-$select options are rejected, not ignored");
+		assertEquals(400, get("/Product", Map.of("$select", "name($select=x)")).status(),
+				"nested select on a primitive property");
+		assertEquals(400, get("/Product", Map.of("$select", "category($select=nosuch)")).status(),
+				"unknown nested property");
+		assertEquals(400, get("/Product", Map.of("$select", "category($select=name")).status(),
+				"unbalanced parentheses");
+	}
+
+	@Test
 	@DisplayName("4.01: Prefer maxpagesize (with and without odata. prefix) caps the page")
 	void preferMaxPageSize() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null),
