@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ecore:EPackage xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="shop" nsURI="http://example.org/shop" nsPrefix="shop">
+  <eAnnotations source="https://eclipse.org/fennec/odata">
+    <details key="OData.Namespace" value="My.Shop"/>
+  </eAnnotations>
+  <eClassifiers xsi:type="ecore:EClass" name="Product">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="id" lowerBound="1" iD="true"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="name"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="price"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBigDecimal"/>
+    <!-- EDate forced to date-only via @OData.Type -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="releaseDate"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDate">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Type" value="Edm.Date"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <!-- EDate defaults to Edm.DateTimeOffset -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="modified"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDate"/>
+    <!-- EByteArray -> Edm.Binary (base64url) -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="photo"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EByteArray"/>
+    <!-- string attribute carrying a guid -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="guid"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Type" value="Edm.Guid"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+</ecore:EPackage>

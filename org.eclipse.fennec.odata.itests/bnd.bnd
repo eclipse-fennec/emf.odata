@@ -1,0 +1,18 @@
+Bundle-Name: Fennec OData Integration Tests
+Bundle-Description: End-to-end OSGi integration tests: the whole stack (EPackage whiteboard, metadata service, file-backed repository, in-memory query backend, ODataServlet on the Jetty HTTP whiteboard) exercised over real HTTP, including destructive security cases
+Bundle-Version: 1.0.0
+
+Test-Cases: ${classes;HIERARCHY_INDIRECTLY_ANNOTATED;org.junit.platform.commons.annotation.Testable;CONCRETE}
+
+-library: \
+	enableOSGi-Test,\
+	enableEMF
+
+-buildpath: \
+	org.osgi.framework;version=latest,\
+	org.osgi.service.cm;version=latest,\
+	org.eclipse.fennec.emf.osgi.api;version=latest,\
+	org.eclipse.emf.ecore.xmi;version=latest,\
+	org.eclipse.fennec.odata.persistence.inmemory;version=project
+
+Private-Package: org.eclipse.fennec.odata.itests

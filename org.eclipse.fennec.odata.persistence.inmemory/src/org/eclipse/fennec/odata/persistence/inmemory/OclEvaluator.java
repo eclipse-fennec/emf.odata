@@ -1,0 +1,364 @@
+/*
+ * Copyright (c) 2026 Contributors to the Eclipse Foundation.
+ *
+ * This program and the accompanying materials are made
+ * available under the terms of the Eclipse Public License 2.0
+ * which is available at https://www.eclipse.org/legal/epl-2.0/
+ *
+ * SPDX-License-Identifier: EPL-2.0
+ *
+ * Contributors:
+ *   Data In Motion Consulting - initial implementation
+ */
+package org.eclipse.fennec.odata.persistence.inmemory;
+
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.eclipse.emf.common.util.Enumerator;
+import org.eclipse.emf.ecore.EClassifier;
+import org.eclipse.emf.ecore.EObject;
+import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.ClassifierType;
+import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
+import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.EnumLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.IntegerLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.IteratorExp;
+import org.eclipse.fennec.m2x.model.ocl.NullLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.OclExpression;
+import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
+import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
+import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.TypeExp;
+import org.eclipse.fennec.m2x.model.ocl.Variable;
+import org.eclipse.fennec.m2x.model.ocl.VariableExp;
+
+/**
+ * The in-memory "translator" (req §3.5): instead of translating the OCL predicate IR into a
+ * native query language, it evaluates the AST directly against an {@link EObject}. Covers the
+ * operation names the {@code ODataToOclBuilder} emits (comparison/logic/arithmetic, string and
+ * date functions, {@code includes}, {@code exists}/{@code forAll}, {@code oclIsKindOf}/
+ * {@code oclAsType}, {@code size}, {@code notEmpty}, {@code has}).
+ *
+ * <p>Semantics deliberately simple for v1: null comparisons are false (except {@code eq}/
+ * {@code ne} against the null literal), logic treats null as false, numeric comparison happens
+ * on {@link BigDecimal}. Contexts are EObjects or $apply row maps ({@link ApplyExecutor}).
+ * Unknown operations and unresolvable variables raise {@link IllegalArgumentException},
+ * never silently evaluate to a value — wrong results are worse than errors.
+ */
+public class OclEvaluator {
+
+	/** Evaluates a boolean predicate against the given context (an EObject or a $apply row map). */
+	public boolean matches(OclExpression predicate, Object self) {
+		return Boolean.TRUE.equals(evaluate(predicate, self, Map.of()));
+	}
+
+	/** Evaluates any expression against the given context (for $orderby keys, aggregates etc.). */
+	public Object evaluate(OclExpression expression, Object self) {
+		return evaluate(expression, self, Map.of());
+	}
+
+	private Object evaluate(OclExpression exp, Object self, Map<Variable, Object> bindings) {
+		return switch (exp) {
+			case null -> null;
+			case StringLiteralExp s -> s.getStringSymbol();
+			case IntegerLiteralExp i -> i.getIntegerSymbol();
+			case RealLiteralExp r -> r.getRealSymbol();
+			case BooleanLiteralExp b -> b.isBooleanSymbol();
+			case NullLiteralExp n -> null;
+			case EnumLiteralExp e -> e.getReferredLiteral();
+			case TypeExp t -> t.getReferredType();
+			case CollectionLiteralExp c -> c.getOwnedParts().stream()
+					.filter(CollectionItem.class::isInstance).map(CollectionItem.class::cast)
+					.map(item -> evaluate(item.getOwnedItem(), self, bindings)).toList();
+			case VariableExp v -> {
+				Variable variable = v.getReferredVariable();
+				if (variable != null && bindings.containsKey(variable)) {
+					yield bindings.get(variable);
+				}
+				// $apply alias: later pipeline stages evaluate against row maps carrying the alias
+				if (variable != null && self instanceof Map<?, ?> row && row.containsKey(variable.getName())) {
+					yield row.get(variable.getName());
+				}
+				throw new IllegalArgumentException("unresolvable variable '"
+						+ (variable == null ? "?" : variable.getName()) + "'");
+			}
+			case PropertyCallExp p -> {
+				Object source = p.getOwnedSource() == null ? self : evaluate(p.getOwnedSource(), self, bindings);
+				if (source == null) {
+					yield null; // null propagation along the path
+				}
+				if (source instanceof EObject eObject) {
+					yield eObject.eGet(p.getReferredProperty());
+				}
+				if (source instanceof Map<?, ?> row) { // $apply row: grouping paths are nested maps
+					yield row.get(p.getReferredProperty().getName());
+				}
+				throw new IllegalArgumentException(
+						"property '" + p.getReferredProperty().getName() + "' called on a non-object value");
+			}
+			case IteratorExp it -> iterate(it, self, bindings);
+			case OperationCallExp op -> operation(op, self, bindings);
+			default -> throw new IllegalArgumentException(
+					"unsupported expression kind " + exp.eClass().getName());
+		};
+	}
+
+	private Object iterate(IteratorExp it, Object self, Map<Variable, Object> bindings) {
+		Object source = evaluate(it.getOwnedSource(), self, bindings);
+		Collection<?> elements = asCollection(source);
+		Variable variable = it.getOwnedIterators().get(0);
+		boolean forAll = "forAll".equals(it.getName());
+		if (!forAll && !"exists".equals(it.getName())) {
+			throw new IllegalArgumentException("unsupported iterator '" + it.getName() + "'");
+		}
+		for (Object element : elements) {
+			Map<Variable, Object> inner = new HashMap<>(bindings);
+			inner.put(variable, element);
+			boolean matches = Boolean.TRUE.equals(evaluate(it.getOwnedBody(), self, inner));
+			if (forAll && !matches) {
+				return false;
+			}
+			if (!forAll && matches) {
+				return true;
+			}
+		}
+		return forAll;
+	}
+
+	private Object operation(OperationCallExp op, Object self, Map<Variable, Object> bindings) {
+		String name = op.getName();
+		List<OclExpression> args = op.getOwnedArguments();
+
+		// logic short-circuits before evaluating the other side
+		switch (name) {
+			case "and" -> {
+				return Boolean.TRUE.equals(evaluate(op.getOwnedSource(), self, bindings))
+						&& Boolean.TRUE.equals(evaluate(args.get(0), self, bindings));
+			}
+			case "or" -> {
+				return Boolean.TRUE.equals(evaluate(op.getOwnedSource(), self, bindings))
+						|| Boolean.TRUE.equals(evaluate(args.get(0), self, bindings));
+			}
+			case "not" -> {
+				return !Boolean.TRUE.equals(evaluate(op.getOwnedSource(), self, bindings));
+			}
+			case "oclIsKindOf", "oclAsType" -> {
+				// unbound cast(T)/isof(T) has no source and tests the instance itself
+				Object value = op.getOwnedSource() == null ? self
+						: evaluate(op.getOwnedSource(), self, bindings);
+				return typeOperation(name, value, args);
+			}
+			default -> { /* fall through to value-based dispatch */ }
+		}
+
+		Object source = evaluate(op.getOwnedSource(), self, bindings);
+		return switch (name) {
+			case "=" -> equalTo(source, evaluate(args.get(0), self, bindings));
+			case "<>" -> !equalTo(source, evaluate(args.get(0), self, bindings));
+			case "<" -> comparison(source, evaluate(args.get(0), self, bindings)) < 0;
+			case "<=" -> comparison(source, evaluate(args.get(0), self, bindings)) <= 0;
+			case ">" -> comparison(source, evaluate(args.get(0), self, bindings)) > 0;
+			case ">=" -> comparison(source, evaluate(args.get(0), self, bindings)) >= 0;
+			case "has" -> equalTo(source, evaluate(args.get(0), self, bindings)); // single-flag semantics
+			case "+" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
+			case "-" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
+			case "*" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
+			case "/" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
+			case "mod" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
+			case "includes" -> asCollection(source).stream()
+					.anyMatch(member -> equalTo(member, evaluate(args.get(0), self, bindings)));
+			case "notEmpty" -> !asCollection(source).isEmpty();
+			case "size" -> source instanceof Collection<?> c ? c.size() : text(source).length();
+			case "contains" -> text(source).contains(text(evaluate(args.get(0), self, bindings)));
+			case "startsWith" -> text(source).startsWith(text(evaluate(args.get(0), self, bindings)));
+			case "endsWith" -> text(source).endsWith(text(evaluate(args.get(0), self, bindings)));
+			case "toLower" -> text(source).toLowerCase();
+			case "toUpper" -> text(source).toUpperCase();
+			case "trim" -> text(source).trim();
+			case "indexOf" -> text(source).indexOf(text(evaluate(args.get(0), self, bindings)));
+			case "concat" -> text(source) + text(evaluate(args.get(0), self, bindings));
+			case "substring" -> substring(source, args, self, bindings);
+			case "year" -> dateTime(source).getYear();
+			case "month" -> dateTime(source).getMonthValue();
+			case "day" -> dateTime(source).getDayOfMonth();
+			case "hour" -> dateTime(source).getHour();
+			case "minute" -> dateTime(source).getMinute();
+			case "second" -> dateTime(source).getSecond();
+			case "date" -> dateTime(source).toLocalDate().toString();
+			case "time" -> dateTime(source).toLocalTime().toString();
+			case "round" -> decimal(source).setScale(0, java.math.RoundingMode.HALF_UP).longValue();
+			case "floor" -> decimal(source).setScale(0, java.math.RoundingMode.FLOOR).longValue();
+			case "ceiling" -> decimal(source).setScale(0, java.math.RoundingMode.CEILING).longValue();
+			default -> throw new IllegalArgumentException("unsupported operation '" + name + "'");
+		};
+	}
+
+	private Object typeOperation(String name, Object value, List<OclExpression> args) {
+		if (!(args.get(0) instanceof TypeExp typeExp)) {
+			throw new IllegalArgumentException(name + " expects a type argument");
+		}
+		if ("oclAsType".equals(name)) {
+			return value; // type assertion only — representation stays unchanged
+		}
+		if (typeExp.getReferredType() instanceof ClassifierType classifierType) {
+			EClassifier classifier = classifierType.getReferredClassifier();
+			return classifier != null && classifier.isInstance(value);
+		}
+		String primitive = typeExp.getReferredType() == null ? null : typeExp.getReferredType().getName();
+		return switch (primitive) {
+			case "String" -> value instanceof String;
+			case "Boolean" -> value instanceof Boolean;
+			case "Integer" -> value instanceof Integer || value instanceof Long || value instanceof Short
+					|| value instanceof Byte || value instanceof java.math.BigInteger;
+			case "Real" -> value instanceof Number;
+			case null, default -> false;
+		};
+	}
+
+	private Object substring(Object source, List<OclExpression> args, Object self,
+			Map<Variable, Object> bindings) {
+		String value = text(source);
+		int start = decimal(evaluate(args.get(0), self, bindings)).intValue();
+		if (start < 0 || start > value.length()) {
+			throw new IllegalArgumentException("substring start out of range: " + start);
+		}
+		if (args.size() > 1) {
+			int length = decimal(evaluate(args.get(1), self, bindings)).intValue();
+			int end = Math.min(value.length(), Math.max(start, start + length));
+			return value.substring(start, end);
+		}
+		return value.substring(start);
+	}
+
+	// --- value coercion ---
+
+	private boolean equalTo(Object left, Object right) {
+		if (left == null || right == null) {
+			return left == right;
+		}
+		if (left instanceof Number && right instanceof Number) {
+			return decimal(left).compareTo(decimal(right)) == 0;
+		}
+		if (left instanceof Enumerator e) {
+			return right instanceof Enumerator other
+					? e.getName().equals(other.getName())
+					: e.getName().equals(String.valueOf(right));
+		}
+		if (right instanceof Enumerator) {
+			return equalTo(right, left);
+		}
+		if (left instanceof Date || right instanceof Date) {
+			return comparison(left, right) == 0;
+		}
+		return left.equals(right);
+	}
+
+	private int comparison(Object left, Object right) {
+		if (left == null || right == null) {
+			// three-valued logic collapsed: comparisons with null are never true
+			throw new NullComparison();
+		}
+		if (left instanceof Number && right instanceof Number) {
+			return decimal(left).compareTo(decimal(right));
+		}
+		if (left instanceof Date || right instanceof Date) {
+			return dateTime(left).compareTo(dateTime(right));
+		}
+		if (left instanceof String l && right instanceof String r) {
+			return l.compareTo(r);
+		}
+		if (left instanceof Comparable<?> && left.getClass().isInstance(right)) {
+			@SuppressWarnings({ "unchecked", "rawtypes" })
+			int result = ((Comparable) left).compareTo(right);
+			return result;
+		}
+		throw new IllegalArgumentException("cannot compare " + left.getClass().getSimpleName()
+				+ " with " + right.getClass().getSimpleName());
+	}
+
+	/** Internal signal: a relational comparison hit null — the enclosing predicate is false. */
+	private static final class NullComparison extends RuntimeException {
+		private static final long serialVersionUID = 1L;
+	}
+
+	/** Wraps {@link #matches} so null-valued relational comparisons yield false, not errors. */
+	public boolean matchesNullSafe(OclExpression predicate, Object self) {
+		try {
+			return matches(predicate, self);
+		} catch (NullComparison e) {
+			return false;
+		}
+	}
+
+	private static BigDecimal decimal(Object value) {
+		if (value instanceof BigDecimal bd) {
+			return bd;
+		}
+		if (value instanceof Number number) {
+			return new BigDecimal(number.toString());
+		}
+		throw new IllegalArgumentException("not a number: " + value);
+	}
+
+	private Object arithmetic(String name, Object left, Object right) {
+		BigDecimal l = decimal(left);
+		BigDecimal r = decimal(right);
+		return switch (name) {
+			case "+" -> l.add(r);
+			case "-" -> l.subtract(r);
+			case "*" -> l.multiply(r);
+			case "/" -> {
+				if (r.signum() == 0) {
+					throw new IllegalArgumentException("division by zero");
+				}
+				yield l.divide(r, MathContext.DECIMAL64);
+			}
+			case "mod" -> {
+				if (r.signum() == 0) {
+					throw new IllegalArgumentException("division by zero");
+				}
+				yield l.remainder(r);
+			}
+			default -> throw new IllegalArgumentException("unsupported arithmetic '" + name + "'");
+		};
+	}
+
+	private static ZonedDateTime dateTime(Object value) {
+		if (value instanceof Date date) {
+			return date.toInstant().atZone(ZoneOffset.UTC);
+		}
+		if (value instanceof String text) { // pre-typed Date/DateTimeOffset literals stay strings
+			if (text.length() == 10) {
+				return LocalDate.parse(text).atStartOfDay(ZoneOffset.UTC);
+			}
+			return OffsetDateTime.parse(text).toZonedDateTime();
+		}
+		throw new IllegalArgumentException("not a date value: " + value);
+	}
+
+	private static Collection<?> asCollection(Object value) {
+		if (value instanceof Collection<?> collection) {
+			return collection;
+		}
+		return value == null ? List.of() : List.of(value);
+	}
+
+	private static String text(Object value) {
+		if (value instanceof String s) {
+			return s;
+		}
+		throw new IllegalArgumentException("not a string value: " + value);
+	}
+}

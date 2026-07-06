@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ecore:EPackage xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="apply" nsURI="https://eclipse.org/fennec/odata/apply/1.0.0"
+    nsPrefix="odataapply">
+  <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+    <details key="documentation" value="OData $apply aggregation pipeline (req §3.5): pipeline semantics are deliberately NOT expressed in OCL — transformation stages are first-class objects, only their embedded expressions (filter predicates, grouping properties, aggregate/compute operands) are OclExpressions from the m2x OCL model (the shared predicate IR). v1 covers filter/groupby/aggregate/compute; bottom/top and concat follow (E4 backlog)."/>
+    <details key="copyrightText" value="Copyright (c) 2026 Contributors to the Eclipse Foundation.&#xA;&#xA;This program and the accompanying materials are made&#xA;available under the terms of the Eclipse Public License 2.0&#xA;which is available at https://www.eclipse.org/legal/epl-2.0/&#xA;&#xA;SPDX-License-Identifier: EPL-2.0&#xA;&#xA;Contributors:&#xA;  Data In Motion Consulting - initial implementation"/>
+    <details key="oSGiCompatible" value="true"/>
+    <details key="basePackage" value="org.eclipse.fennec.odata.query"/>
+    <details key="resource" value="XMI"/>
+  </eAnnotations>
+  <eClassifiers xsi:type="ecore:EEnum" name="AggregateMethod">
+    <eLiterals name="SUM"/>
+    <eLiterals name="MIN" value="1"/>
+    <eLiterals name="MAX" value="2"/>
+    <eLiterals name="AVERAGE" value="3"/>
+    <eLiterals name="COUNT_DISTINCT" value="4"/>
+    <eLiterals name="COUNT" value="5">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="The $count virtual aggregate — has no operand expression."/>
+      </eAnnotations>
+    </eLiterals>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ApplyPipeline">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="One $apply value: the slash-separated sequence of transformations, applied left to right."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="transformations" upperBound="-1"
+        eType="#//ApplyTransformation" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ApplyTransformation" abstract="true"/>
+  <eClassifiers xsi:type="ecore:EClass" name="FilterTransformation" eSuperTypes="#//ApplyTransformation">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="predicate"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="GroupByTransformation" eSuperTypes="#//ApplyTransformation">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="groupingProperties" upperBound="-1"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="then" eType="#//ApplyTransformation"
+        containment="true">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="Optional nested transformation applied per group (typically an Aggregate)."/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="AggregateTransformation" eSuperTypes="#//ApplyTransformation">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="aggregations" upperBound="-1"
+        eType="#//AggregateExpression" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="AggregateExpression">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="expression"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="The aggregated operand; absent for the $count virtual aggregate."/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="method" eType="#//AggregateMethod"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="alias" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ComputeTransformation" eSuperTypes="#//ApplyTransformation">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="computeExpressions" upperBound="-1"
+        eType="#//ComputeExpression" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ComputeExpression">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="expression"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="alias" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+</ecore:EPackage>

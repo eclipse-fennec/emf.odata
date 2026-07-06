@@ -1,0 +1,23 @@
+Bundle-Name: Fennec OData CSDL
+Bundle-Description: CSDL ($metadata) built by populating the OASIS EDM/EDMX model (org.odata.csdl.model) and serializing it via EMF — instead of a hand-written CSDL writer (E2). Owns the standalone OData profile model + resolver (ADR-0003).
+Bundle-Version: 1.0.0
+
+src=${^src},src-gen
+
+-library: enableEMF
+
+# Standalone OData profile model (ADR-0003): resolved by OdataResolver, serialized to EDM/CSDL.
+-generate:\
+	model/odata-profile.genmodel;\
+		generate=fennecEMF;\
+		genmodel=model/odata-profile.genmodel;\
+		output=src-gen
+
+-includeresource.model: model=model
+
+# The OASIS-XSD-generated EDM/EDMX model, consumed from the fennecEMFModels bnd library
+# (external dependency -> version=latest). EMF ecore.xmi is needed for XML (de)serialization.
+-buildpath: \
+	org.odata.csdl.model;version=latest,\
+	org.eclipse.emf.ecore.xmi;version=latest,\
+	org.eclipse.fennec.emf.osgi.api;version=latest

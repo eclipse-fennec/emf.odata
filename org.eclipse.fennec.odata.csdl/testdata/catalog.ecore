@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ecore:EPackage xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="catalog" nsURI="http://example.org/catalog" nsPrefix="catalog">
+  <!-- package-level: CSDL Schema Namespace + Alias overrides -->
+  <eAnnotations source="https://eclipse.org/fennec/odata">
+    <details key="OData.Namespace" value="My.Catalog"/>
+    <details key="OData.Alias" value="Cat"/>
+  </eAnnotations>
+  <!-- generic vocabulary-term annotations (AP-5): term -> constant value -->
+  <eAnnotations source="https://eclipse.org/fennec/odata/annotations">
+    <details key="Org.OData.Core.V1.Description" value="Product catalog schema"/>
+  </eAnnotations>
+
+  <!-- entity declared via @OData.Key (NO ecore iD), open + media entity -->
+  <eClassifiers xsi:type="ecore:EClass" name="Document">
+    <eAnnotations source="https://eclipse.org/fennec/odata">
+      <details key="OData.OpenType" value="true"/>
+      <details key="OData.HasStream" value="true"/>
+    </eAnnotations>
+    <eAnnotations source="https://eclipse.org/fennec/odata/annotations">
+      <details key="Org.OData.Core.V1.Description" value="A stored document"/>
+      <details key="My.Custom.Rank" value="42"/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="docId" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Key" value="true"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="guid"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Type" value="Edm.Guid"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="title" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.MaxLength" value="200"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="createdAt"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Property.Computed" value="true"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <!-- non-containment in Ecore, but ContainsTarget forced on via annotation -->
+    <eStructuralFeatures xsi:type="ecore:EReference" name="account" eType="#//Account">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.NavigationProperty.ContainsTarget" value="true"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <!-- FK property + navigation with referential constraint: Document.ownerId = Account.id.
+         Non-containment -> the Document entity set additionally gets a NavigationPropertyBinding. -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="ownerId"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="owner" eType="#//Account">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.NavigationProperty.ReferentialConstraint" value="ownerId=id"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <!-- non-void EOperation forced to ACTION via @OData.OperationKind (bound) -->
+    <eOperations name="archive" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.OperationKind" value="Action"/>
+      </eAnnotations>
+    </eOperations>
+  </eClassifiers>
+
+  <eClassifiers xsi:type="ecore:EClass" name="Account">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="id" lowerBound="1" iD="true"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="name" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <!-- unbound Action via @OData.Bound=false -> ActionImport -->
+    <eOperations name="resetAll">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Bound" value="false"/>
+      </eAnnotations>
+    </eOperations>
+    <!-- unbound, composable Function returning a collection -> FunctionImport -->
+    <eOperations name="searchDocuments" upperBound="-1" eType="#//Document">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Bound" value="false"/>
+        <details key="OData.Composable" value="true"/>
+      </eAnnotations>
+      <eParameters name="q" lowerBound="1"
+          eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    </eOperations>
+  </eClassifiers>
+</ecore:EPackage>

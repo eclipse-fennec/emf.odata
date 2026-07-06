@@ -1,0 +1,21 @@
+-library: enableOSGi-Test
+
+-runrequires: \
+	bnd.identity;id='org.eclipse.fennec.odata.itests',\
+	bnd.identity;id='org.eclipse.fennec.odata.runtime',\
+	bnd.identity;id='org.eclipse.fennec.odata.persistence.inmemory',\
+	bnd.identity;id='org.eclipse.fennec.odata.metadata',\
+	bnd.identity;id='org.eclipse.fennec.model.metadata',\
+	bnd.identity;id='org.apache.felix.http.jetty12',\
+	bnd.identity;id='org.apache.felix.configadmin'
+
+-runbundles.test: \
+	org.eclipse.fennec.odata.itests;version=snapshot
+
+-runfw: org.apache.felix.framework
+
+-runee: JavaSE-21
+
+-runproperties: \
+	org.osgi.service.http.port=18893,\
+	org.apache.felix.http.host=127.0.0.1

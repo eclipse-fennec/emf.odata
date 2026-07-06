@@ -1,0 +1,38 @@
+Bundle-Name: Fennec OData Query
+Bundle-Description: E4 query translation — own ANTLR4 grammar for the OData $filter/$orderby expression syntax (req §3.6, no Olingo expression parsing), mapped onto the m2x OCL AST as the internal predicate IR (req §3.5)
+Bundle-Version: 1.0.0
+
+-library: enableEMF
+
+src=${^src},src-gen,src-gen-parser
+
+# The ANTLR4 parser in src-gen-parser is generated ONCE from grammar/ODataFilter.g4 and
+# checked in (convention like org.eclipse.fennec.m2x.ocl.parser). It lives in its OWN source
+# folder because the fennecEMF -generate below owns and wipes src-gen. Regenerate after
+# grammar changes:
+#   java -cp <antlr4-tool-cp> org.antlr.v4.Tool -visitor -no-listener \
+#     -package org.eclipse.fennec.odata.query.antlr -Xexact-output-dir \
+#     -o src-gen-parser/org/eclipse/fennec/odata/query/antlr grammar/ODataFilter.g4
+# (-Xexact-output-dir: without it ANTLR appends the grammar's directory to -o;
+#  delete the generated *.interp/*.tokens afterwards, only the .java files stay)
+
+# Include the grammar for downstream reuse ($apply/$compute extensions)
+-includeresource.grammar: grammar=grammar
+-includeresource.model: model=model
+
+# $apply aggregation submodel (E4-AP-4, req §3.5) — cross-references the m2x OCL model
+# (resolved from the buildpath jar, same mechanism as the metadata bundle's genmodel refs)
+-generate:\
+	model/apply.genmodel;\
+		generate=fennecEMF;\
+		genmodel=model/apply.genmodel;\
+		output=src-gen
+
+# Suppress deprecation warnings from ANTLR4-generated code
+javac.deprecation = false
+
+-buildpath: \
+	org.osgi.service.condition;version=latest,\
+	org.antlr.antlr4-runtime;version=latest,\
+	org.eclipse.fennec.m2x.ocl.model;version=latest,\
+	org.eclipse.fennec.emf.osgi.api;version=latest

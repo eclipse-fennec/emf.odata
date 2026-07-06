@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ecore:EPackage xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore"
+    name="company" nsURI="http://example.org/company" nsPrefix="company">
+
+  <!-- ============== Enums ============== -->
+  <eClassifiers xsi:type="ecore:EEnum" name="Priority">
+    <eLiterals name="LOW" value="0"/>
+    <eLiterals name="MEDIUM" value="1"/>
+    <eLiterals name="HIGH" value="2"/>
+    <eLiterals name="CRITICAL" value="3"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="Department">
+    <eLiterals name="ENGINEERING" value="0"/>
+    <eLiterals name="SALES" value="1"/>
+    <eLiterals name="HR" value="2"/>
+    <eLiterals name="FINANCE" value="3"/>
+  </eClassifiers>
+
+  <!-- ============== Complex types (no key) ============== -->
+  <eClassifiers xsi:type="ecore:EClass" name="Address">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="street" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="city" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="zip" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="country"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="GeoLocation">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="latitude" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDouble"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="longitude" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDouble"/>
+  </eClassifiers>
+  <!-- complex type nesting other complex types by containment -->
+  <eClassifiers xsi:type="ecore:EClass" name="ContactInfo">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="email"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="phones" upperBound="-1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="address" lowerBound="1"
+        eType="#//Address" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="location"
+        eType="#//GeoLocation" containment="true"/>
+  </eClassifiers>
+
+  <!-- ============== Abstract root entity ============== -->
+  <eClassifiers xsi:type="ecore:EClass" name="AbstractEntity" abstract="true">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="id" lowerBound="1" iD="true"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="createdAt"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDate"/>
+  </eClassifiers>
+
+  <!-- ============== Entity hierarchy (3 levels) ============== -->
+  <eClassifiers xsi:type="ecore:EClass" name="Person" eSuperTypes="#//AbstractEntity">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="firstName" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="lastName" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <!-- complex-typed members: single + collection (must become CSDL Properties, not navigation) -->
+    <eStructuralFeatures xsi:type="ecore:EReference" name="contact"
+        eType="#//ContactInfo" containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="previousAddresses" upperBound="-1"
+        eType="#//Address" containment="true"/>
+  </eClassifiers>
+
+  <eClassifiers xsi:type="ecore:EClass" name="Employee" eSuperTypes="#//Person">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="salary" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDouble"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="department" lowerBound="1"
+        eType="#//Department"/>
+    <!-- self-referential 1:N, bidirectional -->
+    <eStructuralFeatures xsi:type="ecore:EReference" name="manager"
+        eType="#//Employee" eOpposite="#//Employee/reports"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="reports" upperBound="-1"
+        eType="#//Employee" eOpposite="#//Employee/manager"/>
+    <!-- N:M, bidirectional -->
+    <eStructuralFeatures xsi:type="ecore:EReference" name="projects" upperBound="-1"
+        eType="#//Project" eOpposite="#//Project/team"/>
+    <!-- void return -> bound Action -->
+    <eOperations name="raiseSalary">
+      <eParameters name="amount" lowerBound="1"
+          eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDouble"/>
+    </eOperations>
+    <!-- returns Collection(Project) -> bound Function -->
+    <eOperations name="currentProjects" upperBound="-1" eType="#//Project"/>
+  </eClassifiers>
+
+  <eClassifiers xsi:type="ecore:EClass" name="Project" eSuperTypes="#//AbstractEntity">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="name" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="priority" lowerBound="1"
+        eType="#//Priority"/>
+    <!-- N:M opposite of Employee.projects -->
+    <eStructuralFeatures xsi:type="ecore:EReference" name="team" upperBound="-1"
+        eType="#//Employee" eOpposite="#//Employee/projects"/>
+    <!-- single navigation, NO opposite -->
+    <eStructuralFeatures xsi:type="ecore:EReference" name="lead"
+        eType="#//Employee"/>
+    <!-- containment 1:N, bidirectional with the container reference -->
+    <eStructuralFeatures xsi:type="ecore:EReference" name="milestones" upperBound="-1"
+        eType="#//Milestone" containment="true" eOpposite="#//Milestone/project"/>
+  </eClassifiers>
+
+  <eClassifiers xsi:type="ecore:EClass" name="Milestone" eSuperTypes="#//AbstractEntity">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="title" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="dueDate"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDate"/>
+    <!-- container reference, opposite of Project.milestones -->
+    <eStructuralFeatures xsi:type="ecore:EReference" name="project" lowerBound="1"
+        eType="#//Project" eOpposite="#//Project/milestones"/>
+  </eClassifiers>
+
+  <!-- ============== Standalone entity with a COMPOSITE key ============== -->
+  <eClassifiers xsi:type="ecore:EClass" name="RegionCode">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="countryCode" lowerBound="1" iD="true"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="regionCode" lowerBound="1" iD="true"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="name" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+
+</ecore:EPackage>

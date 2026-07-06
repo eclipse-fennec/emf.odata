@@ -1,0 +1,27 @@
+Bundle-Name: Fennec OData Runtime
+Bundle-Description: Server runtime skeleton (E6/E7, ADR-0001): catch-all ODataServlet on the OSGi HTTP Whiteboard — $metadata via the CSDL converter (E2), entity-set queries via the QueryService SPI (E5) with OData-JSON responses (E3), plus hard request limits (top, expression length, nesting depth) against resource exhaustion
+Bundle-Version: 1.0.0
+
+-library: enableEMF
+
+-buildpath: \
+	org.osgi.service.condition;version=latest,\
+	org.apache.felix.http.servlet-api;version=latest,\
+	org.osgi.service.servlet;version=latest,\
+	org.eclipse.fennec.m2x.ocl.model;version=latest,\
+	org.antlr.antlr4-runtime;version=latest,\
+	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.odata.persistence.api;version=project,\
+	org.eclipse.fennec.odata.csdl;version=project,\
+	org.eclipse.fennec.odata.codec.json;version=project,\
+	org.eclipse.fennec.codec.api;version=latest,\
+	org.eclipse.fennec.codec;version=latest,\
+	org.eclipse.fennec.codec.metadata;version=latest,\
+	org.eclipse.fennec.model.metadata.api;version=latest,\
+	org.eclipse.fennec.model.metadata;version=latest,\
+	org.odata.csdl.model;version=latest,\
+	org.eclipse.emf.ecore.xmi;version=latest,\
+	org.eclipse.fennec.emf.osgi.api;version=latest,\
+	tools.jackson.core.jackson-core;version=latest,\
+	tools.jackson.core.jackson-databind;version=latest,\
+	com.fasterxml.jackson.core.jackson-annotations;version=latest

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<genmodel:GenModel xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore"
+    xmlns:genmodel="http://www.eclipse.org/emf/2002/GenModel" copyrightText="Copyright (c) 2026 Contributors to the Eclipse Foundation.&#xA;&#xA;This program and the accompanying materials are made&#xA;available under the terms of the Eclipse Public License 2.0&#xA;which is available at https://www.eclipse.org/legal/epl-2.0/&#xA;&#xA;SPDX-License-Identifier: EPL-2.0&#xA;&#xA;Contributors:&#xA;  Data In Motion Consulting - initial implementation"
+    modelDirectory="/org.eclipse.fennec.odata.query/src-gen" modelPluginID="org.eclipse.fennec.odata.query"
+    modelName="Apply" rootExtendsClass="org.eclipse.emf.ecore.impl.MinimalEObjectImpl$Container"
+    importerID="org.eclipse.emf.importer.ecore" complianceLevel="21.0" copyrightFields="false"
+    usedGenPackages="../../org.eclipse.fennec.m2x.ocl.model/model/ocl.genmodel#//ocl"
+    operationReflection="true" importOrganizing="true" oSGiCompatible="true">
+  <foreignModel>apply.ecore</foreignModel>
+  <genPackages prefix="Apply" basePackage="org.eclipse.fennec.odata.query" resource="XMI"
+      disposableProviderFactory="true" ecorePackage="apply.ecore#/">
+    <genEnums typeSafeEnumCompatible="false" ecoreEnum="apply.ecore#//AggregateMethod">
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/SUM"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/MIN"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/MAX"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/AVERAGE"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/COUNT_DISTINCT"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/COUNT"/>
+    </genEnums>
+    <genClasses ecoreClass="apply.ecore#//ApplyPipeline">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//ApplyPipeline/transformations"/>
+    </genClasses>
+    <genClasses image="false" ecoreClass="apply.ecore#//ApplyTransformation"/>
+    <genClasses ecoreClass="apply.ecore#//FilterTransformation">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//FilterTransformation/predicate"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//GroupByTransformation">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//GroupByTransformation/groupingProperties"/>
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//GroupByTransformation/then"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//AggregateTransformation">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//AggregateTransformation/aggregations"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//AggregateExpression">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//AggregateExpression/expression"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//AggregateExpression/method"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//AggregateExpression/alias"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//ComputeTransformation">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//ComputeTransformation/computeExpressions"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//ComputeExpression">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//ComputeExpression/expression"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//ComputeExpression/alias"/>
+    </genClasses>
+  </genPackages>
+</genmodel:GenModel>
