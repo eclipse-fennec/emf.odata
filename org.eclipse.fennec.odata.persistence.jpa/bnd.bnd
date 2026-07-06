@@ -1,0 +1,27 @@
+Bundle-Name: Fennec OData JPA Query Backend
+Bundle-Description: JPA QueryService (E5): translates the OCL predicate IR into Jakarta Persistence Criteria queries — full pushdown (filter/order/paging/count/derived-type casts), no in-memory filtering; consumes EntityManagerFactory services provided by Eclipse Fennec Persistence JPA
+Bundle-Version: 1.0.0
+
+-library: enableEMF
+
+-buildpath: \
+	org.osgi.service.condition;version=latest,\
+	org.eclipse.fennec.m2x.ocl.model;version=latest,\
+	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.odata.persistence.api;version=project,\
+	org.antlr.antlr4-runtime;version=latest,\
+	jakarta.persistence-api;version=latest,\
+	org.eclipse.fennec.emf.osgi.api;version=latest
+
+# Tests bootstrap a real EclipseLink + H2 persistence unit (dynamic EMF entities) via the
+# Fennec Persistence JPA non-OSGi path — the same stack the EntityManagerFactory service
+# uses at runtime.
+-testpath: \
+	com.h2database,\
+	org.eclipse.persistence.asm;version=latest,\
+	org.eclipse.persistence.jpa;version=latest,\
+	org.eclipse.persistence.jpa.jpql;version=latest,\
+	org.eclipse.persistence.core;version=latest,\
+	org.eclipse.fennec.persistence;version=latest,\
+	org.eclipse.fennec.persistence.orm;version=latest,\
+	org.eclipse.fennec.persistence.eclipselink;version=latest

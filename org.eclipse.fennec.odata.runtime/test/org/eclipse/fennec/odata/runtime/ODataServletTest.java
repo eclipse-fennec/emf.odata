@@ -552,6 +552,17 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("pushdown refusal: UnsupportedOperationException from the backend → 501")
+	void backendRefusal() throws Exception {
+		backendFailure.set(new UnsupportedOperationException("no pushdown for this construct"));
+		Response response = get("/Product", Map.of("$filter", "price lt 3.00"));
+		backendFailure.set(null);
+		assertEquals(501, response.status(),
+				"backends refuse loudly instead of answering wrongly");
+		assertFalse(response.body().contains("no pushdown"), "internal message stays inside");
+	}
+
+	@Test
 	@DisplayName("4.01: Prefer maxpagesize (with and without odata. prefix) caps the page")
 	void preferMaxPageSize() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null),

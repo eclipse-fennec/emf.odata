@@ -205,6 +205,10 @@ public class ODataServlet extends HttpServlet {
 		} catch (ODataQueryParseException | IllegalArgumentException e) {
 			// client errors carry the (parser-)message — it never contains internals
 			error(response, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
+		} catch (UnsupportedOperationException e) {
+			// pushdown backends refuse loudly instead of answering wrongly (e.g. a JPA
+			// backend without a translation for a construct) — an honest 501
+			error(response, 501, "the backend does not support this request");
 		} catch (Exception e) {
 			// no exception details leave the server (no class names, no stack traces)
 			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
