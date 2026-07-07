@@ -347,11 +347,22 @@ public class OclToCriteriaTranslator {
 		return new Expr(ctx.cb().length(string(operand(op.getOwnedSource(), ctx), ctx.cb())));
 	}
 
-	/** OData substring is 0-based, JPQL SUBSTRING is 1-based. */
+	/**
+	 * OData substring is 0-based, JPQL SUBSTRING is 1-based. A negative start counts from
+	 * the end of the string, clamped to position 1 ([OData-URL] 5.1.1.7 SHOULD) — pushed
+	 * down as a CASE over LENGTH(source).
+	 */
 	private Expression<String> substring(OperationCallExp op, Context ctx) {
 		CriteriaBuilder cb = ctx.cb();
 		Expression<String> source = string(operand(op.getOwnedSource(), ctx), cb);
-		Expression<Integer> start = cb.sum(intExpr(op.getOwnedArguments().get(0), ctx), 1);
+		Expression<Integer> requested = intExpr(op.getOwnedArguments().get(0), ctx);
+		Expression<Integer> fromEnd = cb.sum(cb.sum(cb.length(source), requested), 1);
+		Expression<Integer> clampedFromEnd = cb.<Integer>selectCase()
+				.when(cb.greaterThan(fromEnd, 0), fromEnd)
+				.otherwise(cb.literal(1));
+		Expression<Integer> start = cb.<Integer>selectCase()
+				.when(cb.greaterThanOrEqualTo(requested, 0), cb.sum(requested, 1))
+				.otherwise(clampedFromEnd);
 		if (op.getOwnedArguments().size() > 1) {
 			return cb.substring(source, start, intExpr(op.getOwnedArguments().get(1), ctx));
 		}

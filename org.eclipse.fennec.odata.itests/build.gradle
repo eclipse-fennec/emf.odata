@@ -5,6 +5,7 @@ def resolveTask = tasks.named("resolve.test") {
 	dependsOn([
 		":org.eclipse.fennec.odata.runtime",
 		":org.eclipse.fennec.odata.persistence.inmemory",
+		":org.eclipse.fennec.odata.persistence.jpa",
 		":org.eclipse.fennec.odata.persistence.api",
 		":org.eclipse.fennec.odata.metadata",
 		":org.eclipse.fennec.odata.query",

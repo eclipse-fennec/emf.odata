@@ -170,6 +170,14 @@ class InMemoryQueryServiceTest {
 				null, 0, -1, false)));
 		assertEquals(List.of("Milk", "Cheese", "Bread", "Salt"),
 				names(query("isof(webshop.Product)", null, 0, -1, false)));
+		// [OData-URL] 5.1.1.7 substring edge cases: negative start counts from the end
+		// (clamped), start beyond the end yields the empty string
+		assertEquals(List.of("Milk"), names(query("substring(name,-4) eq 'Milk'", null, 0, -1, false)));
+		assertEquals(List.of("Milk"), names(query("substring(name,-3,2) eq 'il'", null, 0, -1, false)));
+		assertEquals(4, names(query("substring(name,-99) eq name", null, 0, -1, false)).size(),
+				"negative start beyond the length clamps to the whole string");
+		assertEquals(4, names(query("substring(name,99) eq ''", null, 0, -1, false)).size(),
+				"start beyond the end is the empty string, not an error");
 	}
 
 	@Test

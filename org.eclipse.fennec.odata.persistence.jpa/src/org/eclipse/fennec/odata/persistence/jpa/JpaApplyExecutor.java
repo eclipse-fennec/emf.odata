@@ -22,9 +22,13 @@ import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.query.OrderBySegment;
+import org.eclipse.emf.ecore.EAttribute;
+import org.eclipse.emf.ecore.EClass;
 import org.eclipse.fennec.odata.query.apply.AggregateExpression;
 import org.eclipse.fennec.odata.query.apply.AggregateTransformation;
 import org.eclipse.fennec.odata.query.apply.ApplyTransformation;
+import org.eclipse.fennec.odata.query.apply.ComputeExpression;
+import org.eclipse.fennec.odata.query.apply.ComputeTransformation;
 import org.eclipse.fennec.odata.query.apply.FilterTransformation;
 import org.eclipse.fennec.odata.query.apply.GroupByTransformation;
 
@@ -65,9 +69,14 @@ class JpaApplyExecutor {
 
 	private final OclToCriteriaTranslator translator = new OclToCriteriaTranslator();
 
-	/** The pipeline split into WHERE stages, ONE grouping/aggregation stage, HAVING stages. */
-	private record Stages(List<OclExpression> where, GroupByTransformation groupBy,
-			AggregateTransformation aggregate, List<OclExpression> having) {
+	/** The pipeline split into WHERE stages, computes, ONE grouping/aggregation, HAVING. */
+	private record Stages(List<OclExpression> where, List<ComputeTransformation> computes,
+			GroupByTransformation groupBy, AggregateTransformation aggregate,
+			List<OclExpression> having) {
+	}
+
+	/** One result column: nested map segments for grouping paths, one segment otherwise. */
+	private record Column(List<String> segments) {
 	}
 
 	/** One grouping path: its OCL expression and the slash-joined segment names. */
@@ -104,56 +113,90 @@ class JpaApplyExecutor {
 		}
 		List<Map<String, Object>> rows = new ArrayList<>();
 		for (Tuple tuple : typedQuery.getResultList()) {
-			rows.add(row(tuple, groupings, aggregations));
+			rows.add(row(tuple, composition.columns()));
 		}
 
 		long total = query.count() ? countGroups(query, stages, groupings, aggregations, em, entity) : -1;
 		return new ApplyResult(rows, total);
 	}
 
-	/** Everything both queries share: selections in order plus the named-expression scope. */
-	private record Composition(List<Selection<?>> selections, Map<String, Expression<?>> named) {
+	/** Everything both queries share: selections, their column shapes, the named scope. */
+	private record Composition(List<Selection<?>> selections, List<Column> columns,
+			Map<String, Expression<?>> named) {
 	}
 
 	/** Builds WHERE/GROUP BY/HAVING and the selections against the given query's root. */
 	private Composition compose(ApplyQuery query, Stages stages, List<GroupingPath> groupings,
 			List<AggregateExpression> aggregations, CriteriaBuilder cb, CriteriaQuery<?> cq,
 			Root<?> root) {
-		if (!stages.where().isEmpty()) {
-			cq.where(stages.where().stream()
-					.map(predicate -> translator.predicate(predicate, cb, cq, root))
-					.toArray(Predicate[]::new));
+		List<Predicate> where = new ArrayList<>();
+		for (OclExpression predicate : stages.where()) {
+			where.add(translator.predicate(predicate, cb, cq, root));
 		}
 
 		Map<String, Expression<?>> named = new LinkedHashMap<>();
 		List<Selection<?>> selections = new ArrayList<>();
+		List<Column> columns = new ArrayList<>();
+		// computed aliases first — visible to grouping, aggregates, HAVING and $orderby
+		List<String> computedAliases = new ArrayList<>();
+		for (ComputeTransformation stage : stages.computes()) {
+			for (ComputeExpression compute : stage.getComputeExpressions()) {
+				named.put(compute.getAlias(), translator.expression(
+						compute.getExpression(), cb, cq, root, named));
+				computedAliases.add(compute.getAlias());
+			}
+		}
 		List<Expression<?>> groupBy = new ArrayList<>();
 		for (GroupingPath grouping : groupings) {
 			Expression<?> path = leftJoinedPath(root, grouping.segments());
 			named.put(grouping.name(), path);
 			selections.add(path);
+			columns.add(new Column(grouping.segments()));
 			groupBy.add(path);
 		}
 		for (AggregateExpression aggregation : aggregations) {
-			Expression<?> aggregate = aggregate(aggregation, cb, cq, root);
+			Expression<?> aggregate = aggregate(aggregation, cb, cq, root, named);
 			named.put(aggregation.getAlias(), aggregate);
 			selections.add(aggregate);
+			columns.add(new Column(List.of(aggregation.getAlias())));
 		}
 		if (!groupBy.isEmpty()) {
 			cq.groupBy(groupBy.toArray(Expression[]::new));
 		}
+		if (groupings.isEmpty() && aggregations.isEmpty()) {
+			// terminal compute: one row per entity — its attributes plus the aliases
+			EClass shape = query.entityType();
+			for (EAttribute attribute : shape.getEAllAttributes()) {
+				if (!attribute.isMany()) {
+					selections.add(root.get(attribute.getName()));
+					columns.add(new Column(List.of(attribute.getName())));
+				}
+			}
+			for (String alias : computedAliases) {
+				selections.add(named.get(alias));
+				columns.add(new Column(List.of(alias)));
+			}
+		}
 
-		List<Predicate> having = new ArrayList<>();
+		// post-pipeline predicates: HAVING for grouped queries, plain WHERE otherwise
+		// (SQL only allows HAVING with GROUP BY; terminal compute rows have no grouping)
+		boolean grouped = !groupings.isEmpty() || !aggregations.isEmpty();
+		List<Predicate> post = new ArrayList<>();
 		for (OclExpression predicate : stages.having()) {
-			having.add(translator.predicate(predicate, cb, cq, root, named));
+			post.add(translator.predicate(predicate, cb, cq, root, named));
 		}
 		if (query.rowFilter() != null) {
-			having.add(translator.predicate(query.rowFilter(), cb, cq, root, named));
+			post.add(translator.predicate(query.rowFilter(), cb, cq, root, named));
 		}
-		if (!having.isEmpty()) {
-			cq.having(having.toArray(Predicate[]::new));
+		if (grouped && !post.isEmpty()) {
+			cq.having(post.toArray(Predicate[]::new));
+		} else {
+			where.addAll(post);
 		}
-		return new Composition(selections, named);
+		if (!where.isEmpty()) {
+			cq.where(where.toArray(Predicate[]::new));
+		}
+		return new Composition(selections, columns, named);
 	}
 
 	/**
@@ -163,14 +206,15 @@ class JpaApplyExecutor {
 	 */
 	private long countGroups(ApplyQuery query, Stages stages, List<GroupingPath> groupings,
 			List<AggregateExpression> aggregations, EntityManager em, EntityType<?> entity) {
-		if (groupings.isEmpty()) {
+		if (groupings.isEmpty() && stages.aggregate() != null) {
 			return 1; // ungrouped aggregate: always exactly one row
 		}
 		CriteriaBuilder cb = em.getCriteriaBuilder();
 		CriteriaQuery<Tuple> cq = cb.createTupleQuery();
 		Root<?> root = cq.from(entity);
 		Composition composition = compose(query, stages, groupings, aggregations, cb, cq, root);
-		cq.multiselect(composition.selections().subList(0, groupings.size()));
+		int keyColumns = groupings.isEmpty() ? 1 : groupings.size();
+		cq.multiselect(composition.selections().subList(0, keyColumns));
 		return em.createQuery(cq).getResultList().size();
 	}
 
@@ -179,6 +223,7 @@ class JpaApplyExecutor {
 	private Stages split(ApplyQuery query) {
 		List<OclExpression> where = new ArrayList<>();
 		List<OclExpression> having = new ArrayList<>();
+		List<ComputeTransformation> computes = new ArrayList<>();
 		GroupByTransformation groupBy = null;
 		AggregateTransformation aggregate = null;
 		for (ApplyTransformation stage : query.pipeline().getTransformations()) {
@@ -207,15 +252,22 @@ class JpaApplyExecutor {
 					}
 					aggregate = aggregation;
 				}
+				case ComputeTransformation compute -> {
+					if (groupBy != null || aggregate != null) {
+						throw new UnsupportedOperationException(
+								"compute after the grouping stage has no JPA pushdown");
+					}
+					computes.add(compute);
+				}
 				default -> throw new UnsupportedOperationException("transformation '"
 						+ stage.eClass().getName() + "' has no JPA pushdown");
 			}
 		}
-		if (groupBy == null && aggregate == null) {
+		if (groupBy == null && aggregate == null && computes.isEmpty()) {
 			throw new UnsupportedOperationException(
-					"$apply without a grouping/aggregation stage has no JPA pushdown");
+					"$apply without a grouping/aggregation/compute stage has no JPA pushdown");
 		}
-		return new Stages(where, groupBy, aggregate, having);
+		return new Stages(where, computes, groupBy, aggregate, having);
 	}
 
 	private List<GroupingPath> groupingPaths(GroupByTransformation groupBy) {
@@ -250,22 +302,22 @@ class JpaApplyExecutor {
 
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	private Expression<?> aggregate(AggregateExpression aggregation, CriteriaBuilder cb,
-			CriteriaQuery<?> cq, Root<?> root) {
+			CriteriaQuery<?> cq, Root<?> root, Map<String, Expression<?>> named) {
 		if (aggregation.getMethod() == null) {
 			throw new UnsupportedOperationException("aggregate without a method");
 		}
 		return switch (aggregation.getMethod()) {
 			case COUNT -> cb.count(root); // $count virtual aggregate, no operand
 			case COUNT_DISTINCT -> cb.countDistinct(
-					translator.expression(aggregation.getExpression(), cb, cq, root));
+					translator.expression(aggregation.getExpression(), cb, cq, root, named));
 			case SUM -> cb.sum((Expression) translator
-					.expression(aggregation.getExpression(), cb, cq, root));
+					.expression(aggregation.getExpression(), cb, cq, root, named));
 			case MIN -> cb.min((Expression) translator
-					.expression(aggregation.getExpression(), cb, cq, root));
+					.expression(aggregation.getExpression(), cb, cq, root, named));
 			case MAX -> cb.max((Expression) translator
-					.expression(aggregation.getExpression(), cb, cq, root));
+					.expression(aggregation.getExpression(), cb, cq, root, named));
 			case AVERAGE -> cb.avg((Expression) translator
-					.expression(aggregation.getExpression(), cb, cq, root));
+					.expression(aggregation.getExpression(), cb, cq, root, named));
 		};
 	}
 
@@ -279,16 +331,12 @@ class JpaApplyExecutor {
 		return orders;
 	}
 
-	/** Reference row shape: grouping paths as nested maps, aggregate aliases top-level. */
-	private static Map<String, Object> row(Tuple tuple, List<GroupingPath> groupings,
-			List<AggregateExpression> aggregations) {
+	/** Reference row shape: grouping paths as nested maps, aliases/attributes top-level. */
+	private static Map<String, Object> row(Tuple tuple, List<Column> columns) {
 		Map<String, Object> row = new LinkedHashMap<>();
 		int index = 0;
-		for (GroupingPath grouping : groupings) {
-			nest(row, grouping.segments(), tuple.get(index++));
-		}
-		for (AggregateExpression aggregation : aggregations) {
-			row.put(aggregation.getAlias(), tuple.get(index++));
+		for (Column column : columns) {
+			nest(row, column.segments(), tuple.get(index++));
 		}
 		return row;
 	}

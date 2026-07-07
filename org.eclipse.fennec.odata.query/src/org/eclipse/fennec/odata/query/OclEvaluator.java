@@ -10,7 +10,7 @@
  * Contributors:
  *   Data In Motion Consulting - initial implementation
  */
-package org.eclipse.fennec.odata.persistence.inmemory;
+package org.eclipse.fennec.odata.query;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
@@ -53,7 +53,7 @@ import org.eclipse.fennec.m2x.model.ocl.VariableExp;
  *
  * <p>Semantics deliberately simple for v1: null comparisons are false (except {@code eq}/
  * {@code ne} against the null literal), logic treats null as false, numeric comparison happens
- * on {@link BigDecimal}. Contexts are EObjects or $apply row maps ({@link ApplyExecutor}).
+ * on {@link BigDecimal}. Contexts are EObjects or $apply row maps.
  * Unknown operations and unresolvable variables raise {@link IllegalArgumentException},
  * never silently evaluate to a value — wrong results are worse than errors.
  */
@@ -231,15 +231,17 @@ public class OclEvaluator {
 			Map<Variable, Object> bindings) {
 		String value = text(source);
 		int start = decimal(evaluate(args.get(0), self, bindings)).intValue();
-		if (start < 0 || start > value.length()) {
-			throw new IllegalArgumentException("substring start out of range: " + start);
-		}
+		// [OData-URL] 5.1.1.7: start beyond the end → empty string; a negative start counts
+		// from the end of the string (clamped to the full string)
+		int effectiveStart = start < 0
+				? Math.max(0, value.length() + start)
+				: Math.min(start, value.length());
 		if (args.size() > 1) {
 			int length = decimal(evaluate(args.get(1), self, bindings)).intValue();
-			int end = Math.min(value.length(), Math.max(start, start + length));
-			return value.substring(start, end);
+			int end = Math.min(value.length(), Math.max(effectiveStart, effectiveStart + length));
+			return value.substring(effectiveStart, end);
 		}
-		return value.substring(start);
+		return value.substring(effectiveStart);
 	}
 
 	// --- value coercion ---

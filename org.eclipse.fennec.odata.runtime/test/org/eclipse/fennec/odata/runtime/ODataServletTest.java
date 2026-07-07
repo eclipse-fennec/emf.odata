@@ -83,6 +83,7 @@ class ODataServletTest {
 	private boolean deleteFound = true;
 	private boolean unlinkFound = true;
 	private final AtomicReference<String> lastLink = new AtomicReference<>();
+	private final List<String> linkCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
 	private final AtomicReference<String> lastUnlink = new AtomicReference<>();
 	private final AtomicReference<EObject> lastRelated = new AtomicReference<>();
 
@@ -171,6 +172,7 @@ class ODataServletTest {
 			public void link(EClass entityType, String rawKey, String navigation,
 					String targetRawKey) {
 				lastLink.set(navigation + ":" + targetRawKey);
+				linkCalls.add(rawKey + "→" + navigation + ":" + targetRawKey);
 			}
 
 			@Override
@@ -459,6 +461,43 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("$expand with nested $filter trims the expanded collection (copies only)")
+	void filterInExpand() throws Exception {
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		EObject great = pkg.getEFactoryInstance().create(reviewClass);
+		great.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+		great.eSet(reviewClass.getEStructuralFeature("comment"), "great");
+		EObject poor = pkg.getEFactoryInstance().create(reviewClass);
+		poor.eSet(reviewClass.getEStructuralFeature("stars"), 2);
+		poor.eSet(reviewClass.getEStructuralFeature("comment"), "poor");
+		EObject milk = product("p1", "Milk", "1.20", null);
+		((List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews")))
+				.addAll(List.of(great, poor));
+		backendResult = List.of(milk);
+
+		Response filtered = get("/Product", Map.of("$expand", "reviews($filter=stars ge 4)"));
+		assertEquals(200, filtered.status(), filtered.body());
+		assertTrue(filtered.body().contains("\"great\""), filtered.body());
+		assertFalse(filtered.body().contains("\"poor\""),
+				"filtered out of the expanded collection: " + filtered.body());
+		assertEquals(Set.of("reviews"), lastQuery.get().expand(),
+				"the backend still prefetches the plain navigation");
+		assertEquals(2, ((List<?>) milk.eGet(productClass.getEStructuralFeature("reviews"))).size(),
+				"the nested filter never mutates backend objects");
+
+		Response single = get("/Product('p1')", Map.of("$expand", "reviews($filter=stars ge 4)"));
+		assertTrue(single.body().contains("\"great\"") && !single.body().contains("\"poor\""),
+				"single-entity reads filter the same way: " + single.body());
+
+		assertEquals(501, get("/Product", Map.of("$expand", "reviews($top=1)")).status(),
+				"other nested options are honestly unimplemented");
+		assertEquals(400, get("/Product", Map.of("$expand", "category($filter=name eq 'x')")).status(),
+				"nested $filter needs a collection-valued navigation");
+		assertEquals(400, get("/Product", Map.of("$expand", "reviews($filter=nosuch eq 1)")).status(),
+				"the nested expression parses against the TARGET type");
+	}
+
+	@Test
 	@DisplayName("$apply: rows as JSON; incompatible combinations and XML rejected; 501 without support")
 	void applyEndpoint() throws Exception {
 		applyResult = List.of(Map.of("Total", new BigDecimal("5.70")));
@@ -722,6 +761,52 @@ class ODataServletTest {
 		deleteFound = false;
 		assertEquals(404, callWrite("DELETE", "/Product('gone')", null, null).status());
 		deleteFound = true;
+	}
+
+	@Test
+	@DisplayName("@odata.bind: payload bindings become reference operations after the write")
+	void odataBindOnWrite() throws Exception {
+		linkCalls.clear();
+		Response created = callWrite("POST", "/Product",
+				"{\"id\":\"n1\",\"name\":\"New\",\"category@odata.bind\":\"Category('c1')\"}",
+				"application/json");
+		assertEquals(201, created.status(), created.body());
+		assertEquals(List.of("'n1'→category:'c1'"), linkCalls,
+				"the created entity is linked to the bound target");
+		assertEquals("New", lastWritePayload.get()
+				.eGet(productClass.getEStructuralFeature("name")),
+				"the bind member is stripped before decoding");
+
+		linkCalls.clear();
+		assertEquals(204, callWrite("PATCH", "/Product('p1')",
+				"{\"name\":\"x\",\"reviews@odata.bind\":[\"Review('r1')\",\"Review('r2')\"]}",
+				"application/json").status());
+		assertEquals("'p1'", lastWriteKey.get(), "the update itself still ran");
+		assertEquals(List.of("'p1'→reviews:'r1'", "'p1'→reviews:'r2'"), linkCalls,
+				"collection binds link every target");
+
+		assertEquals(400, callWrite("POST", "/Product",
+				"{\"id\":\"n2\",\"nosuch@odata.bind\":\"Category('c1')\"}",
+				"application/json").status(), "unknown navigation");
+		assertEquals(400, callWrite("POST", "/Product",
+				"{\"id\":\"n2\",\"name@odata.bind\":\"Category('c1')\"}",
+				"application/json").status(), "attributes cannot be bound");
+		assertEquals(400, callWrite("POST", "/Product",
+				"{\"id\":\"n2\",\"category@odata.bind\":[\"Category('c1')\"]}",
+				"application/json").status(), "array bind on a single-valued navigation");
+		assertEquals(400, callWrite("POST", "/Product",
+				"{\"id\":\"n2\",\"reviews@odata.bind\":\"Review('r1')\"}",
+				"application/json").status(), "single bind on a collection navigation");
+		assertEquals(400, callWrite("POST", "/Product",
+				"{\"id\":\"n2\",\"category@odata.bind\":\"Review('r1')\"}",
+				"application/json").status(), "target set must match the navigation's type");
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		assertEquals(400, callWrite("POST", "/Product('p1')/reviews", Map.of(),
+				"{\"stars\":5,\"category@odata.bind\":\"Category('c1')\"}", "application/json",
+				Map.of()).status(),
+				"related-create payloads validate bindings against the CHILD type (Review"
+						+ " has no such navigation; valid child bindings answer 501)");
+		backendResult = List.of();
 	}
 
 	@Test

@@ -16,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.LinkedHashSet;
 import java.util.ArrayList;
@@ -65,6 +66,7 @@ import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.CachingODataQueryParser;
+import org.eclipse.fennec.odata.query.OclEvaluator;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataResourceParser;
 import org.eclipse.fennec.odata.query.ResourcePath;
@@ -93,6 +95,7 @@ import jakarta.servlet.Servlet;
 import jakarta.servlet.http.HttpServlet;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -131,6 +134,7 @@ public class ODataServlet extends HttpServlet {
 	private final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	private final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
 	private final CachingODataQueryParser parser = new CachingODataQueryParser();
+	private final OclEvaluator expandFilterEvaluator = new OclEvaluator();
 	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
 	private final Map<EPackage, ODataPackageProfile> profiles =
 			java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
@@ -309,11 +313,15 @@ public class ODataServlet extends HttpServlet {
 							"POST addresses the entity set, not an entity");
 					return;
 				}
-				EObject payload = readPayload(request, response, entityType);
+				WritePayload payload = readPayload(request, response, entityType);
 				if (payload == null) {
 					return; // error already written
 				}
-				EObject created = writeService.create(entityType, payload);
+				EObject created = writeService.create(entityType, payload.entity());
+				if (!payload.bindings().isEmpty()) {
+					applyBindings(writeService, entityType,
+							rawKeyOf(created, entityType), payload.bindings());
+				}
 				respondCreated(path.entitySet(), created, entityType, request, response);
 			}
 			case "PATCH", "PUT" -> {
@@ -325,12 +333,15 @@ public class ODataServlet extends HttpServlet {
 				if (!preconditionHolds(entityType, path.key(), request, response)) {
 					return; // 428/412 already written
 				}
-				EObject payload = readPayload(request, response, entityType);
+				WritePayload payload = readPayload(request, response, entityType);
 				if (payload == null) {
 					return; // error already written
 				}
 				WriteService.WriteResult result = writeService.update(entityType, path.key(),
-						payload, "PUT".equals(request.getMethod()));
+						payload.entity(), "PUT".equals(request.getMethod()));
+				if (!payload.bindings().isEmpty()) {
+					applyBindings(writeService, entityType, path.key(), payload.bindings());
+				}
 				if (result.created()) { // OData upsert (13.1.1/29)
 					respondCreated(path.entitySet(), result.entity(), entityType, request, response);
 				} else {
@@ -413,12 +424,16 @@ public class ODataServlet extends HttpServlet {
 						"only POST creates related entities");
 				return;
 			}
-			EObject child = readPayload(request, response, reference.getEReferenceType());
+			WritePayload child = readPayload(request, response, reference.getEReferenceType());
 			if (child == null) {
 				return; // error already written
 			}
+			if (!child.bindings().isEmpty()) {
+				error(response, 501, "@odata.bind is not supported below the entity level");
+				return;
+			}
 			EObject created = writeService.createRelated(entityType, path.key(),
-					reference.getName(), child);
+					reference.getName(), child.entity());
 			response.setStatus(HttpServletResponse.SC_CREATED);
 			response.setHeader("Location", request.getRequestURI());
 			String json = entityJson(created, created.eClass(), null, Set.of());
@@ -654,12 +669,17 @@ public class ODataServlet extends HttpServlet {
 		}
 	}
 
+	/** A decoded write payload: the entity plus {@code @odata.bind} targets per navigation. */
+	private record WritePayload(EObject entity, Map<EReference, List<String>> bindings) {}
+
 	/**
 	 * Reads and decodes the JSON payload into an EObject of the addressed type — the codec
 	 * leaves exactly the transmitted features set ({@code eIsSet} = "was in the payload").
+	 * {@code "nav@odata.bind"} members ([OData-JSON] 8.5 / [OData-Protocol] 11.4.2.1) are
+	 * extracted BEFORE decoding and returned as raw target keys per navigation.
 	 * Writes the error response and returns null for media-type, size and syntax violations.
 	 */
-	private EObject readPayload(HttpServletRequest request, HttpServletResponse response,
+	private WritePayload readPayload(HttpServletRequest request, HttpServletResponse response,
 			EClass entityType) throws IOException {
 		String contentType = request.getContentType();
 		if (contentType == null
@@ -678,6 +698,13 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_BAD_REQUEST, "empty payload");
 			return null;
 		}
+		Map<EReference, List<String>> bindings = new LinkedHashMap<>();
+		if (new String(body, StandardCharsets.UTF_8).contains("@odata.bind")) {
+			body = extractBindings(body, entityType, bindings, response);
+			if (body == null) {
+				return null; // error already written
+			}
+		}
 		ODataJsonResourceImpl resource = new ODataJsonResourceImpl(
 				URI.createURI("request.odatajson"), metadataService);
 		Map<Object, Object> options = new HashMap<>();
@@ -693,7 +720,87 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
 			return null;
 		}
-		return entity;
+		return new WritePayload(entity, bindings);
+	}
+
+	/**
+	 * Pulls {@code "nav@odata.bind"} members out of the payload: validates the navigation and
+	 * the target URLs, fills {@code bindings} and returns the body WITHOUT the bind members
+	 * (the codec only sees plain features). Null after a written error response.
+	 */
+	private byte[] extractBindings(byte[] body, EClass entityType,
+			Map<EReference, List<String>> bindings, HttpServletResponse response)
+			throws IOException {
+		JsonNode document;
+		try {
+			document = new ObjectMapper().readTree(body);
+		} catch (Exception e) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+			return null;
+		}
+		if (!(document instanceof ObjectNode object)) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+			return null;
+		}
+		List<String> bindMembers = new ArrayList<>();
+		object.propertyStream().map(Map.Entry::getKey)
+				.filter(name -> name.endsWith("@odata.bind")).forEach(bindMembers::add);
+		for (String member : bindMembers) {
+			String navigationName = member.substring(0, member.length() - "@odata.bind".length());
+			if (!(entityType.getEStructuralFeature(navigationName) instanceof EReference reference)) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST, "'"
+						+ ODataJson.sanitize(navigationName) + "' is not a navigation property");
+				return null;
+			}
+			JsonNode value = object.get(member);
+			List<String> targets = new ArrayList<>();
+			if (value.isArray() && reference.isMany()) {
+				for (JsonNode element : value) {
+					if (!element.isTextual()) {
+						error(response, HttpServletResponse.SC_BAD_REQUEST,
+								"@odata.bind targets must be entity URLs");
+						return null;
+					}
+					String key = refTargetKey(element.asString(),
+							reference.getEReferenceType(), response);
+					if (key == null) {
+						return null; // error already written
+					}
+					targets.add(key);
+				}
+			} else if (value.isTextual() && !reference.isMany()) {
+				String key = refTargetKey(value.asString(), reference.getEReferenceType(), response);
+				if (key == null) {
+					return null; // error already written
+				}
+				targets.add(key);
+			} else {
+				error(response, HttpServletResponse.SC_BAD_REQUEST,
+						"@odata.bind takes a single entity URL for single-valued and"
+								+ " an array of entity URLs for collection-valued navigations");
+				return null;
+			}
+			bindings.put(reference, targets);
+			object.remove(member);
+		}
+		return new ObjectMapper().writeValueAsBytes(object);
+	}
+
+	/** Applies {@code @odata.bind} targets as reference operations after the entity write. */
+	private void applyBindings(WriteService writeService, EClass entityType, String rawKey,
+			Map<EReference, List<String>> bindings) {
+		for (Map.Entry<EReference, List<String>> binding : bindings.entrySet()) {
+			for (String targetKey : binding.getValue()) {
+				writeService.link(entityType, rawKey, binding.getKey().getName(), targetKey);
+			}
+		}
+	}
+
+	/** The entity's raw key literal (as it would appear in its edit URL), or null. */
+	private static String rawKeyOf(EObject entity, EClass entityType) {
+		EAttribute id = entityType.getEAllAttributes().stream()
+				.filter(EAttribute::isID).findFirst().orElse(null);
+		return id == null ? null : urlKeyLiteral(id, entity.eGet(id));
 	}
 
 	/** 201 with Location/OData-EntityId (the entity's edit URL) and the created entity body. */
@@ -845,7 +952,7 @@ public class ODataServlet extends HttpServlet {
 		EClass context = castType != null ? castType : target.entityType();
 		boolean xml = wantsXml(request);
 		SelectTree select = selectOption(request, context);
-		Set<String> expand = expandOption(request, context);
+		Map<String, OclExpression> expand = expandOption(request, context);
 		Map<String, String> aliases = parameterAliases(request);
 
 		List<OrderBySegment> orderBy = parseChecked(option(request, "$orderby"),
@@ -861,14 +968,16 @@ public class ODataServlet extends HttpServlet {
 				orderBy == null ? List.of() : orderBy,
 				skip, top + 1,
 				"true".equals(option(request, "$count")),
-				expand); // backends prefetch expanded navigations (no N+1, no lazy proxies)
+				expand.keySet()); // backends prefetch expanded navigations (no N+1, no lazy proxies)
 
 		QueryResult result = target.queryService().execute(query);
 		boolean hasMore = result.entities().size() > top;
 		List<EObject> page = hasMore ? result.entities().subList(0, top) : result.entities();
 
 		if (xml) { // XMI is a non-OData projection — trimmed, but without an embedded link
-			writeXmi(response, shaper.shapeAll(page, context, select, expand));
+			List<EObject> copies = shaper.shapeAll(page, context, select, expand.keySet());
+			copies.forEach(copy -> applyNestedFilters(copy, expand));
+			writeXmi(response, copies);
 			return;
 		}
 		StringBuilder json = new StringBuilder("{\"@odata.context\":\"")
@@ -938,7 +1047,7 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		EObject entity = fetchByKey(target, path.key(),
-				path.segments().isEmpty() ? expandOption(request, target.entityType())
+				path.segments().isEmpty() ? expandOption(request, target.entityType()).keySet()
 						: walkPrefetch(target.entityType(), path.segments()),
 				response);
 		if (entity == null) {
@@ -989,7 +1098,8 @@ public class ODataServlet extends HttpServlet {
 		List<ResourcePath.Segment> rest = path.segments().subList(1, path.segments().size());
 		if (cast.key() != null) {
 			EObject entity = fetchByKey(target, cast.key(),
-					rest.isEmpty() ? expandOption(request, castType) : walkPrefetch(castType, rest),
+					rest.isEmpty() ? expandOption(request, castType).keySet()
+							: walkPrefetch(castType, rest),
 					response);
 			if (entity == null) {
 				return; // error already written
@@ -1272,9 +1382,12 @@ public class ODataServlet extends HttpServlet {
 		// optimistic concurrency (13.1.1/26): the served ETag is the write preconditions' ETag
 		response.setHeader("ETag", etagOf(entity, entityType));
 		SelectTree select = selectOption(request, entityType);
-		Set<String> expand = expandOption(request, entityType);
+		Map<String, OclExpression> expand = expandOption(request, entityType);
 		if (wantsXml(request)) {
-			writeXmi(response, shaper.shapeAll(List.of(entity), entityType, select, expand));
+			List<EObject> copies = shaper.shapeAll(List.of(entity), entityType, select,
+					expand.keySet());
+			copies.forEach(copy -> applyNestedFilters(copy, expand));
+			writeXmi(response, copies);
 			return;
 		}
 		String json = entityJson(entity, entityType, select, expand);
@@ -1490,26 +1603,103 @@ public class ODataServlet extends HttpServlet {
 		return SelectTree.parse(select, entityType);
 	}
 
-	/** Validated {@code $expand} navigation names (always a set, possibly empty). */
-	private Set<String> expandOption(HttpServletRequest request, EClass entityType) {
+	/**
+	 * Validated {@code $expand} items ([OData-URL] 5.1.3): navigation name → nested
+	 * {@code $filter} IR (null without one). Only {@code $filter} is supported as a nested
+	 * option (on collection-valued navigations); other nested options answer 501.
+	 */
+	private Map<String, OclExpression> expandOption(HttpServletRequest request, EClass entityType) {
 		String expand = option(request, "$expand");
+		Map<String, OclExpression> items = new LinkedHashMap<>();
 		if (expand == null || expand.isBlank()) {
-			return Set.of();
+			return items;
 		}
-		Set<String> names = new LinkedHashSet<>();
-		for (String name : expand.split(",")) {
-			String trimmed = name.trim();
-			if (!(entityType.getEStructuralFeature(trimmed) instanceof EReference)) {
-				throw new ODataQueryParseException("unknown $expand navigation '" + trimmed + "'");
+		for (String item : splitExpandItems(expand)) {
+			String trimmed = item.trim();
+			String name = trimmed;
+			String nested = null;
+			int paren = trimmed.indexOf('(');
+			if (paren >= 0 && trimmed.endsWith(")")) {
+				name = trimmed.substring(0, paren).trim();
+				nested = trimmed.substring(paren + 1, trimmed.length() - 1).trim();
 			}
-			names.add(trimmed);
+			if (!(entityType.getEStructuralFeature(name) instanceof EReference reference)) {
+				throw new ODataQueryParseException("unknown $expand navigation '" + name + "'");
+			}
+			items.put(name, nested == null ? null : nestedExpandFilter(nested, reference));
 		}
-		return names;
+		return items;
+	}
+
+	/** One parenthesized expand option block — {@code $filter=<expr>} is the supported shape. */
+	private OclExpression nestedExpandFilter(String nested, EReference reference) {
+		int equals = nested.indexOf('=');
+		String optionName = equals < 0 ? nested : nested.substring(0, equals).trim();
+		if (!"$filter".equalsIgnoreCase(optionName) && !"filter".equalsIgnoreCase(optionName)) {
+			throw new UnsupportedOperationException(
+					"only $filter is supported as a nested $expand option");
+		}
+		if (!reference.isMany()) {
+			throw new ODataQueryParseException(
+					"$filter inside $expand applies to collection-valued navigations");
+		}
+		return parser.parseFilter(nested.substring(equals + 1).trim(),
+				reference.getEReferenceType());
+	}
+
+	/** Top-level comma split of {@code $expand} — parens and string literals stay intact. */
+	private static List<String> splitExpandItems(String expand) {
+		List<String> items = new ArrayList<>();
+		int depth = 0;
+		boolean quoted = false;
+		int start = 0;
+		for (int i = 0; i < expand.length(); i++) {
+			char c = expand.charAt(i);
+			if (c == '\'') {
+				quoted = !quoted;
+			} else if (!quoted && c == '(') {
+				depth++;
+			} else if (!quoted && c == ')') {
+				depth--;
+			} else if (!quoted && depth == 0 && c == ',') {
+				items.add(expand.substring(start, i));
+				start = i + 1;
+			}
+		}
+		items.add(expand.substring(start));
+		return items;
+	}
+
+	/** Nested {@code $expand} filters run on the SHAPED copy — never on backend objects. */
+	private void applyNestedFilters(EObject copy, Map<String, OclExpression> expand) {
+		for (Map.Entry<String, OclExpression> item : expand.entrySet()) {
+			if (item.getValue() == null) {
+				continue;
+			}
+			EStructuralFeature feature = copy.eClass().getEStructuralFeature(item.getKey());
+			if (feature != null && copy.eGet(feature) instanceof List<?> children) {
+				children.removeIf(child -> !expandFilterEvaluator
+						.matchesNullSafe(item.getValue(), child));
+			}
+		}
 	}
 
 	private String entityJson(EObject entity, EClass entityType, SelectTree select, Set<String> expand)
 			throws IOException {
-		EObject copy = shaper.shape(entity, entityType, select, expand, null);
+		return serializeEntity(entity, shaper.shape(entity, entityType, select, expand, null),
+				entityType, expand);
+	}
+
+	/** {@link #entityJson} for parsed expand specs: applies nested filters after shaping. */
+	private String entityJson(EObject entity, EClass entityType, SelectTree select,
+			Map<String, OclExpression> expand) throws IOException {
+		EObject copy = shaper.shape(entity, entityType, select, expand.keySet(), null);
+		applyNestedFilters(copy, expand);
+		return serializeEntity(entity, copy, entityType, expand.keySet());
+	}
+
+	private String serializeEntity(EObject entity, EObject copy, EClass entityType,
+			Set<String> expand) throws IOException {
 		ODataJsonResourceImpl resource = ODataJsonResourceImpl.minimalMetadata(
 				URI.createURI("response.odatajson"), metadataService, expand);
 		resource.getContents().add(copy);

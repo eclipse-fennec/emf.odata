@@ -50,12 +50,12 @@ Deep Updates, `@odata.bind`, PATCH-Delta auf Sets.
 | Enum-/Duration-Literale OHNE Präfix | ✅ **belegt 2026-07-04**: präfixlose Form ist per ABNF ein quoted Literal — parst als String, Evaluator vergleicht Enums namensbasiert (`color eq 'Green'`, Test in InMemoryQueryServiceTest); Duration analog als String |
 | String→Primitive-Casts in URLs | 🟡 (`cast()` vorhanden) |
 | Parameter-Aliase (`@p`) | ✅ **seit 2026-07-06**: `@name` in `$filter`/`$orderby` (auch nach `$apply`), Werte sind Expressions, rekursiv auflösbar (Tiefen-Cap 8 gegen Zyklen), unaufgelöst → 400; Alias-Werte durchlaufen die Pre-Parse-Limits; Cache wird bei Alias-Queries umgangen. Aliase als KEY-Werte offen (Key-Predicate-Parser, brauchts erst mit `/`\|`\`-fähigen String-Keys) |
-| SHOULD `in` | ✅ · SHOULD `divby` ✅ **2026-07-06** (→ OCL `/`, Dezimaldivision) · SHOULD negatives substring ❌ |
+| SHOULD `in` | ✅ · SHOULD `divby` ✅ **2026-07-06** (→ OCL `/`, Dezimaldivision) · SHOULD negatives substring ✅ **2026-07-07**: negativer Start zählt vom Ende (geklemmt), Start > Länge → Leerstring; in-memory UND JPA-Pushdown (CASE über LENGTH), Tests in beiden Differentialtests |
 | SHOULD `eq/ne null` auf Single-Navs | ✅ **belegt 2026-07-06**: funktionierte end-to-end (terminale EReference → ClassifierType, Evaluator-Objektgleichheit mit null); Regressionstest `navigationNullComparison` in InMemoryQueryServiceTest |
 | SHOULD CSDL-XML **und** CSDL-JSON | ❌ (JSON fehlt, Q9) |
 | SHOULD `Core.ODataVersions` / Capabilities-Annotations | ✅ **komplett seit 2026-07-06**: `Core.ODataVersions="4.0 4.01"` + Capabilities am EntityContainer (`ConformanceLevel=Minimal`, `BatchSupported=false`, `AsynchronousRequestsSupported=false`, `KeyAsSegmentSupported=false`) + Core-/Capabilities-`edmx:Reference` |
 
-**Bewertung: 4.01 Minimal (read-only) erfüllt** — verbleibende ❌ sind SHOULDs (CSDL-JSON/Q9, negatives substring, eq/ne null auf Navs).
+**Bewertung: 4.01 Minimal (read-only) erfüllt** — verbleibendes ❌ ist ein SHOULD (CSDL-JSON/Q9).
 
 ## 13.1.2 — Intermediate (Ausblick, read-only-relevant)
 

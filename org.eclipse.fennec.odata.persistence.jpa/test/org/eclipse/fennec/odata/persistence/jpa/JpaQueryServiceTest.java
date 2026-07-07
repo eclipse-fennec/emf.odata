@@ -88,6 +88,13 @@ class JpaQueryServiceTest extends JpaWebshopTestBase {
 				"typed date literal coerces to the column type");
 		assertEquals(List.of("Bread", "Cheese", "SaleMilk"),
 				names(query("length(name) gt 4", "name asc", 0, -1, false)));
+		// negative substring start counts from the end ([OData-URL] 5.1.1.7 SHOULD)
+		assertEquals(List.of("Milk", "SaleMilk"),
+				names(query("substring(name,-4) eq 'Milk'", "name asc", 0, -1, false)));
+		assertEquals(List.of("Milk", "SaleMilk"),
+				names(query("substring(name,-3,2) eq 'il'", "name asc", 0, -1, false)));
+		assertEquals(5, names(query("substring(name,-99) eq name", null, 0, -1, false)).size(),
+				"negative start beyond the length clamps to the whole string");
 	}
 
 	@Test
@@ -177,18 +184,47 @@ class JpaQueryServiceTest extends JpaWebshopTestBase {
 	}
 
 	@Test
+	@DisplayName("$apply compute: terminal rows with aliases, aliases usable in aggregates")
+	void computePushdown() {
+		// terminal compute: one row per entity, attributes + alias
+		var doubled = parser.parseApply("compute(rating mul 2 as Doubled)", productClass);
+		var rows = service.executeApply(new ApplyQuery(productClass, doubled,
+				parser.parseFilterAfterApply("Doubled ge 8", productClass, doubled),
+				parser.parseOrderByAfterApply("Doubled desc", productClass, doubled),
+				0, -1, true));
+		assertEquals(2, rows.rows().size(), "Cheese (10) and Bread (8): " + rows.rows());
+		assertEquals("Cheese", rows.rows().get(0).get("name"), "attributes ride along");
+		assertEquals(10, ((Number) rows.rows().get(0).get("Doubled")).intValue());
+		assertEquals(2, rows.totalCount());
+
+		// compute feeding a groupby aggregate
+		var grouped = parser.parseApply(
+				"compute(price mul 2 as DoublePrice)/groupby((category/name),aggregate(DoublePrice with sum as Total))",
+				productClass);
+		var groups = service.executeApply(
+				new ApplyQuery(productClass, grouped, null, List.of(), 0, -1, false)).rows();
+		var dairy = groups.stream()
+				.filter(r -> "Dairy".equals(((Map<?, ?>) r.get("category")).get("name")))
+				.findFirst().orElseThrow();
+		assertEquals(0, new BigDecimal("13.20").compareTo(new BigDecimal(dairy.get("Total").toString())),
+				"2 * (1.20 + 4.50 + 0.90): " + dairy);
+	}
+
+	@Test
 	@DisplayName("no silent fallback: pipelines without a pushdown raise (→ 501)")
 	void unsupportedConstructs() {
 		ApplyPipeline empty = ApplyFactory.eINSTANCE.createApplyPipeline();
 		assertThrows(UnsupportedOperationException.class,
 				() -> service.executeApply(new ApplyQuery(
 						productClass, empty, null, List.of(), 0, -1, false)),
-				"no grouping/aggregation stage");
+				"no grouping/aggregation/compute stage");
 
-		var compute = parser.parseApply("compute(rating mul 2 as Doubled)", productClass);
+		var late = parser.parseApply(
+				"groupby((category/name),aggregate(price with sum as Total))/compute(Total mul 2 as T2)",
+				productClass);
 		assertThrows(UnsupportedOperationException.class,
 				() -> service.executeApply(new ApplyQuery(
-						productClass, compute, null, List.of(), 0, -1, false)),
-				"compute stages have no pushdown yet");
+						productClass, late, null, List.of(), 0, -1, false)),
+				"compute after the grouping stage has no pushdown yet");
 	}
 }

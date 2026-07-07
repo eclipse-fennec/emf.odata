@@ -69,7 +69,8 @@ import jakarta.persistence.metamodel.EntityType;
  * without a pushdown raise {@link UnsupportedOperationException} — never a silently wrong
  * result (the servlet answers 501).
  */
-@Component(service = { QueryService.class, WriteService.class })
+@Component(service = { QueryService.class, WriteService.class },
+		property = "fennec.odata.backend=jpa")
 public class JpaQueryService implements QueryService, WriteService {
 
 	private final List<EntityManagerFactory> factories = new CopyOnWriteArrayList<>();

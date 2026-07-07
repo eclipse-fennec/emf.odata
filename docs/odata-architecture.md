@@ -232,17 +232,35 @@ ETags/If-Match (schwache Hashes, 428/412) und Property-Level-Writes (Replace-bas
 EMF-eIsSet-Semantik) nachgezogen — **„Updatable OData Service“ 4.0+4.01 damit beanspruchbar**
 (Details `odata-conformance-status.md`). e2e prüft ETag-Pflicht über echtes HTTP.
 
+2026-07-07 (6): **Kleinere offene Punkte geschlossen**: (a) `$apply`-**compute-Pushdown** im
+JPA-Backend (`JpaApplyExecutor`: compute-Aliase landen VOR Grouping/Aggregat/HAVING/orderby
+in der `named`-Scope; terminales compute selektiert alle single-valued-Attribute + Aliase;
+Post-Pipeline-Filter ohne Grouping → WHERE statt HAVING; compute NACH groupby weiterhin ehrlich
+UOE→501). (b) **OSGi-Verdrahtungstest** `JpaWiringIntegrationTest` (itests, eigenes
+`wiringshop.ecore`): EPackage-Service + ConfigAdmin (daanse-H2-DataSource +
+`fennec.jpa.PersistenceUnit` mit per `EntityMapper` generierter Mapping-Datei) →
+`EntityManagerFactory`-Service → `JpaQueryService` bindet dynamisch (Service-Property
+`fennec.odata.backend=jpa`) → Write+Read über die Services. (c) **negatives substring**
+(4.01-SHOULD): negativer Start zählt vom Ende, geklemmt; Start > Länge → Leerstring; in-memory
+UND JPA (CASE über LENGTH). (d) **`@odata.bind`** in Write-Payloads (POST/PATCH/PUT): Members
+werden vor dem Codec extrahiert/validiert (Nav-Typ-Prüfung, Ziel-URL gegen den Zieltyp) und
+nach dem Write als `link()`-Operationen angewandt; unterhalb der Entity-Ebene 501.
+(e) **`$filter` in `$expand`** (`reviews($filter=stars ge 4)`): Klammer-/Literal-bewusstes
+Item-Splitting, nested Expression parst gegen den ZIELTYP, Filterung läuft auf den GESHAPTEN
+Kopien (Backend-Objekte unangetastet, Prefetch unverändert); andere nested Optionen → 501,
+`$filter` auf single-valued Navs → 400. Dafür zog `OclEvaluator` von persistence.inmemory
+nach `org.eclipse.fennec.odata.query` um (Referenz-Semantik der IR gehört zum IR-Bundle).
+
 Nächste Schritte (Priorität, Intermediate-Plan 2026-07-06):
 
-1. **JPA-Backend Rest**: OSGi-Verdrahtungstest (Konfigurator → EntityManagerFactory →
-   QueryService) im itests-Setup; compute-Stufen im Criteria-Pushdown.
+1. ~~JPA-Backend Rest~~ ✅ 2026-07-07: OSGi-Verdrahtungstest UND compute-Pushdown (s.o.).
    Datums-Funktionen ✅ 2026-07-07: year/month/day/hour/minute/second → SQL EXTRACT über
    die EclipseLink-Expression-Brücke (JpaCriteriaBuilder.toExpression/extract/fromExpression
    — jakarta CriteriaBuilder.extract existiert erst ab Persistence-3.2-Implementierungen);
    date()/time() (ISO-String-Formen) bleiben ohne Pushdown → 501.
 2. ~~Rest-Intermediate 4.01 (MUSTs)~~ ✅ 2026-07-06 (eq/ne null belegt, nested `$select`
-   gebaut); verbleibende Intermediate-SHOULDs: `$filter` auf expandierten Entities,
-   Query-Optionen auf Nav-Pfaden, `$search` (s. Punkt 8), `$compute`.
+   gebaut); `$filter` auf expandierten Entities ✅ 2026-07-07 (s.o.); verbleibende
+   Intermediate-SHOULDs: Query-Optionen auf Nav-Pfaden, `$search` (s. Punkt 8), `$compute`.
 3. `ODataRequestFilter` als Whiteboard-Filter um `RequestLimits` (req §5.1.1, reines Verpacken).
 4. Nested `$expand`; `@odata.context`-Entity-URL-Formen.
 5. Aggregation-Ausbau entlang der 135 Harness-Skips (`AggregationAbnfAcceptanceTest`):
