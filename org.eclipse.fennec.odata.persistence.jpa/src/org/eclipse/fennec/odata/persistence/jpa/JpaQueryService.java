@@ -13,7 +13,9 @@
 package org.eclipse.fennec.odata.persistence.jpa;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.eclipse.emf.ecore.EClass;
@@ -39,6 +41,7 @@ import org.eclipse.persistence.config.QueryHints;
 
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.FetchParent;
 import jakarta.persistence.criteria.From;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Order;
@@ -99,10 +102,23 @@ public class JpaQueryService implements QueryService {
 			// the derived type is the context after a cast — treat() makes its attributes
 			// addressable in criteria paths ([OData-URL] 4.11)
 			From<?, ?> context = treated(query.castType(), cb, root, factory);
-			// single-valued $expand targets ride along in the SAME statement (paging-safe)
-			for (EReference reference : expandReferences(query)) {
-				if (!reference.isMany()) {
-					root.fetch(reference.getName(), JoinType.LEFT);
+			// single-valued $expand/walk chains ride along in the SAME statement (paging-safe
+			// nested LEFT fetch joins, deduplicated by prefix); chains hitting a to-many
+			// segment fall back to batch hints below
+			List<String> batchChains = new ArrayList<>();
+			Map<String, FetchParent<?, ?>> fetched = new HashMap<>();
+			for (List<EReference> chain : expandPaths(query)) {
+				FetchParent<?, ?> fetch = root;
+				StringBuilder prefix = new StringBuilder();
+				for (EReference reference : chain) {
+					prefix.append(prefix.isEmpty() ? "" : ".").append(reference.getName());
+					if (reference.isMany()) {
+						batchChains.add(prefix.toString());
+						break;
+					}
+					FetchParent<?, ?> parent = fetch;
+					fetch = fetched.computeIfAbsent(prefix.toString(),
+							key -> parent.fetch(reference.getName(), JoinType.LEFT));
 				}
 			}
 			Predicate where = wherePredicate(query, cb, cq, root, context, factory);
@@ -126,6 +142,10 @@ public class JpaQueryService implements QueryService {
 					typedQuery.setHint(QueryHints.BATCH, "e." + feature.getName());
 				}
 			}
+			for (String batchChain : batchChains) {
+				typedQuery.setHint(QueryHints.BATCH_TYPE, BatchFetchType.IN);
+				typedQuery.setHint(QueryHints.BATCH, "e." + batchChain);
+			}
 			if (query.skip() > 0) {
 				typedQuery.setFirstResult(query.skip());
 			}
@@ -143,36 +163,63 @@ public class JpaQueryService implements QueryService {
 		}
 	}
 
-	/** The non-containment navigations of {@code $expand} (containments load with the owner). */
-	private List<EReference> expandReferences(EntityQuery query) {
+	/**
+	 * The {@code $expand}/walk prefetch requests as reference chains, resolved against the
+	 * (cast-aware) context type. Entries may be plain navigation names or slash-separated
+	 * navigation paths (the servlet sends the walked prefix of a resource path); segments
+	 * that are no navigations end the chain — there is nothing to prefetch beyond them.
+	 */
+	private List<List<EReference>> expandPaths(EntityQuery query) {
 		EClass context = query.castType() != null ? query.castType() : query.entityType();
-		List<EReference> references = new ArrayList<>();
-		for (String name : query.expand()) {
-			if (context.getEStructuralFeature(name) instanceof EReference reference
-					&& !reference.isContainment()) {
-				references.add(reference);
+		List<List<EReference>> paths = new ArrayList<>();
+		for (String expand : query.expand()) {
+			List<EReference> chain = new ArrayList<>();
+			EClass current = context;
+			for (String segment : expand.split("/")) {
+				if (current == null
+						|| !(current.getEStructuralFeature(segment) instanceof EReference reference)) {
+					break;
+				}
+				chain.add(reference);
+				current = reference.getEReferenceType();
+			}
+			if (!chain.isEmpty()) {
+				paths.add(chain);
 			}
 		}
-		return references;
+		return paths;
 	}
 
 	/**
-	 * Touches the expanded navigations while the EntityManager is still open, so their values
-	 * are REAL materialized objects afterwards — the SPI contract promises the caller plain
-	 * readable results, never unresolved proxies or post-close lazy loads.
+	 * Touches the expanded navigation chains while the EntityManager is still open, so their
+	 * values are REAL materialized objects afterwards — the SPI contract promises the caller
+	 * plain readable results, never unresolved proxies or post-close lazy loads.
 	 */
 	private void materializeExpanded(List<EObject> entities, EntityQuery query) {
-		List<EReference> references = expandReferences(query);
-		if (references.isEmpty()) {
+		List<List<EReference>> paths = expandPaths(query);
+		if (paths.isEmpty()) {
 			return;
 		}
 		for (EObject entity : entities) {
-			for (EReference reference : references) {
-				Object value = entity.eGet(reference);
-				if (value instanceof List<?> members) {
-					members.size(); // triggers the batched load of the whole collection
+			for (List<EReference> chain : paths) {
+				descend(entity, chain, 0);
+			}
+		}
+	}
+
+	private void descend(EObject object, List<EReference> chain, int index) {
+		if (index >= chain.size()) {
+			return;
+		}
+		Object value = object.eGet(chain.get(index));
+		if (value instanceof List<?> members) {
+			for (Object member : members) { // touching loads the batched collection
+				if (member instanceof EObject child) {
+					descend(child, chain, index + 1);
 				}
 			}
+		} else if (value instanceof EObject child) {
+			descend(child, chain, index + 1);
 		}
 	}
 

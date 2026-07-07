@@ -199,8 +199,9 @@ abstract class JpaWebshopTestBase {
 
 	private void persistWebshopData() {
 		EEnum color = (EEnum) pkg.getEClassifier("Color");
-		EObject dairy = instance("Category", "id", "c1", "name", "Dairy");
-		EObject bakery = instance("Category", "id", "c2", "name", "Bakery");
+		EObject food = instance("Category", "id", "c0", "name", "Food");
+		EObject dairy = instance("Category", "id", "c1", "name", "Dairy", "parent", food);
+		EObject bakery = instance("Category", "id", "c2", "name", "Bakery", "parent", food);
 
 		EObject milk = instance("Product", "id", "p1", "name", "Milk",
 				"price", new BigDecimal("1.20"), "rating", 3, "active", true, "category", dairy,
@@ -218,7 +219,7 @@ abstract class JpaWebshopTestBase {
 		EObject sale = instance("DiscountedProduct", "id", "d1", "name", "SaleMilk",
 				"price", new BigDecimal("0.90"), "discount", 20, "category", dairy);
 
-		persist(dairy, bakery, milk, cheese, bread, salt, sale);
+		persist(food, dairy, bakery, milk, cheese, bread, salt, sale);
 	}
 
 	protected void persist(EObject... objects) {

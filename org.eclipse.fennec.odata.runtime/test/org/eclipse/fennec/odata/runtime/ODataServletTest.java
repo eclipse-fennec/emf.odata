@@ -28,6 +28,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -549,6 +550,28 @@ class ODataServletTest {
 				"unknown nested property");
 		assertEquals(400, get("/Product", Map.of("$select", "category($select=name")).status(),
 				"unbalanced parentheses");
+	}
+
+	@Test
+	@DisplayName("navigation walks send their prefix as prefetch path to the backend")
+	void walkPrefetchReachesBackend() throws Exception {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		dairy.eSet(categoryClass.getEStructuralFeature("name"), "Dairy");
+		backendResult = List.of(product("p1", "Milk", "1.20", dairy));
+
+		assertEquals(200, get("/Product('p1')/category/name", Map.of()).status());
+		assertEquals(Set.of("category"), lastQuery.get().expand(),
+				"the walked navigation prefix is a prefetch hint for the backend");
+
+		assertEquals(200, get("/Product('p1')/name", Map.of()).status());
+		assertEquals(Set.of(), lastQuery.get().expand(),
+				"attribute-only walks need no prefetch");
+
+		assertEquals(200, get("/Product('p1')", Map.of("$expand", "category")).status());
+		assertEquals(Set.of("category"), lastQuery.get().expand(),
+				"$expand on a single entity is a prefetch hint too");
 	}
 
 	@Test

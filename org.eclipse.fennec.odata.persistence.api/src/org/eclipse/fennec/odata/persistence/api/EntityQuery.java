@@ -36,10 +36,11 @@ import org.eclipse.fennec.odata.query.OrderBySegment;
  * @param skip       number of entities to skip (>= 0)
  * @param top        maximum number of entities to return, or -1 for no limit
  * @param count      whether the total match count (before skip/top) must be computed
- * @param expand     navigation names the caller will read on the results ({@code $expand}):
- *                   backends MUST prefetch/materialize them efficiently — accessing them
- *                   afterwards must neither lazy-load per entity (N+1) nor yield unresolved
- *                   proxies; never null (may be empty)
+ * @param expand     navigation names or slash-separated navigation PATHS the caller will
+ *                   read on the results ({@code $expand}, or the walked prefix of a resource
+ *                   path like {@code category/parent}): backends MUST prefetch/materialize
+ *                   them efficiently — accessing them afterwards must neither lazy-load per
+ *                   entity (N+1) nor yield unresolved proxies; never null (may be empty)
  */
 public record EntityQuery(EClass entityType, EClass castType, OclExpression filter,
 		List<OrderBySegment> orderBy, int skip, int top, boolean count, Set<String> expand) {

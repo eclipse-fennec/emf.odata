@@ -53,6 +53,32 @@ class JpaReadPathSqlCountTest extends JpaWebshopTestBase {
 	}
 
 	@Test
+	@DisplayName("navigation-walk prefetch: expand PATHS materialize the whole chain")
+	void walkChainMaterialization() {
+		emf.getCache().evictAll();
+		resetSqlCount();
+		// what the servlet issues for GET Product('p2')/category/parent/name: single entity
+		// by key, the walked navigation prefix as an expand path
+		QueryResult result = service.execute(new EntityQuery(productClass, null,
+				parser.parseFilter("id eq 'p2'", productClass), List.of(), 0, 1, false,
+				Set.of("category/parent")));
+
+		assertEquals(1, result.entities().size());
+		EObject cheese = result.entities().get(0);
+		EObject category = (EObject) cheese.eGet(productClass.getEStructuralFeature("category"));
+		assertNotNull(category, "level 1 of the walked chain must be present");
+		assertEquals("Dairy", category.eGet(category.eClass().getEStructuralFeature("name")),
+				"level 1 must be materialized, not an unresolved proxy");
+		EObject parent = (EObject) category.eGet(category.eClass().getEStructuralFeature("parent"));
+		assertNotNull(parent, "level 2 of the walked chain must be present");
+		assertEquals("Food", parent.eGet(parent.eClass().getEStructuralFeature("name")),
+				"level 2 must be materialized, not an unresolved proxy");
+		assertTrue(selectCount() <= 4,
+				"chain prefetch must not degrade into per-hop lazy loads, got " + selectCount()
+						+ ":\n" + String.join("\n", selectStatements()));
+	}
+
+	@Test
 	@DisplayName("$expand over N entities stays O(1) queries and materializes the targets")
 	void expandWithoutNPlusOne() {
 		// 20 products in 20 DISTINCT categories — the shared session cache cannot mask N+1

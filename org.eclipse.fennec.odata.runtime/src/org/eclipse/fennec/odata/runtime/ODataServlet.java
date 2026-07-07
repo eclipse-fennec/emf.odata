@@ -441,7 +441,8 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		EObject entity = fetchByKey(target, path.key(),
-				path.segments().isEmpty() ? expandOption(request, target.entityType()) : Set.of(),
+				path.segments().isEmpty() ? expandOption(request, target.entityType())
+						: walkPrefetch(target.entityType(), path.segments()),
 				response);
 		if (entity == null) {
 			return; // error already written
@@ -491,7 +492,8 @@ public class ODataServlet extends HttpServlet {
 		List<ResourcePath.Segment> rest = path.segments().subList(1, path.segments().size());
 		if (cast.key() != null) {
 			EObject entity = fetchByKey(target, cast.key(),
-					rest.isEmpty() ? expandOption(request, castType) : Set.of(), response);
+					rest.isEmpty() ? expandOption(request, castType) : walkPrefetch(castType, rest),
+					response);
 			if (entity == null) {
 				return; // error already written
 			}
@@ -516,6 +518,34 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		error(response, HttpServletResponse.SC_NOT_FOUND, "navigation requires an entity key");
+	}
+
+	/**
+	 * The navigation prefix of a walked resource path as one slash-separated expand path —
+	 * the backend prefetches/materializes it, so the walk never touches lazy references
+	 * after the backend's session closed. Cast segments switch the context type; the first
+	 * non-navigation segment ends the prefix (nothing to prefetch beyond it).
+	 */
+	private Set<String> walkPrefetch(EClass type, List<ResourcePath.Segment> segments) {
+		StringBuilder path = new StringBuilder();
+		EClass current = type;
+		for (ResourcePath.Segment segment : segments) {
+			if (segment instanceof ResourcePath.TypeCastSegment cast) {
+				EClass castType = resolveCastType(cast.qualifiedName(), null);
+				if (castType == null) {
+					break; // the walk itself will answer 404
+				}
+				current = castType;
+				continue;
+			}
+			if (!(segment instanceof ResourcePath.PropertySegment property)
+					|| !(current.getEStructuralFeature(property.name()) instanceof EReference reference)) {
+				break;
+			}
+			path.append(path.isEmpty() ? "" : "/").append(property.name());
+			current = reference.getEReferenceType();
+		}
+		return path.isEmpty() ? Set.of() : Set.of(path.toString());
 	}
 
 	/**
