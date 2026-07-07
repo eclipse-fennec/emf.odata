@@ -12,6 +12,7 @@
  */
 package org.eclipse.fennec.odata.csdl;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,7 @@ import org.open.oasis.docs.odata.ns.edm.TPropertyRef;
 import org.open.oasis.docs.odata.ns.edm.TTerm;
 import org.open.oasis.docs.odata.ns.edm.TTypeDefinition;
 import org.open.oasis.docs.odata.ns.edmx.EdmxRoot;
+import org.open.oasis.docs.odata.ns.edmx.TEdmx;
 
 /**
  * Maps an OASIS EDM/EDMX model instance back to an EMF {@link EPackage} (the read half of the
@@ -59,8 +61,64 @@ public class EdmToEcoreConverter {
 
 	private final EcoreFactory ecore = EcoreFactory.eINSTANCE;
 
+	/** Marker detail for a navigation whose qualified target awaits cross-schema resolution. */
+	private static final String PENDING_TARGET = "pendingTargetType";
+
 	public EPackage toEPackage(EdmxRoot root) {
 		return toEPackage(root.getEdmx().getDataServices().getSchema().get(0));
+	}
+
+	/**
+	 * Converts EVERY schema of the document — one {@link EPackage} each — and resolves
+	 * cross-schema navigation targets in a final pass over the qualified type names
+	 * (namespace or alias). Navigations whose target stays unresolved are REMOVED: an
+	 * {@link EReference} without a type is invalid Ecore and worse than an absent feature.
+	 */
+	public List<EPackage> toEPackages(TEdmx edmx) {
+		List<SchemaType> schemas = edmx.getDataServices().getSchema();
+		List<EPackage> packages = new ArrayList<>();
+		Map<String, EPackage> byNamespace = new HashMap<>();
+		for (SchemaType schema : schemas) {
+			EPackage pkg = toEPackage(schema);
+			packages.add(pkg);
+			byNamespace.put(schema.getNamespace(), pkg);
+			if (schema.getAlias() != null && !schema.getAlias().isBlank()) {
+				byNamespace.put(schema.getAlias(), pkg);
+			}
+		}
+		for (EPackage pkg : packages) {
+			for (EClassifier classifier : pkg.getEClassifiers()) {
+				if (classifier instanceof EClass eClass) {
+					resolvePendingTargets(eClass, byNamespace);
+				}
+			}
+		}
+		return packages;
+	}
+
+	private void resolvePendingTargets(EClass eClass, Map<String, EPackage> byNamespace) {
+		List<EStructuralFeature> unresolved = new ArrayList<>();
+		for (EStructuralFeature feature : eClass.getEStructuralFeatures()) {
+			EAnnotation marker = feature.getEAnnotation(ODataAnnotationConstants.SOURCE);
+			String qualified = marker == null ? null : marker.getDetails().get(PENDING_TARGET);
+			if (qualified == null) {
+				continue;
+			}
+			int dot = qualified.lastIndexOf('.');
+			EPackage targetPackage = dot < 0 ? null : byNamespace.get(qualified.substring(0, dot));
+			EClassifier target = targetPackage == null ? null
+					: targetPackage.getEClassifier(qualified.substring(dot + 1));
+			if (target instanceof EClass targetClass) {
+				feature.setEType(targetClass);
+				marker.getDetails().remove(PENDING_TARGET);
+				if (marker.getDetails().isEmpty()) {
+					feature.getEAnnotations().remove(marker);
+				}
+			} else {
+				unresolved.add(feature);
+			}
+		}
+		eClass.getEStructuralFeatures().removeAll(unresolved);
 	}
 
 	public EPackage toEPackage(SchemaType schema) {
@@ -275,6 +333,13 @@ public class EdmToEcoreConverter {
 			r.setName(n.getName());
 			if (target instanceof EClass tc) {
 				r.setEType(tc);
+			} else {
+				// target lives in another schema — remember the qualified name so a
+				// multi-schema conversion (toEPackages) can resolve it in its final pass
+				EAnnotation pending = ecore.createEAnnotation();
+				pending.setSource(ODataAnnotationConstants.SOURCE);
+				pending.getDetails().put(PENDING_TARGET, unwrap(type));
+				r.getEAnnotations().add(pending);
 			}
 			r.setContainment(n.isContainsTarget());
 			applyBounds(r, many, n.isNullable());

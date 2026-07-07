@@ -264,6 +264,24 @@ KeyMode → `idKeyMode("FEATURE_ONLY")` in `ODataJsonResourceImpl` (Key-Property
 Kontrollfeld weg; Regressionstest im codec.json-Bundle). Hinweis pyodata (SAP): V2-only,
 daher python-odata als V4-Werkzeug.
 
+2026-07-07 (8): **E8 — Client-Grundstein** (neues Bundle `org.eclipse.fennec.odata.client`):
+`ODataClient.connect(serviceRoot)` lädt `$metadata` über `java.net.http` (bewusst KEIN
+JAX-RS-Client: nur-API + Impl-Stack-Zwang, Jersey-in-OSGi-Schmerzen — gleiche Linie wie
+ADR-0001 serverseitig; Transport liegt hinter der `fetch`-Naht, `HttpClient` injizierbar)
+und konvertiert es über den E2-Read-Pfad zu Ecore. NEU dafür:
+`EdmToEcoreConverter.toEPackages(TEdmx)` — Multi-Schema-Konvertierung mit
+**Cross-Schema-Auflösung** von Navigationszielen über qualified names (Namespace ODER
+Alias); Unauflösbares wird ENTFERNT statt als EReference ohne Typ liegen zu bleiben (das
+NPE-te vorher in der Metadata-Registrierung). Fluenter `EntitySetRequest` (filter/orderBy/
+top/skip/count/select/expand, `get(key)`, `totalCount()`, `nextPage()`) mit exaktem
+URL-Encoding; Antworten dekodieren durch DASSELBE Codec-Profil wie der Server (Envelope via
+Jackson, `@odata.*`-Kontrollinfos werden vor dem Decode gestrippt). Metadata-Verdrahtung
+entkoppelt wie im Server: `MetadataWhiteboard` injizierbar (OSGi), Default ist eine
+ISOLIERTE Plain-Java-Instanz (Remote-Packages landen nie im geteilten Whiteboard).
+Tests: Unit gegen HTTP-Stub (CSDL aus echtem E2-Write-Pfad, URL-Assertions, Fehler-Mapping)
++ e2e in den itests: unser Client konsumiert unseren Server über echtes HTTP
+(Discovery, Filter-Pushdown, Single-Entity, `$count`, 404/400-Mapping).
+
 Nächste Schritte (Priorität, Intermediate-Plan 2026-07-06):
 
 1. ~~JPA-Backend Rest~~ ✅ 2026-07-07: OSGi-Verdrahtungstest UND compute-Pushdown (s.o.).
