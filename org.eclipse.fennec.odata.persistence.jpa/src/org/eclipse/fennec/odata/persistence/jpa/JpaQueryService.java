@@ -18,6 +18,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EReference;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
@@ -32,9 +34,13 @@ import org.osgi.service.component.annotations.ReferencePolicy;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.TypedQuery;
+import org.eclipse.persistence.annotations.BatchFetchType;
+import org.eclipse.persistence.config.QueryHints;
+
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.From;
+import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Order;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
@@ -93,6 +99,12 @@ public class JpaQueryService implements QueryService {
 			// the derived type is the context after a cast — treat() makes its attributes
 			// addressable in criteria paths ([OData-URL] 4.11)
 			From<?, ?> context = treated(query.castType(), cb, root, factory);
+			// single-valued $expand targets ride along in the SAME statement (paging-safe)
+			for (EReference reference : expandReferences(query)) {
+				if (!reference.isMany()) {
+					root.fetch(reference.getName(), JoinType.LEFT);
+				}
+			}
 			Predicate where = wherePredicate(query, cb, cq, root, context, factory);
 			if (where != null) {
 				cq.where(where);
@@ -102,6 +114,18 @@ public class JpaQueryService implements QueryService {
 			}
 
 			TypedQuery<Object> typedQuery = em.createQuery(cq);
+			// EVERY to-many feature (containments, element collections, expanded to-many
+			// navigations) loads per row by default — N+1 on each cache miss. Batching turns
+			// that into ONE IN-query per feature, and stays correct under setMaxResults
+			// (a collection fetch join would break the row counting).
+			root.alias("e");
+			EClass shape = query.castType() != null ? query.castType() : query.entityType();
+			for (EStructuralFeature feature : shape.getEAllStructuralFeatures()) {
+				if (feature.isMany()) {
+					typedQuery.setHint(QueryHints.BATCH_TYPE, BatchFetchType.IN);
+					typedQuery.setHint(QueryHints.BATCH, "e." + feature.getName());
+				}
+			}
 			if (query.skip() > 0) {
 				typedQuery.setFirstResult(query.skip());
 			}
@@ -112,9 +136,43 @@ public class JpaQueryService implements QueryService {
 			for (Object row : typedQuery.getResultList()) {
 				entities.add((EObject) row);
 			}
+			materializeExpanded(entities, query);
 
 			long total = query.count() ? count(query, em, cb, factory, entity) : -1;
 			return new QueryResult(entities, total);
+		}
+	}
+
+	/** The non-containment navigations of {@code $expand} (containments load with the owner). */
+	private List<EReference> expandReferences(EntityQuery query) {
+		EClass context = query.castType() != null ? query.castType() : query.entityType();
+		List<EReference> references = new ArrayList<>();
+		for (String name : query.expand()) {
+			if (context.getEStructuralFeature(name) instanceof EReference reference
+					&& !reference.isContainment()) {
+				references.add(reference);
+			}
+		}
+		return references;
+	}
+
+	/**
+	 * Touches the expanded navigations while the EntityManager is still open, so their values
+	 * are REAL materialized objects afterwards — the SPI contract promises the caller plain
+	 * readable results, never unresolved proxies or post-close lazy loads.
+	 */
+	private void materializeExpanded(List<EObject> entities, EntityQuery query) {
+		List<EReference> references = expandReferences(query);
+		if (references.isEmpty()) {
+			return;
+		}
+		for (EObject entity : entities) {
+			for (EReference reference : references) {
+				Object value = entity.eGet(reference);
+				if (value instanceof List<?> members) {
+					members.size(); // triggers the batched load of the whole collection
+				}
+			}
 		}
 	}
 

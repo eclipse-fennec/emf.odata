@@ -363,7 +363,8 @@ public class ODataServlet extends HttpServlet {
 								: parser.parseFilter(filter, context, aliases)),
 				orderBy == null ? List.of() : orderBy,
 				skip, top + 1,
-				"true".equals(option(request, "$count")));
+				"true".equals(option(request, "$count")),
+				expand); // backends prefetch expanded navigations (no N+1, no lazy proxies)
 
 		QueryResult result = target.queryService().execute(query);
 		boolean hasMore = result.entities().size() > top;
@@ -439,7 +440,9 @@ public class ODataServlet extends HttpServlet {
 		if (target == null) {
 			return;
 		}
-		EObject entity = fetchByKey(target, path.key(), response);
+		EObject entity = fetchByKey(target, path.key(),
+				path.segments().isEmpty() ? expandOption(request, target.entityType()) : Set.of(),
+				response);
 		if (entity == null) {
 			return; // error already written
 		}
@@ -487,7 +490,8 @@ public class ODataServlet extends HttpServlet {
 		}
 		List<ResourcePath.Segment> rest = path.segments().subList(1, path.segments().size());
 		if (cast.key() != null) {
-			EObject entity = fetchByKey(target, cast.key(), response);
+			EObject entity = fetchByKey(target, cast.key(),
+					rest.isEmpty() ? expandOption(request, castType) : Set.of(), response);
 			if (entity == null) {
 				return; // error already written
 			}
@@ -538,8 +542,8 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/** Loads one entity by raw key literal; writes the error response when absent/keyless. */
-	private EObject fetchByKey(Target target, String rawKey, HttpServletResponse response)
-			throws IOException {
+	private EObject fetchByKey(Target target, String rawKey, Set<String> expand,
+			HttpServletResponse response) throws IOException {
 		EAttribute keyAttribute = target.entityType().getEAllAttributes().stream()
 				.filter(EAttribute::isID).findFirst().orElse(null);
 		if (keyAttribute == null) {
@@ -555,7 +559,7 @@ public class ODataServlet extends HttpServlet {
 		keyFilter.getOwnedArguments().add(keyLiteral(rawKey));
 
 		QueryResult result = target.queryService().execute(
-				new EntityQuery(target.entityType(), keyFilter, List.of(), 0, 1, false));
+				new EntityQuery(target.entityType(), null, keyFilter, List.of(), 0, 1, false, expand));
 		if (result.entities().isEmpty()) {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
 			return null;

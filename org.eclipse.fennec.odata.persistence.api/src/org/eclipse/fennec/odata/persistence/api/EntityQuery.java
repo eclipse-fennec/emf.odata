@@ -14,6 +14,7 @@ package org.eclipse.fennec.odata.persistence.api;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
@@ -35,13 +36,18 @@ import org.eclipse.fennec.odata.query.OrderBySegment;
  * @param skip       number of entities to skip (>= 0)
  * @param top        maximum number of entities to return, or -1 for no limit
  * @param count      whether the total match count (before skip/top) must be computed
+ * @param expand     navigation names the caller will read on the results ({@code $expand}):
+ *                   backends MUST prefetch/materialize them efficiently — accessing them
+ *                   afterwards must neither lazy-load per entity (N+1) nor yield unresolved
+ *                   proxies; never null (may be empty)
  */
 public record EntityQuery(EClass entityType, EClass castType, OclExpression filter,
-		List<OrderBySegment> orderBy, int skip, int top, boolean count) {
+		List<OrderBySegment> orderBy, int skip, int top, boolean count, Set<String> expand) {
 
 	public EntityQuery {
 		Objects.requireNonNull(entityType, "entityType must not be null");
 		orderBy = orderBy == null ? List.of() : List.copyOf(orderBy);
+		expand = expand == null ? Set.of() : Set.copyOf(expand);
 		if (skip < 0) {
 			throw new IllegalArgumentException("skip must be >= 0, was: " + skip);
 		}
@@ -50,10 +56,16 @@ public record EntityQuery(EClass entityType, EClass castType, OclExpression filt
 		}
 	}
 
+	/** Query without expanded navigations. */
+	public EntityQuery(EClass entityType, EClass castType, OclExpression filter,
+			List<OrderBySegment> orderBy, int skip, int top, boolean count) {
+		this(entityType, castType, filter, orderBy, skip, top, count, Set.of());
+	}
+
 	/** Query without a derived-type cast (the common case). */
 	public EntityQuery(EClass entityType, OclExpression filter, List<OrderBySegment> orderBy,
 			int skip, int top, boolean count) {
-		this(entityType, null, filter, orderBy, skip, top, count);
+		this(entityType, null, filter, orderBy, skip, top, count, Set.of());
 	}
 
 	/** Query for all instances of a type, no filter, no paging. */
