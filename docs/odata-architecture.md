@@ -251,6 +251,19 @@ Kopien (Backend-Objekte unangetastet, Prefetch unverändert); andere nested Opti
 `$filter` auf single-valued Navs → 400. Dafür zog `OclEvaluator` von persistence.inmemory
 nach `org.eclipse.fennec.odata.query` um (Referenz-Semantik der IR gehört zum IR-Bundle).
 
+2026-07-07 (7): **E9-light — Akzeptanz mit echtem Fremd-Tooling**
+(`org.eclipse.fennec.odata.example/acceptance/`): python-odata (unabhängiger V4-Client von
+PyPI) reflektiert unser `$metadata` zu Entity-Klassen, liest/filtert/sortiert über seine
+eigene Query-DSL und legt per POST an; ETag-Handshake (GET → If-Match → DELETE, 428 ohne
+Precondition) über rohes HTTP. Die offizielle OASIS-`V4-CSDL-to-JSONSchema.xsl`
+(odata-json-schema) verdaut unser `$metadata` (214 Typ-Definitionen) und alle Live-Payloads
+(Collection, Single, `$filter`, `$expand`, `$select`) validieren gegen das generierte Schema.
+**Fund + Fix**: der Fennec-Codec leckte ein internes `_id`-Feld in die minimal-metadata-
+Payloads — `useId(false)` schaltet nur die Strategy, der Serializer gated aber auf den
+KeyMode → `idKeyMode("FEATURE_ONLY")` in `ODataJsonResourceImpl` (Key-Property bleibt,
+Kontrollfeld weg; Regressionstest im codec.json-Bundle). Hinweis pyodata (SAP): V2-only,
+daher python-odata als V4-Werkzeug.
+
 Nächste Schritte (Priorität, Intermediate-Plan 2026-07-06):
 
 1. ~~JPA-Backend Rest~~ ✅ 2026-07-07: OSGi-Verdrahtungstest UND compute-Pushdown (s.o.).

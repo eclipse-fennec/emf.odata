@@ -14,6 +14,7 @@ package org.eclipse.fennec.odata.codec.json;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,6 +30,7 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EAttribute;
@@ -108,6 +110,21 @@ class ODataJsonRoundTripTest {
 		assertTrue(json.contains("\"photo\":\"-_A\""), "Edm.Binary = base64url without padding: " + json);
 		assertTrue(json.contains("19.99"), "Edm.Decimal stays a JSON number: " + json);
 		assertTrue(json.contains("\"guid\":\"f89dee73-af9f-4cd4-b330-db93c25ff3c7\""), "Edm.Guid passthrough: " + json);
+	}
+
+	@Test
+	@DisplayName("minimal metadata: no codec control fields, key property stays")
+	void minimalMetadataHasNoControlFields() throws IOException {
+		ODataJsonResourceImpl resource = ODataJsonResourceImpl.minimalMetadata(
+				URI.createURI("test://product-minimal.odatajson"), metadataService, Set.of());
+		resource.getContents().add(sampleProduct());
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		resource.save(out, null);
+		String json = out.toString(StandardCharsets.UTF_8);
+
+		assertFalse(json.contains("\"_id\""), "codec-internal id field must not leak: " + json);
+		assertFalse(json.contains("\"@odata.id\""), "computable control info is omitted: " + json);
+		assertTrue(json.contains("\"id\":\"p1\""), "the key PROPERTY stays: " + json);
 	}
 
 	@Test

@@ -116,7 +116,10 @@ public class ODataJsonResourceImpl extends CodecResource {
 				.typeStrategy(TypeStrategy.SCHEMA_AND_TYPE)
 				.typeInclude(!minimalMetadata);
 		if (minimalMetadata) {
-			builder.useId(false); // key PROPERTIES stay — only the redundant control info goes
+			// key PROPERTIES stay — only the redundant control info goes. useId(false) alone
+			// switches the strategy, but the serializer gates on the KEY MODE: without
+			// FEATURE_ONLY a codec-internal "_id" field leaks into the OData payload
+			builder.useId(false).idKeyMode("FEATURE_ONLY");
 		} else {
 			builder.useId(true)
 					.idKey("@odata.id")
