@@ -50,18 +50,17 @@ import jakarta.persistence.metamodel.EntityType;
  *
  * <p>Filter, order, paging ({@code setFirstResult}/{@code setMaxResults}), {@code $count}
  * (separate COUNT query with the same predicate) and derived-type casts
- * ({@code TYPE(e) IN (subtypes)}) all run in the database. Constructs without a pushdown
- * raise {@link UnsupportedOperationException} — never a silently wrong result (the servlet
- * answers 501).
- *
- * <p>{@code $apply} aggregation pushdown is a follow-up work package; {@link #executeApply}
- * currently signals unsupported (→ 501), the in-memory backend remains the $apply reference.
+ * ({@code TYPE(e) IN (subtypes)}) all run in the database; {@code $apply} pipelines become
+ * grouped criteria queries ({@link JpaApplyExecutor}: WHERE/GROUP BY/HAVING). Constructs
+ * without a pushdown raise {@link UnsupportedOperationException} — never a silently wrong
+ * result (the servlet answers 501).
  */
 @Component(service = QueryService.class)
 public class JpaQueryService implements QueryService {
 
 	private final List<EntityManagerFactory> factories = new CopyOnWriteArrayList<>();
 	private final OclToCriteriaTranslator translator = new OclToCriteriaTranslator();
+	private final JpaApplyExecutor applyExecutor = new JpaApplyExecutor();
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
 	void addEntityManagerFactory(EntityManagerFactory factory) {
@@ -187,8 +186,14 @@ public class JpaQueryService implements QueryService {
 
 	@Override
 	public ApplyResult executeApply(ApplyQuery query) {
-		// $apply pushdown (Criteria groupBy) is the E5 follow-up — never aggregate wrongly
-		throw new UnsupportedOperationException("$apply pushdown is not implemented yet");
+		EntityManagerFactory factory = factoryFor(query.entityType());
+		if (factory == null) {
+			throw new IllegalStateException(
+					"no persistence unit for entity type " + query.entityType().getName());
+		}
+		try (EntityManager em = factory.createEntityManager()) {
+			return applyExecutor.execute(query, em, entityType(factory, query.entityType()));
+		}
 	}
 
 	// --- entity resolution: EClass name = entity name (Fennec Persistence JPA contract) ---

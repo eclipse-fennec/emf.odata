@@ -188,12 +188,75 @@ class JpaQueryServiceTest {
 	}
 
 	@Test
-	@DisplayName("no silent fallback: unsupported constructs raise, $apply signals 501")
+	@SuppressWarnings("unchecked")
+	@DisplayName("$apply pushdown: filter → WHERE, groupby(aggregate) → GROUP BY, alias filter → HAVING")
+	void applyPushdown() {
+		var pipeline = parser.parseApply(
+				"filter(price ne null)/groupby((category/name),aggregate(price with sum as Total,$count as Cnt))",
+				productClass);
+		List<Map<String, Object>> rows = service.executeApply(
+				new ApplyQuery(productClass, pipeline, null, List.of(), 0, -1, false)).rows();
+
+		assertEquals(2, rows.size(), "Salt (null price) is filtered before grouping: " + rows);
+		Map<String, Object> dairy = rows.stream()
+				.filter(r -> "Dairy".equals(((Map<String, Object>) r.get("category")).get("name")))
+				.findFirst().orElseThrow();
+		assertEquals(0, new BigDecimal("6.60").compareTo(new BigDecimal(dairy.get("Total").toString())),
+				"Milk 1.20 + Cheese 4.50 + SaleMilk 0.90: " + dairy);
+		assertEquals(3L, ((Number) dairy.get("Cnt")).longValue());
+
+		// alias usable in a subsequent filter stage → HAVING
+		var filtered = parser.parseApply(
+				"groupby((category/name),aggregate(price with sum as Total))/filter(Total gt 3.00)",
+				productClass);
+		assertEquals(1, service.executeApply(
+				new ApplyQuery(productClass, filtered, null, List.of(), 0, -1, false)).rows().size(),
+				"only Dairy exceeds 3.00");
+
+		// post-pipeline options: row filter with alias + orderby + paging + count
+		var grouped = parser.parseApply(
+				"groupby((category/name),aggregate(price with sum as Total))", productClass);
+		var post = service.executeApply(new ApplyQuery(productClass, grouped,
+				parser.parseFilterAfterApply("Total gt 1.00", productClass, grouped),
+				parser.parseOrderByAfterApply("Total desc", productClass, grouped), 0, 1, true));
+		assertEquals(1, post.rows().size(), "top 1 after ordering");
+		assertEquals("Dairy",
+				((Map<String, Object>) post.rows().get(0).get("category")).get("name"));
+		assertEquals(2, post.totalCount(), "Dairy + Bakery match the row filter (before paging)");
+	}
+
+	@Test
+	@DisplayName("$apply pushdown: null navigations form their own group; ungrouped aggregate")
+	void applyNullGroupAndUngrouped() {
+		var groups = parser.parseApply("groupby((category/name),aggregate($count as Cnt))",
+				productClass);
+		var rows = service.executeApply(
+				new ApplyQuery(productClass, groups, null, List.of(), 0, -1, false)).rows();
+		assertEquals(3, rows.size(), "Dairy, Bakery and the null-category group (Salt): " + rows);
+
+		var average = parser.parseApply("aggregate(price with average as AvgPrice)", productClass);
+		var row = service.executeApply(
+				new ApplyQuery(productClass, average, null, List.of(), 0, -1, true));
+		assertEquals(1, row.rows().size());
+		assertEquals(1, row.totalCount(), "an ungrouped aggregate is always one row");
+		assertEquals(2.35, ((Number) row.rows().get(0).get("AvgPrice")).doubleValue(), 0.0001,
+				"AVG ignores Salt's null price: 9.40 / 4");
+	}
+
+	@Test
+	@DisplayName("no silent fallback: pipelines without a pushdown raise (→ 501)")
 	void unsupportedConstructs() {
-		ApplyPipeline pipeline = ApplyFactory.eINSTANCE.createApplyPipeline();
+		ApplyPipeline empty = ApplyFactory.eINSTANCE.createApplyPipeline();
 		assertThrows(UnsupportedOperationException.class,
 				() -> service.executeApply(new ApplyQuery(
-						productClass, pipeline, null, List.of(), 0, -1, false)));
+						productClass, empty, null, List.of(), 0, -1, false)),
+				"no grouping/aggregation stage");
+
+		var compute = parser.parseApply("compute(rating mul 2 as Doubled)", productClass);
+		assertThrows(UnsupportedOperationException.class,
+				() -> service.executeApply(new ApplyQuery(
+						productClass, compute, null, List.of(), 0, -1, false)),
+				"compute stages have no pushdown yet");
 	}
 
 	// --- harness (NonOsgiPersistenceTestBase pattern, trimmed to what this test needs) ---

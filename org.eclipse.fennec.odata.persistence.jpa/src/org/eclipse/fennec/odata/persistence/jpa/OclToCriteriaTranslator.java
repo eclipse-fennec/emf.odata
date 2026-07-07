@@ -71,14 +71,18 @@ import jakarta.persistence.criteria.Subquery;
  */
 public class OclToCriteriaTranslator {
 
-	/** Translation state: the criteria nodes plus lambda-variable bindings. */
+	/**
+	 * Translation state: the criteria nodes, lambda-variable bindings and named expressions —
+	 * {@code $apply} aliases and grouped paths (by slash-joined path name), resolvable in
+	 * post-pipeline predicates (HAVING) and order keys.
+	 */
 	private record Context(CriteriaBuilder cb, AbstractQuery<?> query, From<?, ?> self,
-			Map<Variable, From<?, ?>> variables) {
+			Map<Variable, From<?, ?>> variables, Map<String, Expression<?>> named) {
 
 		Context nested(AbstractQuery<?> subquery, Variable variable, From<?, ?> binding) {
 			Map<Variable, From<?, ?>> inner = new HashMap<>(variables);
 			inner.put(variable, binding);
-			return new Context(cb, subquery, self, inner);
+			return new Context(cb, subquery, self, inner, named);
 		}
 	}
 
@@ -95,13 +99,26 @@ public class OclToCriteriaTranslator {
 	/** Translates a boolean-typed OCL expression into a criteria predicate. */
 	public Predicate predicate(OclExpression expression, CriteriaBuilder cb,
 			AbstractQuery<?> query, From<?, ?> root) {
-		return asPredicate(operand(expression, new Context(cb, query, root, new HashMap<>())), cb);
+		return predicate(expression, cb, query, root, Map.of());
+	}
+
+	/** {@link #predicate} with named expressions ($apply aliases / grouped paths) in scope. */
+	public Predicate predicate(OclExpression expression, CriteriaBuilder cb,
+			AbstractQuery<?> query, From<?, ?> root, Map<String, Expression<?>> named) {
+		return asPredicate(
+				operand(expression, new Context(cb, query, root, new HashMap<>(), named)), cb);
 	}
 
 	/** Translates a value-typed OCL expression (e.g. an {@code $orderby} key). */
 	public Expression<?> expression(OclExpression expression, CriteriaBuilder cb,
 			AbstractQuery<?> query, From<?, ?> root) {
-		Operand operand = operand(expression, new Context(cb, query, root, new HashMap<>()));
+		return expression(expression, cb, query, root, Map.of());
+	}
+
+	/** {@link #expression} with named expressions ($apply aliases / grouped paths) in scope. */
+	public Expression<?> expression(OclExpression expression, CriteriaBuilder cb,
+			AbstractQuery<?> query, From<?, ?> root, Map<String, Expression<?>> named) {
+		Operand operand = operand(expression, new Context(cb, query, root, new HashMap<>(), named));
 		return operand instanceof Expr expr ? expr.expression()
 				: cb.literal(((Const) operand).value());
 	}
@@ -118,15 +135,42 @@ public class OclToCriteriaTranslator {
 			case NullLiteralExp n -> new Const(null);
 			case EnumLiteralExp e -> new Const(e.getReferredLiteral() == null ? null
 					: e.getReferredLiteral().getName()); // enums compare by NAME (like the evaluator)
-			case PropertyCallExp p -> new Expr(path(p, ctx));
+			case PropertyCallExp p -> {
+				// a grouped path referenced post-pipeline resolves to the GROUPED expression
+				String pathName = ctx.named().isEmpty() ? null : pathName(p);
+				Expression<?> grouped = pathName == null ? null : ctx.named().get(pathName);
+				yield grouped != null ? new Expr(grouped) : new Expr(path(p, ctx));
+			}
 			case OperationCallExp op -> operation(op, ctx);
 			case IteratorExp it -> new Expr(lambda(it, ctx));
-			case VariableExp v -> throw new UnsupportedOperationException(
-					"variable '" + (v.getReferredVariable() == null ? "?"
-							: v.getReferredVariable().getName()) + "' outside a lambda scope");
+			case VariableExp v -> {
+				String name = v.getReferredVariable() == null ? null
+						: v.getReferredVariable().getName();
+				Expression<?> named = name == null ? null : ctx.named().get(name);
+				if (named == null) {
+					throw new UnsupportedOperationException(
+							"variable '" + (name == null ? "?" : name) + "' outside a lambda scope");
+				}
+				yield new Expr(named);
+			}
 			default -> throw new UnsupportedOperationException(
 					"expression kind " + exp.eClass().getName());
 		};
+	}
+
+	/** The slash-joined feature path of a plain property chain, or null for other shapes. */
+	static String pathName(PropertyCallExp p) {
+		if (p.getReferredProperty() == null) {
+			return null;
+		}
+		if (p.getOwnedSource() == null) {
+			return p.getReferredProperty().getName();
+		}
+		if (p.getOwnedSource() instanceof PropertyCallExp source) {
+			String prefix = pathName(source);
+			return prefix == null ? null : prefix + "/" + p.getReferredProperty().getName();
+		}
+		return null;
 	}
 
 	/** EMF feature path → criteria path; single-valued navigations become implicit joins. */
