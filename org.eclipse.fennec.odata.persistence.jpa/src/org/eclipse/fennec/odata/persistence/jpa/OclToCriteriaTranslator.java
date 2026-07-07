@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -41,6 +42,7 @@ import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.Variable;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
+import org.eclipse.persistence.jpa.JpaCriteriaBuilder;
 
 import jakarta.persistence.criteria.AbstractQuery;
 import jakarta.persistence.criteria.CriteriaBuilder;
@@ -239,9 +241,29 @@ public class OclToCriteriaTranslator {
 					1));
 			case "substring" -> new Expr(substring(op, ctx));
 
+			case "year", "month", "day", "hour", "minute", "second" ->
+				new Expr(extractDatePart(name, op, ctx));
+
 			default -> throw new UnsupportedOperationException(
 					"operation '" + name + "' has no JPA pushdown");
 		};
+	}
+
+	/**
+	 * OData date-part functions → SQL {@code EXTRACT(PART FROM …)} (portable across H2 and
+	 * PostgreSQL). The jakarta {@code CriteriaBuilder.extract} only exists from Persistence
+	 * 3.2 implementations on — EclipseLink 4.0 offers the same through its native expression
+	 * bridge ({@code JpaCriteriaBuilder.toExpression / Expression.extract / fromExpression}).
+	 */
+	private Expression<Integer> extractDatePart(String part, OperationCallExp op, Context ctx) {
+		if (!(ctx.cb() instanceof JpaCriteriaBuilder jpaBuilder)) {
+			throw new UnsupportedOperationException(
+					"date part '" + part + "' needs the EclipseLink criteria builder");
+		}
+		Expression<?> source = expression(operand(op.getOwnedSource(), ctx), ctx.cb());
+		return jpaBuilder.fromExpression(
+				jpaBuilder.toExpression(source).extract(part.toUpperCase(Locale.ROOT)),
+				Integer.class);
 	}
 
 	/** {@code eq/ne} incl. the null forms ({@code IS [NOT] NULL} — also on navigations). */

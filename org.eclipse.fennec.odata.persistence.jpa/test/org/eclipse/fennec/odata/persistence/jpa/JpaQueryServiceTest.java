@@ -91,6 +91,19 @@ class JpaQueryServiceTest extends JpaWebshopTestBase {
 	}
 
 	@Test
+	@DisplayName("date-part functions push down as EXTRACT (year/month/day/hour)")
+	void datePartFunctions() {
+		assertEquals(List.of("Milk"), names(query("year(released) eq 2024", null, 0, -1, false)));
+		assertEquals(List.of("Cheese"), names(query("month(released) eq 11", null, 0, -1, false)));
+		assertEquals(List.of("Cheese", "Milk"),
+				names(query("year(released) ge 2023 and day(released) gt 1", "name asc", 0, -1, false)));
+		assertEquals(List.of("Cheese", "Milk"),
+				names(query("hour(released) ge 0 and hour(released) le 23", "name asc", 0, -1, false)),
+				"time parts extract from the timestamp column (absolute values are timezone-"
+						+ "dependent, so only sanity-check the range)");
+	}
+
+	@Test
 	@DisplayName("derived-type cast pushes down as TYPE() restriction")
 	void derivedTypeCast() {
 		QueryResult cast = service.execute(new EntityQuery(productClass, discountedClass,

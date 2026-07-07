@@ -12,6 +12,7 @@ Bundle-Version: 1.0.0
 	org.antlr.antlr4-runtime;version=latest,\
 	jakarta.persistence-api;version=latest,\
 	org.eclipse.persistence.core;version=latest,\
+	org.eclipse.persistence.jpa;version=latest,\
 	org.eclipse.fennec.emf.osgi.api;version=latest
 
 # Tests bootstrap a real EclipseLink + H2 persistence unit (dynamic EMF entities) via the
