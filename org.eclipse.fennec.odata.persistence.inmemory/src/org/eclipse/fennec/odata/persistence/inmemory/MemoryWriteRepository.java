@@ -23,6 +23,7 @@ import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.odata.persistence.api.EntityRepository;
@@ -124,6 +125,91 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 		synchronized (entities) {
 			return entities.remove(unquote(rawKey)) != null;
 		}
+	}
+
+	@Override
+	public EObject createRelated(EClass entityType, String rawKey, String navigation, EObject child) {
+		EObject owner = requiredEntity(entityType, rawKey);
+		EReference reference = requiredReference(entityType, navigation);
+		if (!reference.isContainment()) {
+			create(child.eClass(), child); // related entities live in their own set too
+		}
+		attach(owner, reference, child);
+		return child;
+	}
+
+	@Override
+	public void link(EClass entityType, String rawKey, String navigation, String targetRawKey) {
+		EObject owner = requiredEntity(entityType, rawKey);
+		EReference reference = requiredReference(entityType, navigation);
+		EObject target = findByKey(reference.getEReferenceType(), unquote(targetRawKey));
+		if (target == null) {
+			throw new IllegalArgumentException("the reference target does not exist");
+		}
+		attach(owner, reference, target);
+	}
+
+	@Override
+	public boolean unlink(EClass entityType, String rawKey, String navigation, String targetRawKey) {
+		EObject owner = requiredEntity(entityType, rawKey);
+		EReference reference = requiredReference(entityType, navigation);
+		if (reference.isMany()) {
+			String key = unquote(targetRawKey);
+			@SuppressWarnings("unchecked")
+			List<EObject> members = (List<EObject>) owner.eGet(reference);
+			return members.removeIf(member -> key != null && key.equals(keyString(member)));
+		}
+		if (owner.eGet(reference) == null) {
+			return false;
+		}
+		owner.eSet(reference, null);
+		return true;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void attach(EObject owner, EReference reference, EObject target) {
+		if (reference.isMany()) {
+			((List<EObject>) owner.eGet(reference)).add(target); // unique refs dedupe in EMF
+		} else {
+			owner.eSet(reference, target);
+		}
+	}
+
+	private EObject requiredEntity(EClass entityType, String rawKey) {
+		Map<String, EObject> entities = store.get(entityType);
+		EObject entity = entities == null ? null : entities.get(unquote(rawKey));
+		if (entity == null) {
+			throw new IllegalArgumentException("entity not found");
+		}
+		return entity;
+	}
+
+	private static EReference requiredReference(EClass entityType, String navigation) {
+		if (!(entityType.getEStructuralFeature(navigation) instanceof EReference reference)) {
+			throw new IllegalArgumentException(
+					"'" + navigation + "' is not a navigation of " + entityType.getName());
+		}
+		return reference;
+	}
+
+	/** Target lookup honoring inheritance: derived instances live under their own class. */
+	private EObject findByKey(EClass targetType, String key) {
+		for (Map.Entry<EClass, Map<String, EObject>> entry : store.entrySet()) {
+			if (targetType.isSuperTypeOf(entry.getKey()) || targetType == entry.getKey()) {
+				synchronized (entry.getValue()) {
+					EObject found = entry.getValue().get(key);
+					if (found != null) {
+						return found;
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	private static String keyString(EObject entity) {
+		EAttribute id = keyAttribute(entity.eClass());
+		return id == null ? null : String.valueOf(entity.eGet(id));
 	}
 
 	/** PATCH: only the payload's set features; PUT additionally resets everything else. */

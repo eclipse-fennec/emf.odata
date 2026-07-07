@@ -107,6 +107,34 @@ class MemoryWriteRepositoryTest {
 		assertEquals(1, read().size());
 	}
 
+	@Test
+	@DisplayName("$ref operations: link/unlink and related create through the store")
+	void referenceOperations() {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		dairy.eSet(categoryClass.getEStructuralFeature("name"), "Dairy");
+		repository.create(categoryClass, dairy);
+		repository.create(productClass, product("m1", "Milk", "1.20"));
+
+		repository.link(productClass, "'m1'", "category", "'c1'");
+		EObject milk = read().get(0);
+		assertEquals(dairy, milk.eGet(productClass.getEStructuralFeature("category")));
+
+		assertTrue(repository.unlink(productClass, "'m1'", "category", null));
+		assertNull(milk.eGet(productClass.getEStructuralFeature("category")));
+		assertFalse(repository.unlink(productClass, "'m1'", "category", null));
+
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		EObject review = pkg.getEFactoryInstance().create(reviewClass);
+		review.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+		repository.createRelated(productClass, "'m1'", "reviews", review);
+		assertEquals(1, ((List<?>) milk.eGet(productClass.getEStructuralFeature("reviews"))).size());
+
+		assertThrows(IllegalArgumentException.class,
+				() -> repository.link(productClass, "'m1'", "category", "'nosuch'"));
+	}
+
 	private List<EObject> read() {
 		return queryService.execute(EntityQuery.all(productClass)).entities();
 	}

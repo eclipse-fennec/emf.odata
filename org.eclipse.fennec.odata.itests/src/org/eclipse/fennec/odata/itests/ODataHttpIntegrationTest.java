@@ -327,9 +327,18 @@ public class ODataHttpIntegrationTest {
 		HttpResponse<String> fetched = get("/Product('w-e2e')");
 		assertEquals(200, fetched.statusCode());
 		assertTrue(fetched.body().contains("Created over HTTP"), fetched.body());
+		String etag = fetched.headers().firstValue("ETag").orElse(null);
+		assertTrue(etag != null && etag.startsWith("W/\""), "single GET serves an ETag: " + etag);
+
+		HttpResponse<String> unconditional = client.send(
+				HttpRequest.newBuilder(URI.create(BASE + "/Product('w-e2e')")).DELETE().build(),
+				HttpResponse.BodyHandlers.ofString());
+		assertEquals(428, unconditional.statusCode(),
+				"existing entities carry an ETag — writes need If-Match (11.4.1.1)");
 
 		HttpResponse<String> deleted = client.send(
-				HttpRequest.newBuilder(URI.create(BASE + "/Product('w-e2e')")).DELETE().build(),
+				HttpRequest.newBuilder(URI.create(BASE + "/Product('w-e2e')"))
+						.header("If-Match", etag).DELETE().build(),
 				HttpResponse.BodyHandlers.ofString());
 		assertEquals(204, deleted.statusCode());
 		assertEquals(404, get("/Product('w-e2e')").statusCode(), "really gone");

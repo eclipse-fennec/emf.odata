@@ -21,8 +21,13 @@ import java.util.LinkedHashSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.HexFormat;
+import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.emf.common.util.URI;
@@ -50,6 +55,7 @@ import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
 import org.eclipse.fennec.odata.csdl.OdataResolver;
 import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.codec.resource.CodecResource;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
@@ -85,6 +91,9 @@ import org.osgi.service.component.annotations.ReferencePolicy;
 
 import jakarta.servlet.Servlet;
 import jakarta.servlet.http.HttpServlet;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -275,10 +284,6 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
 			return;
 		}
-		if (!path.segments().isEmpty()) {
-			error(response, 501, "writes below the entity level are not implemented");
-			return;
-		}
 		EClass entityType = resolveEntityType(path.entitySet());
 		if (entityType == null) {
 			error(response, HttpServletResponse.SC_NOT_FOUND,
@@ -290,6 +295,10 @@ public class ODataServlet extends HttpServlet {
 		if (writeService == null) {
 			error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
 					"no writable backend for '" + ODataJson.sanitize(path.entitySet()) + "'");
+			return;
+		}
+		if (!path.segments().isEmpty()) {
+			writeBelowEntity(path, entityType, writeService, request, response);
 			return;
 		}
 
@@ -313,6 +322,9 @@ public class ODataServlet extends HttpServlet {
 							request.getMethod() + " addresses one entity by key");
 					return;
 				}
+				if (!preconditionHolds(entityType, path.key(), request, response)) {
+					return; // 428/412 already written
+				}
 				EObject payload = readPayload(request, response, entityType);
 				if (payload == null) {
 					return; // error already written
@@ -331,6 +343,9 @@ public class ODataServlet extends HttpServlet {
 							"DELETE addresses one entity by key");
 					return;
 				}
+				if (!preconditionHolds(entityType, path.key(), request, response)) {
+					return; // 428/412 already written
+				}
 				if (writeService.delete(entityType, path.key())) {
 					response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 				} else {
@@ -343,6 +358,303 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/**
+	 * Writes below the entity level ([OData-Protocol] 11.4): {@code POST Set(key)/nav}
+	 * creates a related entity (20), {@code PUT/POST/DELETE …/nav/$ref} manage references
+	 * (21/22/25), {@code PATCH/PUT/DELETE Set(key)/prop} write one primitive property (30/31).
+	 */
+	private void writeBelowEntity(ResourcePath path, EClass entityType, WriteService writeService,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		if (path.key() == null || path.segments().size() > 2
+				|| !(path.segments().get(0) instanceof ResourcePath.PropertySegment property)) {
+			error(response, 501, "this write target is not implemented");
+			return;
+		}
+		EStructuralFeature feature = entityType.getEStructuralFeature(property.name());
+		if (feature == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND,
+					"unknown property '" + ODataJson.sanitize(property.name()) + "'");
+			return;
+		}
+		QueryService reader = queryServices.stream()
+				.filter(s -> s.supports(entityType)).findFirst().orElse(null);
+		if (reader != null && currentEntity(entityType, path.key()) == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
+			return;
+		}
+		if (path.segments().size() == 2) { // …/nav/$ref  or  …/nav(targetKey)/$ref
+			if (!(path.segments().get(1) instanceof ResourcePath.RefSegment)
+					|| !(feature instanceof EReference reference)) {
+				error(response, 501, "this write target is not implemented");
+				return;
+			}
+			if (property.key() != null) { // 4.01 (13.2.1/19): remove a collection member by key
+				if (!"DELETE".equals(request.getMethod()) || !reference.isMany()) {
+					error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+							"keyed $ref segments only support DELETE on collections");
+					return;
+				}
+				if (writeService.unlink(entityType, path.key(), reference.getName(), property.key())) {
+					response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+				} else {
+					error(response, HttpServletResponse.SC_NOT_FOUND, "reference not found");
+				}
+				return;
+			}
+			referenceWrite(path, entityType, reference, writeService, request, response);
+			return;
+		}
+		if (property.key() != null) {
+			error(response, 501, "this write target is not implemented");
+			return;
+		}
+		if (feature instanceof EReference reference) { // POST Set(key)/nav → create related
+			if (!"POST".equals(request.getMethod())) {
+				error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+						"only POST creates related entities");
+				return;
+			}
+			EObject child = readPayload(request, response, reference.getEReferenceType());
+			if (child == null) {
+				return; // error already written
+			}
+			EObject created = writeService.createRelated(entityType, path.key(),
+					reference.getName(), child);
+			response.setStatus(HttpServletResponse.SC_CREATED);
+			response.setHeader("Location", request.getRequestURI());
+			String json = entityJson(created, created.eClass(), null, Set.of());
+			response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+			response.getWriter().write(json);
+			return;
+		}
+		propertyWrite(path, entityType, feature, writeService, request, response);
+	}
+
+	/** {@code PUT} sets a single-valued, {@code POST} adds to a collection-valued reference. */
+	private void referenceWrite(ResourcePath path, EClass entityType, EReference reference,
+			WriteService writeService, HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		switch (request.getMethod()) {
+			case "PUT", "POST" -> {
+				if ("PUT".equals(request.getMethod()) == reference.isMany()) {
+					error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+							"PUT sets single-valued, POST adds to collection-valued references");
+					return;
+				}
+				String targetKey = refTargetKey(referenceUrlFromBody(request, response),
+						reference.getEReferenceType(), response);
+				if (targetKey == null) {
+					return; // error already written
+				}
+				writeService.link(entityType, path.key(), reference.getName(), targetKey);
+				response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+			}
+			case "DELETE" -> {
+				String targetKey = null;
+				if (reference.isMany()) { // 4.0: DELETE …/$ref?$id=<target url>
+					String id = option(request, "$id");
+					if (id == null) {
+						error(response, HttpServletResponse.SC_BAD_REQUEST,
+								"removing a collection reference requires $id");
+						return;
+					}
+					targetKey = refTargetKey(id, reference.getEReferenceType(), response);
+					if (targetKey == null) {
+						return; // error already written
+					}
+				}
+				if (writeService.unlink(entityType, path.key(), reference.getName(), targetKey)) {
+					response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+				} else {
+					error(response, HttpServletResponse.SC_NOT_FOUND, "reference not found");
+				}
+			}
+			default -> error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+					"unsupported $ref method");
+		}
+	}
+
+	/**
+	 * Single primitive property: {@code PATCH/PUT} with a value document, {@code DELETE} →
+	 * null (11.4.9.2). Expressed as a REPLACE of the current state with the one property
+	 * changed — a merge payload cannot say "set to null/default" in EMF terms ({@code eIsSet}
+	 * would read as absent and the backend would skip it).
+	 */
+	private void propertyWrite(ResourcePath path, EClass entityType, EStructuralFeature feature,
+			WriteService writeService, HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		if (feature.isMany() || !(feature instanceof EAttribute attribute) || attribute.isID()) {
+			error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+					"only single-valued non-key properties are writable");
+			return;
+		}
+		if (!preconditionHolds(entityType, path.key(), request, response)) {
+			return; // 428/412 already written
+		}
+		EObject current = currentEntity(entityType, path.key());
+		if (current == null) {
+			error(response, 501, "property writes need a read backend for the current state");
+			return;
+		}
+		EObject payload = EcoreUtil.copy(current);
+		switch (request.getMethod()) {
+			case "PATCH", "PUT" -> {
+				JsonNode document = readValueDocument(request, response);
+				if (document == null) {
+					return; // error already written
+				}
+				JsonNode value = document.get("value");
+				if (value == null) {
+					error(response, HttpServletResponse.SC_BAD_REQUEST,
+							"property updates carry a {\"value\": …} document");
+					return;
+				}
+				if (value.isNull()) {
+					payload.eUnset(attribute); // the replace resets it to the default (null)
+				} else {
+					payload.eSet(attribute, EcoreUtil.createFromString(
+							attribute.getEAttributeType(), value.asString()));
+				}
+			}
+			case "DELETE" -> payload.eUnset(attribute); // the replace resets it to the default
+			default -> {
+				error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+						"unsupported property method");
+				return;
+			}
+		}
+		writeService.update(entityType, path.key(), payload, true);
+		response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+	}
+
+	/** The {@code @odata.id} of a {@code $ref} body ({@code {"@odata.id": "…"}}). */
+	private String referenceUrlFromBody(HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		JsonNode document = readValueDocument(request, response);
+		if (document == null) {
+			return null;
+		}
+		JsonNode id = document.get("@odata.id");
+		if (id == null || !id.isString()) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"$ref bodies carry {\"@odata.id\": \"…\"}");
+			return null;
+		}
+		return id.asString();
+	}
+
+	/** Reads a small JSON document (value/$ref bodies) under the same guards as payloads. */
+	private JsonNode readValueDocument(HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
+		String contentType = request.getContentType();
+		if (contentType == null
+				|| !contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
+			error(response, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE,
+					"write payloads must be application/json");
+			return null;
+		}
+		byte[] body = request.getInputStream().readNBytes(limits.maxBodyBytes() + 1);
+		if (body.length > limits.maxBodyBytes()) {
+			error(response, 413, "payload exceeds the maximum size of "
+					+ limits.maxBodyBytes() + " bytes");
+			return null;
+		}
+		try {
+			return new ObjectMapper().readTree(body);
+		} catch (Exception e) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+			return null;
+		}
+	}
+
+	/**
+	 * Extracts the raw key of a reference-target URL ({@code @odata.id} / {@code $id}) and
+	 * validates that the addressed set matches the navigation's target type. Writes the error
+	 * response and returns null when the URL does not identify a matching entity.
+	 */
+	private String refTargetKey(String url, EClass targetType, HttpServletResponse response)
+			throws IOException {
+		if (url == null) {
+			return null; // error already written
+		}
+		String tail = url.substring(url.lastIndexOf('/') + 1);
+		ResourcePath ref;
+		try {
+			ref = resourceParser.parse(tail);
+		} catch (ODataQueryParseException e) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "invalid reference target URL");
+			return null;
+		}
+		EClass set = resolveEntityType(ref.entitySet());
+		if (ref.key() == null || !ref.segments().isEmpty() || set == null
+				|| !(targetType.isSuperTypeOf(set) || set.isSuperTypeOf(targetType))) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"the reference target does not address an entity of the navigation's type");
+			return null;
+		}
+		return ref.key();
+	}
+
+	// --- optimistic concurrency (13.1.1/26): weak ETags from the serialized state ---
+
+	/**
+	 * Enforces {@code If-Match} on updates/deletes of EXISTING entities: our single-entity
+	 * GETs return an ETag, so clients must send the precondition (11.4.1.1) — absent → 428,
+	 * mismatch → 412. Upserts of absent entities pass. Without a read backend the check is
+	 * skipped (no ETag was ever served).
+	 */
+	private boolean preconditionHolds(EClass entityType, String rawKey,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		EObject current = currentEntity(entityType, rawKey);
+		if (current == null) {
+			return true; // nothing exists — upsert path, no precondition to check
+		}
+		String ifMatch = request.getHeader("If-Match");
+		if (ifMatch == null || ifMatch.isBlank()) {
+			error(response, 428, "If-Match is required — this resource carries an ETag");
+			return false;
+		}
+		if ("*".equals(ifMatch.trim())) {
+			return true;
+		}
+		if (!ifMatch.trim().equals(etagOf(current, entityType))) {
+			error(response, HttpServletResponse.SC_PRECONDITION_FAILED,
+					"the entity changed since it was read");
+			return false;
+		}
+		return true;
+	}
+
+	/** Weak ETag over the full serialized entity — stable per state, cheap to recompute. */
+	private String etagOf(EObject entity, EClass entityType) throws IOException {
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256").digest(
+					entityJson(entity, entityType, null, Set.of())
+							.getBytes(StandardCharsets.UTF_8));
+			return "W/\"" + HexFormat.of().formatHex(digest, 0, 8) + "\"";
+		} catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException("SHA-256 unavailable", e);
+		}
+	}
+
+	/** The current entity by key, or null when absent or no read backend serves the type. */
+	private EObject currentEntity(EClass entityType, String rawKey) {
+		QueryService queryService = queryServices.stream()
+				.filter(s -> s.supports(entityType)).findFirst().orElse(null);
+		EAttribute keyAttribute = entityType.getEAllAttributes().stream()
+				.filter(EAttribute::isID).findFirst().orElse(null);
+		if (queryService == null || keyAttribute == null) {
+			return null;
+		}
+		try {
+			QueryResult result = queryService.execute(new EntityQuery(entityType, null,
+					keyEquals(keyAttribute, rawKey), List.of(), 0, 1, false));
+			return result.entities().isEmpty() ? null : result.entities().get(0);
+		} catch (RuntimeException e) {
+			return null; // a broken read backend must not block writes
+		}
+	}
+
+	/**
 	 * Reads and decodes the JSON payload into an EObject of the addressed type — the codec
 	 * leaves exactly the transmitted features set ({@code eIsSet} = "was in the payload").
 	 * Writes the error response and returns null for media-type, size and syntax violations.
@@ -351,7 +663,7 @@ public class ODataServlet extends HttpServlet {
 			EClass entityType) throws IOException {
 		String contentType = request.getContentType();
 		if (contentType == null
-				|| !contentType.toLowerCase(java.util.Locale.ROOT).startsWith("application/json")) {
+				|| !contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
 			error(response, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE,
 					"write payloads must be application/json");
 			return null;
@@ -765,16 +1077,8 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_BAD_REQUEST, "entity set has no key");
 			return null;
 		}
-		OperationCallExp keyFilter = OclFactory.eINSTANCE.createOperationCallExp();
-		keyFilter.setName("=");
-		PropertyCallExp keyProperty = OclFactory.eINSTANCE.createPropertyCallExp();
-		keyProperty.setReferredProperty(keyAttribute);
-		keyProperty.setIsImplicit(true);
-		keyFilter.setOwnedSource(keyProperty);
-		keyFilter.getOwnedArguments().add(keyLiteral(rawKey));
-
-		QueryResult result = target.queryService().execute(
-				new EntityQuery(target.entityType(), null, keyFilter, List.of(), 0, 1, false, expand));
+		QueryResult result = target.queryService().execute(new EntityQuery(target.entityType(),
+				null, keyEquals(keyAttribute, rawKey), List.of(), 0, 1, false, expand));
 		if (result.entities().isEmpty()) {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
 			return null;
@@ -965,6 +1269,8 @@ public class ODataServlet extends HttpServlet {
 	/** {@code /{Set}({key})}: the key becomes a typed equality AST — never parsed as expression. */
 	private void singleEntity(String setName, EObject entity, EClass entityType,
 			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		// optimistic concurrency (13.1.1/26): the served ETag is the write preconditions' ETag
+		response.setHeader("ETag", etagOf(entity, entityType));
 		SelectTree select = selectOption(request, entityType);
 		Set<String> expand = expandOption(request, entityType);
 		if (wantsXml(request)) {
@@ -977,6 +1283,19 @@ public class ODataServlet extends HttpServlet {
 				+ "/$entity\",";
 		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
 		response.getWriter().write("{" + context + json.substring(1));
+	}
+
+
+	/** The key as a typed equality AST ({@code id = <literal>}) — never expression-parsed. */
+	private static OperationCallExp keyEquals(EAttribute keyAttribute, String rawKey) {
+		OperationCallExp keyFilter = OclFactory.eINSTANCE.createOperationCallExp();
+		keyFilter.setName("=");
+		PropertyCallExp keyProperty = OclFactory.eINSTANCE.createPropertyCallExp();
+		keyProperty.setReferredProperty(keyAttribute);
+		keyProperty.setIsImplicit(true);
+		keyFilter.setOwnedSource(keyProperty);
+		keyFilter.getOwnedArguments().add(keyLiteral(rawKey));
+		return keyFilter;
 	}
 
 	/** Raw key literal → plain Java value (for member selection in walked collections). */
@@ -1086,7 +1405,7 @@ public class ODataServlet extends HttpServlet {
 
 	/** Canonical form of a query-option name: lower-case with a {@code $} prefix. */
 	private static String normalizeOption(String name) {
-		String normalized = name.toLowerCase(java.util.Locale.ROOT);
+		String normalized = name.toLowerCase(Locale.ROOT);
 		return normalized.startsWith("$") ? normalized : "$" + normalized;
 	}
 
@@ -1117,7 +1436,7 @@ public class ODataServlet extends HttpServlet {
 		}
 		for (String preference : prefer.split(",")) {
 			String[] nameValue = preference.trim().split("=", 2);
-			String name = nameValue[0].trim().toLowerCase(java.util.Locale.ROOT);
+			String name = nameValue[0].trim().toLowerCase(Locale.ROOT);
 			if (!"odata.maxpagesize".equals(name) && !"maxpagesize".equals(name)) {
 				continue;
 			}

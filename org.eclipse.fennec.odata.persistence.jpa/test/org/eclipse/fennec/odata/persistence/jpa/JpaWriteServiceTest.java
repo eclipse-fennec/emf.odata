@@ -110,6 +110,38 @@ class JpaWriteServiceTest extends JpaWebshopTestBase {
 						List.of(), 0, -1, false))));
 	}
 
+	@Test
+	@DisplayName("$ref operations: link/unlink navigations, create related entities")
+	void referenceOperations() {
+		// link: Salt gets the Dairy category
+		service.link(productClass, "'p4'", "category", "'c1'");
+		assertEquals(List.of("Salt"),
+				names(query("category/name eq 'Dairy' and id eq 'p4'", null, 0, -1, false)));
+
+		// unlink single-valued: Salt loses it again
+		assertTrue(service.unlink(productClass, "'p4'", "category", null));
+		assertEquals(List.of("Salt"), names(query("category eq null", null, 0, -1, false)));
+		assertFalse(service.unlink(productClass, "'p4'", "category", null), "already cleared");
+
+		// create related containment: Milk gets a review
+		EObject review = plain("Review", "id", "mr1", "stars", 5, "comment", "fresh");
+		service.createRelated(productClass, "'p1'", "reviews", review);
+		assertEquals(List.of("Cheese", "Milk"),
+				names(query("reviews/any(r: r/stars eq 5)", "name asc", 0, -1, false)));
+
+		// unlink collection member by key
+		assertTrue(service.unlink(productClass, "'p1'", "reviews", "'mr1'"));
+		assertEquals(List.of("Cheese"),
+				names(query("reviews/any(r: r/stars eq 5)", null, 0, -1, false)));
+
+		assertThrows(IllegalArgumentException.class,
+				() -> service.link(productClass, "'p4'", "category", "'nosuch'"),
+				"unknown reference target");
+		assertThrows(IllegalArgumentException.class,
+				() -> service.link(productClass, "'p4'", "name", "'c1'"),
+				"attributes are no navigations");
+	}
+
 	// --- helpers ---
 
 	/** A PLAIN dynamic EMF instance (what the JSON codec produces) — not a store entity. */

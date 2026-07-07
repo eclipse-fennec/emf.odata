@@ -55,6 +55,39 @@ public interface WriteService {
 	/** @return true when the entity existed and is gone now, false when it was absent */
 	boolean delete(EClass entityType, String rawKey);
 
+	/**
+	 * Creates a new entity INSIDE a navigation ({@code POST Set(key)/nav}, 13.1.1/20):
+	 * containments attach the child to the owner, non-containments persist the child in its
+	 * own set AND link it. Backends without support keep the default → 501.
+	 *
+	 * @return the created child entity
+	 */
+	default EObject createRelated(EClass entityType, String rawKey, String navigation,
+			EObject child) {
+		throw new UnsupportedOperationException("related creation is not supported");
+	}
+
+	/**
+	 * Links an EXISTING entity into a navigation ({@code PUT/POST …/nav/$ref}, 13.1.1/21+22):
+	 * single-valued navigations are set, collection-valued ones gain a member. Backends
+	 * without support keep the default → 501.
+	 */
+	default void link(EClass entityType, String rawKey, String navigation, String targetRawKey) {
+		throw new UnsupportedOperationException("reference updates are not supported");
+	}
+
+	/**
+	 * Removes a reference ({@code DELETE …/nav/$ref}, 13.1.1/25): single-valued navigations
+	 * clear ({@code targetRawKey} null), collection-valued ones drop the member with the
+	 * given key. Backends without support keep the default → 501.
+	 *
+	 * @return true when a reference was removed, false when there was none
+	 */
+	default boolean unlink(EClass entityType, String rawKey, String navigation,
+			String targetRawKey) {
+		throw new UnsupportedOperationException("reference updates are not supported");
+	}
+
 	/** Outcome of an {@link #update}: the persisted entity, created vs. updated. */
 	record WriteResult(EObject entity, boolean created) {
 	}

@@ -372,6 +372,97 @@ public class JpaQueryService implements QueryService, WriteService {
 		}
 	}
 
+	@Override
+	public EObject createRelated(EClass entityType, String rawKey, String navigation, EObject child) {
+		EntityManagerFactory factory = requireFactory(entityType);
+		EReference reference = requiredReference(entityType, navigation);
+		try (EntityManager em = factory.createEntityManager()) {
+			em.getTransaction().begin();
+			EObject owner = requiredManaged(em, factory, entityType, rawKey);
+			EObject instance = rebuild(child, factory);
+			em.persist(instance);
+			attach(owner, reference, instance);
+			em.getTransaction().commit();
+			return instance;
+		}
+	}
+
+	@Override
+	public void link(EClass entityType, String rawKey, String navigation, String targetRawKey) {
+		EntityManagerFactory factory = requireFactory(entityType);
+		EReference reference = requiredReference(entityType, navigation);
+		try (EntityManager em = factory.createEntityManager()) {
+			em.getTransaction().begin();
+			EObject owner = requiredManaged(em, factory, entityType, rawKey);
+			EObject target = findManaged(em, factory, reference.getEReferenceType(), targetRawKey);
+			if (target == null) {
+				em.getTransaction().rollback();
+				throw new IllegalArgumentException("the reference target does not exist");
+			}
+			attach(owner, reference, target);
+			em.getTransaction().commit();
+		}
+	}
+
+	@Override
+	public boolean unlink(EClass entityType, String rawKey, String navigation, String targetRawKey) {
+		EntityManagerFactory factory = requireFactory(entityType);
+		EReference reference = requiredReference(entityType, navigation);
+		try (EntityManager em = factory.createEntityManager()) {
+			em.getTransaction().begin();
+			EObject owner = requiredManaged(em, factory, entityType, rawKey);
+			boolean removed;
+			if (reference.isMany()) {
+				String key = unquote(targetRawKey);
+				@SuppressWarnings("unchecked")
+				List<EObject> members = (List<EObject>) owner.eGet(reference);
+				removed = members.removeIf(member -> key != null
+						&& key.equals(String.valueOf(member.eGet(keyAttribute(member.eClass())))));
+			} else {
+				removed = owner.eGet(reference) != null;
+				if (removed) {
+					owner.eSet(reference, null);
+				}
+			}
+			em.getTransaction().commit();
+			return removed;
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void attach(EObject owner, EReference reference, EObject target) {
+		if (reference.isMany()) {
+			((List<EObject>) owner.eGet(reference)).add(target);
+		} else {
+			owner.eSet(reference, target);
+		}
+	}
+
+	private static EReference requiredReference(EClass entityType, String navigation) {
+		if (!(entityType.getEStructuralFeature(navigation) instanceof EReference reference)) {
+			throw new IllegalArgumentException(
+					"'" + navigation + "' is not a navigation of " + entityType.getName());
+		}
+		return reference;
+	}
+
+	private EObject requiredManaged(EntityManager em, EntityManagerFactory factory,
+			EClass entityType, String rawKey) {
+		EObject entity = findManaged(em, factory, entityType, rawKey);
+		if (entity == null) {
+			em.getTransaction().rollback();
+			throw new IllegalArgumentException("entity not found");
+		}
+		return entity;
+	}
+
+	private EObject findManaged(EntityManager em, EntityManagerFactory factory,
+			EClass entityType, String rawKey) {
+		EAttribute id = keyAttribute(entityType);
+		Object key = EcoreUtil.createFromString(id.getEAttributeType(), unquote(rawKey));
+		return (EObject) em.find(entityType(factory, entityType).getJavaType(), key);
+	}
+
 	/**
 	 * Applies the payload onto the target entity: attributes directly, containment children
 	 * as freshly built store instances (recursive); non-containment navigations are IGNORED

@@ -81,6 +81,10 @@ class ODataServletTest {
 	private boolean writeConflict = false;
 	private boolean upsertCreates = false;
 	private boolean deleteFound = true;
+	private boolean unlinkFound = true;
+	private final AtomicReference<String> lastLink = new AtomicReference<>();
+	private final AtomicReference<String> lastUnlink = new AtomicReference<>();
+	private final AtomicReference<EObject> lastRelated = new AtomicReference<>();
 
 	@BeforeEach
 	void setUp() throws Exception {
@@ -154,6 +158,27 @@ class ODataServletTest {
 				lastWriteKey.set(rawKey);
 				return deleteFound;
 			}
+
+			@Override
+			public EObject createRelated(EClass entityType, String rawKey, String navigation,
+					EObject child) {
+				lastRelated.set(child);
+				lastWriteKey.set(rawKey);
+				return child;
+			}
+
+			@Override
+			public void link(EClass entityType, String rawKey, String navigation,
+					String targetRawKey) {
+				lastLink.set(navigation + ":" + targetRawKey);
+			}
+
+			@Override
+			public boolean unlink(EClass entityType, String rawKey, String navigation,
+					String targetRawKey) {
+				lastUnlink.set(navigation + ":" + targetRawKey);
+				return unlinkFound;
+			}
 		});
 	}
 
@@ -187,6 +212,12 @@ class ODataServletTest {
 	private Response callWrite(String method, String path, String body, String contentType)
 			throws Exception {
 		return call(method, path, Map.of(), null, null, Map.of(), body, contentType);
+	}
+
+	/** {@link #callWrite} with extra request headers (If-Match) and query parameters ($id). */
+	private Response callWrite(String method, String path, Map<String, String> parameters,
+			String body, String contentType, Map<String, String> headers) throws Exception {
+		return call(method, path, parameters, null, null, headers, body, contentType);
 	}
 
 	private Response call(String method, String path, Map<String, String> parameters, String accept,
@@ -694,6 +725,116 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("optimistic concurrency: ETag on GET, If-Match required/checked on writes")
+	void etagPreconditions() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response fetched = get("/Product('p1')", Map.of());
+		String etag = fetched.headers().get("ETag");
+		assertTrue(etag != null && etag.startsWith("W/\""), "single GET serves a weak ETag: " + etag);
+
+		assertEquals(428, callWrite("PATCH", "/Product('p1')",
+				"{\"name\":\"x\"}", "application/json").status(),
+				"existing entity carries an ETag → If-Match required");
+		assertEquals(412, callWrite("PATCH", "/Product('p1')", Map.of(),
+				"{\"name\":\"x\"}", "application/json", Map.of("If-Match", "W/\"outdated\"")).status(),
+				"stale ETag → precondition failed");
+		assertEquals(204, callWrite("PATCH", "/Product('p1')", Map.of(),
+				"{\"name\":\"x\"}", "application/json", Map.of("If-Match", etag)).status(),
+				"the served ETag matches");
+		assertEquals(204, callWrite("DELETE", "/Product('p1')", Map.of(),
+				null, null, Map.of("If-Match", "*")).status(), "star matches anything");
+
+		backendResult = List.of(); // absent → upsert path, no precondition
+		assertEquals(204, callWrite("PATCH", "/Product('new')",
+				"{\"name\":\"x\"}", "application/json").status());
+	}
+
+	@Test
+	@DisplayName("$ref operations: PUT/POST link, DELETE unlink (with $id for collections)")
+	void referenceOperations() throws Exception {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		backendResult = List.of(product("p1", "Milk", "1.20", dairy));
+
+		assertEquals(204, callWrite("PUT", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"http://host/odata/Category('c9')\"}", "application/json",
+				Map.of()).status());
+		assertEquals("category:'c9'", lastLink.get(), "target key extracted from @odata.id");
+
+		assertEquals(405, callWrite("POST", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"http://host/odata/Category('c9')\"}", "application/json",
+				Map.of()).status(), "POST adds to collections, category is single-valued");
+
+		assertEquals(204, callWrite("POST", "/Product('p1')/reviews/$ref", Map.of(),
+				"{\"@odata.id\":\"http://host/odata/Review('r9')\"}", "application/json",
+				Map.of()).status());
+		assertEquals("reviews:'r9'", lastLink.get());
+
+		assertEquals(400, callWrite("PUT", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"http://host/odata/Review('r1')\"}", "application/json",
+				Map.of()).status(), "target set must match the navigation's type");
+
+		assertEquals(204, callWrite("DELETE", "/Product('p1')/category/$ref", null, null).status());
+		assertEquals("category:null", lastUnlink.get(), "single-valued clear");
+		assertEquals(400, callWrite("DELETE", "/Product('p1')/reviews/$ref", null, null).status(),
+				"collection removal requires $id");
+		assertEquals(204, callWrite("DELETE", "/Product('p1')/reviews/$ref",
+				Map.of("$id", "http://host/odata/Review('r2')"), null, null, Map.of()).status());
+		assertEquals("reviews:'r2'", lastUnlink.get());
+
+		assertEquals(204, callWrite("DELETE", "/Product('p1')/reviews('r3')/$ref",
+				null, null).status(), "4.01: collection member removal by key in the URL");
+		assertEquals("reviews:'r3'", lastUnlink.get());
+		assertEquals(405, callWrite("PUT", "/Product('p1')/reviews('r3')/$ref", Map.of(),
+				"{\"@odata.id\":\"x\"}", "application/json", Map.of()).status(),
+				"keyed $ref segments only support DELETE");
+
+		unlinkFound = false;
+		assertEquals(404, callWrite("DELETE", "/Product('p1')/category/$ref", null, null).status());
+		unlinkFound = true;
+
+		backendResult = List.of();
+		assertEquals(404, callWrite("DELETE", "/Product('gone')/category/$ref", null, null).status(),
+				"reference writes on absent owners are 404");
+	}
+
+	@Test
+	@DisplayName("related create and property-level writes")
+	void relatedCreateAndPropertyWrites() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response related = callWrite("POST", "/Product('p1')/reviews",
+				"{\"id\":\"r9\",\"stars\":5}", "application/json");
+		assertEquals(201, related.status(), related.body());
+		assertEquals("Review", lastRelated.get().eClass().getName(),
+				"the payload decodes against the NAVIGATION TARGET type");
+
+		assertEquals(204, callWrite("PATCH", "/Product('p1')/price", Map.of(),
+				"{\"value\": 2.5}", "application/json", Map.of("If-Match", "*")).status());
+		assertEquals(0, new BigDecimal("2.5").compareTo((BigDecimal) lastWritePayload.get()
+				.eGet(productClass.getEStructuralFeature("price"))),
+				"the value document became a typed payload");
+		assertEquals("Milk", lastWritePayload.get().eGet(productClass.getEStructuralFeature("name")),
+				"the current state travels along (replace-based property write)");
+		assertEquals(Boolean.TRUE, lastReplace.get(),
+				"property writes replace — a merge cannot express null/default in EMF terms");
+
+		assertEquals(204, callWrite("DELETE", "/Product('p1')/name", Map.of(),
+				null, null, Map.of("If-Match", "*")).status());
+		assertFalse(lastWritePayload.get().eIsSet(productClass.getEStructuralFeature("name")),
+				"DELETE property: unset in a REPLACE payload → resets to default/null (11.4.9.2)");
+
+		assertEquals(405, callWrite("PATCH", "/Product('p1')/id", Map.of(),
+				"{\"value\":\"other\"}", "application/json", Map.of("If-Match", "*")).status(),
+				"the key property is immutable");
+		assertEquals(400, callWrite("PATCH", "/Product('p1')/price", Map.of(),
+				"{\"notvalue\": 1}", "application/json", Map.of("If-Match", "*")).status(),
+				"property updates need a value document");
+	}
+
+	@Test
 	@DisplayName("write path guards: media type, body size, malformed payloads, wrong targets")
 	void writeGuards() throws Exception {
 		assertEquals(415, callWrite("POST", "/Product", "{}", "text/plain").status(),
@@ -712,8 +853,13 @@ class ODataServletTest {
 				"{}", "application/json").status(), "PATCH addresses one entity");
 		assertEquals(405, callWrite("POST", "/$metadata", "{}", "application/json").status());
 		assertEquals(404, callWrite("POST", "/NoSuchSet", "{}", "application/json").status());
-		assertEquals(501, callWrite("POST", "/Product('p1')/reviews",
-				"{}", "application/json").status(), "writes below the entity level");
+		assertEquals(404, callWrite("POST", "/Product('absent')/reviews",
+				"{}", "application/json").status(), "related create needs an existing owner");
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		assertEquals(501, callWrite("PATCH", "/Product('p1')/category/name",
+				"{\"value\":\"x\"}", "application/json").status(),
+				"writes deeper than one segment are not implemented");
+		backendResult = List.of();
 
 		writeConflict = true;
 		Response conflict = callWrite("POST", "/Product",
