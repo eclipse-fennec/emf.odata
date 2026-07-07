@@ -1,0 +1,252 @@
+# Fennec OData – Architektur
+
+Status: 2026-07-04. Einstiegsdokument — Details in den verlinkten ADRs/Backlogs.
+Conformance: **4.0 Minimal (read-only) erfüllt, 4.01 Minimal im Wesentlichen erfüllt**
+(`odata-conformance-status.md`); Spec-Artefakte/Tooling: `odata-spec-repos-gap-analysis.md`.
+Requirements: `odata-basic-requirements.md` (v0.9). Beispiel: `org.eclipse.fennec.odata.example`.
+
+## Big Picture
+
+```
+                    HTTP (Jetty12, OSGi HTTP Whiteboard)
+                                   │
+                       ┌───────────▼───────────┐   ADR-0001: plain Jakarta Servlet,
+                       │      ODataServlet     │   kein Jakarta REST
+                       │  (runtime, Catch-All) │
+                       └──┬───────┬───────┬────┘
+        RequestLimits ────┤       │       ├──── EntityShaper ($select/$expand-Kopien)
+        (vor dem Parsen)  │       │       └──── ODataJson (Rows/Fehler, Sanitizer)
+                          │       │
+             ┌────────────▼──┐   ┌▼──────────────────┐
+             │ $metadata     │   │ Query-Optionen    │
+             │ E2: csdl      │   │ E4: query         │
+             │ Ecore↔EDM     │   │ ANTLR4 → OCL-IR   │──── CachingODataQueryParser
+             │ (OASIS-Modell)│   │ + $apply-Submodell│     (LRU §3.6.1, pro EClass)
+             └───────▲───────┘   └────────┬──────────┘
+                     │                    │ typisiertes OCL-IR (m2x ocl.model)
+             ┌───────┴───────┐   ┌────────▼──────────┐
+             │ E1: metadata  │   │ E5: QueryService  │  SPI (persistence.api)
+             │ ODataAspect-  │   │ execute/          │◄─── JPA/Mongo später (Pushdown)
+             │ Provider +    │   │ executeApply      │
+             │ vocabularies  │   └────────┬──────────┘
+             └───────────────┘   ┌────────▼──────────┐
+                                 │ inmemory-Backend  │  OclEvaluator (AST-Interpreter)
+                                 │ + ApplyExecutor   │  = Referenz-Semantik für Backends
+                                 └────────┬──────────┘
+                                 ┌────────▼──────────┐
+                                 │ EntityRepository  │  SPI: Datenquelle (Zwischenschicht)
+                                 │ File (XMI-Dir) /  │
+                                 │ programmatisch    │
+                                 └───────────────────┘
+        Antworten: E3 codec.json (OData-JSON pro Entity) | XMI ($format=xml) | CSDL-XML
+```
+
+## Bundles
+
+| Bundle | Etappe | Inhalt |
+|---|---|---|
+| `odata.metadata` | E1 | `odata.ecore`-Aspekte/Profile, `ODataAspectProvider` (dünner Adapter, ADR-0003) |
+| `odata.vocabularies` | E1 | OASIS Core/Capabilities/Validation/Measures als EPackages (CSDL-Read-Bootstrap) |
+| `odata.csdl` | E2 | `OdataResolver` (EPackage+`@OData.*`→Profil), Ecore↔EDM-Converter, `$metadata` |
+| `odata.codec.json` | E3 | OData-JSON-Codec-Profil (@odata.type/id, Edm.*-Werteformate) |
+| `odata.query` | E4 | ANTLR4-Grammatik → OCL-IR, `$apply`-Submodell, TypeResolver (ADR-0004), LRU-Cache |
+| `odata.persistence.api` | E5 | `QueryService`/`ApplyQuery`-SPI + `EntityRepository`-Datenquellen-Abstraktion |
+| `odata.persistence.inmemory` | E5 | Referenz-Backend: `OclEvaluator`, `ApplyExecutor`, `FileEntityRepository` |
+| `odata.runtime` | E6/E7 | `ODataServlet` + `RequestLimits`/`EntityShaper`/`ODataJson` |
+| `odata.metadata.tests`, `odata.itests` | — | OSGi-Integrationstests (Whiteboard-Kette bzw. echtes HTTP) |
+| `odata.example` | — | Dummy-Modell + Demo-Daten + startbarer `example.bndrun` |
+
+ADRs: 0001 Servlet-Transport · 0002 CSDL via EDM-Modell · 0003 Converter besitzt die
+Auflösung (standalone Kern + Provider-Adapter) · 0004 Type-Resolution standalone ·
+0005 kein Olingo zur Laufzeit (archiviert) — URI-Parser/Batch-Splitter Eigenbau.
+Backlogs: `odata-e2-converter-open-points.md`, `odata-e4-query-open-points.md`,
+`odata-e5-e6-server-state.md`.
+
+## Request-Lifecycle (GET /odata/{Set}?…)
+
+1. `OData-Version`-Negotiation (4.01, außer Client pinnt `OData-MaxVersion: 4.0`); Nicht-GET → 405.
+2. Options-Normalisierung (4.01: case-insensitiv, `$`-Präfix optional; Whitelist: bekannt-unsupported
+   → 501, unbekannte `$x` → 400, Custom-Options ignoriert) und Routing: `/` Service-Doc ·
+   `/$metadata` CSDL (mit `Core.ODataVersions` am Container) · `Set(key)…` via eigener
+   Resource-Path-Parser (ADR-0005) · `Set` Collection.
+3. **Limits VOR dem Parsen** (`RequestLimits`): Expression-Länge, Klammer-Tiefe (O(n)-Scan),
+   `$top`-Ceiling, Paging-Validierung.
+4. Parsen (`CachingODataQueryParser`): `$filter`/`$orderby`/`$apply` → typisiertes OCL-IR;
+   Property-Pfade werden eager gegen die Kontext-EClass aufgelöst — unbekannte Namen → 400.
+   Single-Entity-Keys werden als Literal-AST **gebaut**, nie geparst.
+5. `QueryService.execute(EntityQuery)` bzw. `executeApply(ApplyQuery)` — das Backend bekommt
+   ausschließlich das IR; `$filter`/`$orderby` nach `$apply` laufen auf dem transformierten Set
+   (Aliase als `VariableExp`).
+6. Antwort: `EntityShaper`-Kopien ($select/$expand) → E3-JSON (`odata.metadata=minimal`:
+   berechenbare Control-Info wie `@odata.type`/`@odata.id` wird weggelassen, Key-Properties
+   bleiben) oder XMI; `$apply`-Rows → `ODataJson`; Seitenüberlauf → `@odata.nextLink`.
+   Fehler → sanitisiertes OData-Error-JSON.
+
+## Security-Defaults (req §4.5 / Q6-Vorschlag)
+
+| Schutz | Default | Konfiguration (PID `org.eclipse.fennec.odata.servlet`) |
+|---|---|---|
+| `$top`-Ceiling (greift auch ohne Client-`$top`) | 1000 | `odata.max.top` |
+| Max. Expression-Länge ($filter/$orderby/$apply) | 4096 | `odata.max.expression.length` |
+| Max. Klammer-Tiefe (Parser-Bomb-Guard, vor dem Parsen, underflow-fest) | 64 | `odata.max.nesting.depth` |
+| Injection | strukturell: einziger Query-Pfad ist das typisierte IR; kein String-Concat in Backends; unbekannte Properties/Funktionen → 400 | — |
+| Fehler-Leaks | 500 generisch; Meldungen JSON-escaped, control-chars entfernt, 500 Zeichen max (`ODataJson.sanitize`) | — |
+| Pfad-Leaks | Serialisierungs-Kopien mit MITkopierten Expand-Zielen → nur interne Referenzen | — |
+| Dateizugriff | `FileEntityRepository` liest NUR das konfigurierte Verzeichnis, einmalig bei Aktivierung; Request-Input beeinflusst nie Pfade | `directory` (Factory-PID `…repository.file`) |
+| Schreibzugriffe | Write-Path v1 (2026-07-07): POST/PATCH/PUT/DELETE nur auf Set/Entity-Ebene, nur `application/json` (415), Body-Größenlimit (413), Payload via Codec (kein manuelles JSON-Parsen), Konflikte → 409; ohne registrierten `WriteService` → 405 | `odata.max.body.size` (Default 1 MiB) |
+| Auth/TLS | out-of-scope (req §4.5) — vorgelagerte Infrastruktur | — |
+
+Getestet unit- (Mockito) UND e2e-seitig (echtes HTTP): Injection-Strings, Parser-Bomben,
+überlange Filter, `$top`-Exhaustion, Leak-Freiheit von 500ern, Key-Injection.
+
+## Review-Notizen (2026-07-03)
+
+**SOLID:** SRP durch Bundle-Schnitt + Servlet-Extraktion (`RequestLimits`/`EntityShaper`/
+`ODataJson` einzeln testbar). OCP über SPIs (`QueryService`, `EntityRepository`,
+`AspectProvider`) und Whiteboard — neue Backends/Modelle ohne Core-Änderung. DIP: runtime kennt
+nur `persistence.api`; csdl kennt keinen Metadata-Service (ADR-0003/0004). LSP/ISP: kleine
+Interfaces, `executeApply` als optionale Default-Methode (501-Mapping statt Zwangs-Implementierung).
+
+**Java 21:** Records für Wertobjekte (EntityQuery/ApplyQuery/RequestLimits/OrderBySegment),
+Pattern-Switches über AST/Transformationen (Evaluator/TypeResolver/ApplyExecutor),
+Pattern-Matching in instanceof durchgängig. Keine Virtual-Thread-Nutzung (Servlet-Container-Sache).
+
+**Memory:** `ODataJsonResourceImpl.RESOLVED` auf WeakHashMap umgestellt (Profile referenzieren
+das EPackage nicht → sammelbar). `CachingODataQueryParser`: weak keys reichen NICHT (AST →
+referredProperty → EClass = value→key); begrenzt durch LRU-Kapazität, echtes Freigeben via
+`invalidate(EClass)` — übernimmt der Provider-Adapter beim Package-Unregister (ADR-0004 Phase 2,
+offen). `FileEntityRepository` hält seine Resources bewusst (Lebensdauer = Komponente).
+
+**Servlet-Filter (req §5.1.1):** Die Limits-+Parse-Validierung gehört perspektivisch in einen
+vorgeschalteten `ODataRequestFilter` (Whiteboard-Filter), damit sie vor JEDEM OData-Endpoint
+läuft und der Dispatcher schlank bleibt. Die Extraktion von `RequestLimits` +
+`CachingODataQueryParser` ist genau dieser Schnitt — der Filter ist damit ein reines
+Verpacken (offener Punkt, kein Blocker; aktuell macht das Servlet beides in fester Reihenfolge).
+
+**Testabdeckung (Stand 2026-07-06 EOD):** csdl 13 · metadata.tests 4 (OSGi) · query 929 (30 Unit +
+899 OASIS-ABNF-Fälle: 229 Core-XML + 504 Core-YAML (aktuelle TC-Fälle inkl. 4.02-Vorarbeiten,
+davon 194 aktiv) + 166 Aggregation-YAML; aktive/Skip-Zählung = Backlog-Radar) ·
+codec.json 2 · vocabularies 4 · inmemory 7 · **persistence.jpa 8 (Differenzial gegen H2,
+EclipseLink-Dynamic-Entities, inkl. $apply-Pushdown)** · runtime 24 · itests 7 (echtes HTTP). Jacoco ist workspace-weit aktiv (fennecJacoco). Bekannte Lücken:
+OSGi-Test für codec.json/vocabularies-Komponente, `EntityShaper` nur indirekt über
+Servlet-Tests abgedeckt, Client (E8) und Schreibpfad ungetestet weil nicht vorhanden.
+
+## Stand & Wiedereinstieg (2026-07-06)
+
+Alles grün: `./gradlew clean build testOSGi` über 11 Bundles + Example. Der read-only
+Server-Slice E1–E7 läuft e2e über echtes HTTP; **4.0 Minimal Conformance erfüllt, 4.01
+Minimal im Wesentlichen** — dort offen nur Capabilities-Annotations (SHOULD) und
+präfixlose Preference-Namen (Preferences werden in v1 nicht ausgewertet).
+
+2026-07-06: Core-ABNF-YAML-Harness übernommen (`CoreYamlAbnfAcceptanceTest`, 504 Fälle,
+Details in `odata-spec-repos-gap-analysis.md`); dabei zwei Fixes: `$count`/`$value`/`$ref`
+jetzt als terminale Pfadsegmente erzwungen, `in ()` (leere Liste) in Grammatik + Builder.
+
+2026-07-06 (2): **4.01-Minimal-Paket — 4.01 Minimal (read-only) damit erfüllt**
+(`odata-conformance-status.md`): Parameter-Aliase `@name` in `$filter`/`$orderby`
+(Grammatik-Token ALIAS, rekursive Wert-Auflösung im Parser, Servlet sammelt `@`-Parameter,
+Cache-Bypass bei Aliasen), `divby` (→ OCL `/`), `Prefer: odata.maxpagesize`/`maxpagesize`
++ `Preference-Applied`, Capabilities-Annotations am Container (ConformanceLevel=Minimal,
+Batch/Async/KeyAsSegment=false) inkl. Capabilities-`edmx:Reference`. Code auf GitHub:
+`eclipse-fennec/emf.odata`, Branch `initial` (Stand vor diesem Paket).
+
+2026-07-06 (4): **Rest-Intermediate-MUSTs — 4.01 Intermediate (read-only) im Wesentlichen
+erfüllt**: `eq/ne null` auf Single-Navigationen funktionierte bereits end-to-end (per
+Regressionstest belegt); **nested `$select`** neu: `SelectTree` (Parser + Modell-Validierung,
+Klammer-bewusstes Splitting, nur `$select`-Sub-Optionen — Rest klar abgelehnt),
+`EntityShaper.prune()` rekursiv über strukturierte Werte, `$select`-Werte durchlaufen
+`RequestLimits.checkExpression`. Offene Intermediate-SHOULDs: `$search`, `$filter` auf
+expandierten Entities, count-of-filtered-collection, `$compute`.
+
+2026-07-06 (3): **Vererbung/Derived Types — 4.0 Intermediate (read-only) im Wesentlichen
+erfüllt** (Intermediate-Plan Schritt 1, bewusst VOR dem JPA-Backend, damit das JPA-Mapping
+gegen das vollständige IR entsteht): CSDL-BaseType-Round-Trip war vorhanden (E2); NEU:
+Cast-Segmente im URI-Parser (`Set/Ns.T`, `Set/Ns.T(key)`, Casts in Nav-Pfaden, max. einer
+pro Schritt), `EntityQuery.castType` (SPI — JPA mappt später auf `TYPE()`/Discriminator),
+InMemory `isInstance`-Filter, Servlet-Cast-Routing (abgeleiteter Typ = Options-Kontext,
+Context-URL `#Set/Ns.T`, 404 bei Typ-Mismatch, `$apply`+Cast → 501),
+`#Ns.Type`-Discriminator im minimal-metadata-JSON (`ODataJsonResourceImpl.typeDiscriminator`),
+webshop-Fixture: `DiscountedProduct extends Product`.
+
+2026-07-06 (5): **JPA-Backend v1 (E5) — Q21 entschieden (ADR-0006)**: neues Bundle
+`org.eclipse.fennec.odata.persistence.jpa` — `JpaQueryService` konsumiert
+`EntityManagerFactory`-Services (Fennec Persistence JPA, dynamische EMF-Entities) und
+übersetzt das OCL-IR per `OclToCriteriaTranslator` in Jakarta-Criteria-Queries: Vergleiche
+(inkl. `IS [NOT] NULL` auf Navigationen), Logik, Arithmetik (`divby`), String-/LIKE-Funktionen
+(Wildcards escaped, 0-basiert→1-basiert verschoben), `in`, Pfad-Joins, Lambdas →
+korrelierte `EXISTS`-Subqueries, `castType` → `treat()` + `TYPE()-IN`, Paging
+(`setFirstResult`/`setMaxResults`), `$count` als separate COUNT-Query. Literal-Koersion auf
+den Attribut-Java-Typ (ISO-Datumsstrings, BigDecimal, Enum-Namen). Ohne Übersetzung →
+`UnsupportedOperationException` → Servlet 501 (nie still falsch); `executeApply` = Folge-AP.
+Differenzialtests gegen H2 spiegeln die In-Memory-Referenz. Dabei ZWEI Bugs in
+`emf.persistence-jpa` gefixt (Feature-Branch `fix/metamodel-refresh-dynamic-types`, je Fix
+ein Test, NICHT gepusht): Metamodel-Sichtbarkeit dynamischer Typen (Criteria ging gar nicht)
+und `EBigDecimal`-Nachkommastellen-Verlust (NUMERIC-Scale-0 → (38,19)-Default).
+
+2026-07-07: **`executeApply`-Pushdown (JPA)**: `JpaApplyExecutor` übersetzt die Pipeline in
+EINE gruppierte Criteria-Query — `filter`-Stufen vor dem Groupby → WHERE, Groupby+Aggregate
+→ GROUP BY mit Aggregat-Selections (sum/min/max/average/countdistinct/$count),
+`filter`-Stufen danach + Post-Pipeline-`$filter` → HAVING (Aliase UND Gruppierungspfade
+lösen auf die Criteria-Ausdrücke auf), `$orderby`/Paging in der DB. Gruppierungspfade via
+LEFT JOIN (Null-Navigationen bilden eigene Gruppe, wie die In-Memory-Referenz);
+Row-Shape identisch (verschachtelte Maps + Alias-Keys). Gruppen-`$count` = schlanke
+Key-only-Query. Ohne Pushdown (compute, Mehrfach-Groupby, …) → UOE → 501.
+
+2026-07-07 (2): **Read-Path-Performance-Paket** — deterministische SQL-Count-Tests statt
+Wanduhr (Zähl-SessionLog im H2-Harness): dabei ECHTES N+1 GEFUNDEN UND GEFIXT — eager
+Collection-Features (reviews-Containment, tags-ElementCollection) luden pro Zeile (41
+Statements für 20 Entities); jetzt EclipseLink-BATCH-IN-Hints für ALLE to-many-Features
+(paging-sicher) + LEFT-Fetch-Join für single-valued `$expand`-Navigationen → konstant
+1 Haupt-SELECT + 1 Batch pro Collection-Feature (+1 für `$count`). Dafür SPI erweitert:
+**`EntityQuery.expand`** (Backends MÜSSEN expandierte Navigationen effizient materialisieren
+— keine Lazy-Proxies nach außen); Servlet reicht `$expand` durch (Set + Einzel-Entity).
+Dazu: `ParserWorstCaseTest` (pathologische Inputs an den Request-Limits mit Zeit-Schranke)
+und `JpaScalePerfTest` (@Tag("perf"), `./gradlew perfTest`, nicht im Normal-Build): 50k
+Zeilen — Statement-Zahlen konstant, Paged Read/Groupby-Aggregation in Sekundenbruchteilen.
+OFFEN dabei notiert: Navigation-WALKS (`Set(1)/nav/...`) auf dem JPA-Backend berühren lazy
+Referenzen nach EM-Close — braucht eigene Materialisierungs-Strategie (Folge-AP).
+
+2026-07-07 (3): **Walk-Materialisierung**: `EntityQuery.expand` akzeptiert jetzt auch
+slash-separierte Navigations-PFADE; das Servlet schickt den Navigations-Präfix eines
+Resource-Pfad-Walks (`Set(key)/nav1/nav2/attr`, Cast-Segmente wechseln den Kontexttyp) als
+Prefetch-Hint mit. JPA-Backend: single-valued Ketten als verschachtelte, per Präfix
+deduplizierte LEFT-Fetch-Joins; to-many-Segmente per Batch-Hint; Materialisierungs-Walk
+(descend) berührt die Kette solange die Session offen ist. Der zuvor dokumentierte
+Korrektheits-Bug (Walk auf lazy Referenzen nach EM-Close → unaufgelöste Proxies, per rotem
+Test belegt: `name = null`) ist damit geschlossen. Fixture: Category.parent-Selbstreferenz
+für Ketten der Tiefe 2.
+
+2026-07-07 (4): **Write-Path v1 (OASIS "Updatable Service", Teilmenge)**: neue SPI
+`WriteService` (create/update/delete; Payload = EObject mit eIsSet = "war im Payload";
+PATCH merged, PUT ersetzt, Update auf unbekannten Key = Upsert; Konflikte →
+`WriteConflictException` → 409). Servlet: POST Set → 201 + Location/OData-EntityId +
+Entity-Body, PATCH/PUT Entity → 204 (Upsert → 201), DELETE → 204/404; Guards: 415
+(Media-Type), 413 (Body-Limit `odata.max.body.size`), 400 (leer/malformed), 405 (falsches
+Ziel/kein Write-Backend), 501 (unterhalb Entity-Ebene). Payload-Dekodierung über den
+E3-Codec (`CODEC_ROOT_TYPE`). Backends: `MemoryWriteRepository` (Referenz,
+EntityRepository+WriteService über demselben Store) und JPA (`JpaQueryService` implementiert
+WriteService: Instanzen via Descriptor-InstantiationPolicy, Attribute + Containment-Kinder
+rekursiv [= Deep Insert], Transaktionen, Duplikat-Check → 409). e2e-Write-Roundtrip über
+echtes HTTP in den itests. 2026-07-07 (5): $ref-Operationen (link/unlink/createRelated in der SPI, Default-UOE→501),
+ETags/If-Match (schwache Hashes, 428/412) und Property-Level-Writes (Replace-basiert wegen
+EMF-eIsSet-Semantik) nachgezogen — **„Updatable OData Service“ 4.0+4.01 damit beanspruchbar**
+(Details `odata-conformance-status.md`). e2e prüft ETag-Pflicht über echtes HTTP.
+
+Nächste Schritte (Priorität, Intermediate-Plan 2026-07-06):
+
+1. **JPA-Backend Rest**: OSGi-Verdrahtungstest (Konfigurator → EntityManagerFactory →
+   QueryService) im itests-Setup; compute-Stufen im Criteria-Pushdown.
+   Datums-Funktionen ✅ 2026-07-07: year/month/day/hour/minute/second → SQL EXTRACT über
+   die EclipseLink-Expression-Brücke (JpaCriteriaBuilder.toExpression/extract/fromExpression
+   — jakarta CriteriaBuilder.extract existiert erst ab Persistence-3.2-Implementierungen);
+   date()/time() (ISO-String-Formen) bleiben ohne Pushdown → 501.
+2. ~~Rest-Intermediate 4.01 (MUSTs)~~ ✅ 2026-07-06 (eq/ne null belegt, nested `$select`
+   gebaut); verbleibende Intermediate-SHOULDs: `$filter` auf expandierten Entities,
+   Query-Optionen auf Nav-Pfaden, `$search` (s. Punkt 8), `$compute`.
+3. `ODataRequestFilter` als Whiteboard-Filter um `RequestLimits` (req §5.1.1, reines Verpacken).
+4. Nested `$expand`; `@odata.context`-Entity-URL-Formen.
+5. Aggregation-Ausbau entlang der 135 Harness-Skips (`AggregationAbnfAcceptanceTest`):
+   topcount/…, concat, rollup, from, Custom Aggregates, `$these`.
+6. CSDL-JSON (Q9) — Validierungsbasis `csdl.schema.json` liegt in `reference/specs/`.
+7. OSGi-Tests für codec.json/vocabularies; E4 AP-10 (bound functions); E2 AP-2/4/6.
+8. `$search` zuletzt (Intermediate-SHOULD), erst mit echter Pushdown-Story.
