@@ -18,16 +18,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
+import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
+import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.OrderBySegment;
+import org.eclipse.persistence.jpa.JpaHelper;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
@@ -64,8 +69,8 @@ import jakarta.persistence.metamodel.EntityType;
  * without a pushdown raise {@link UnsupportedOperationException} — never a silently wrong
  * result (the servlet answers 501).
  */
-@Component(service = QueryService.class)
-public class JpaQueryService implements QueryService {
+@Component(service = { QueryService.class, WriteService.class })
+public class JpaQueryService implements QueryService, WriteService {
 
 	private final List<EntityManagerFactory> factories = new CopyOnWriteArrayList<>();
 	private final OclToCriteriaTranslator translator = new OclToCriteriaTranslator();
@@ -299,6 +304,162 @@ public class JpaQueryService implements QueryService {
 		try (EntityManager em = factory.createEntityManager()) {
 			return applyExecutor.execute(query, em, entityType(factory, query.entityType()));
 		}
+	}
+
+	// --- write side (OASIS "Updatable Service" v1: attributes + containment children) ---
+
+	@Override
+	public EObject create(EClass entityType, EObject payload) {
+		EntityManagerFactory factory = requireFactory(entityType);
+		Object key = typedKey(entityType, payload);
+		try (EntityManager em = factory.createEntityManager()) {
+			Class<?> javaType = entityType(factory, entityType).getJavaType();
+			em.getTransaction().begin();
+			if (em.find(javaType, key) != null) {
+				em.getTransaction().rollback();
+				throw new WriteConflictException(
+						"an entity with this key already exists in " + entityType.getName());
+			}
+			EObject entity = newInstance(factory, entityType);
+			copyFeatures(entityType, payload, entity, factory, true);
+			entity.eSet(keyAttribute(entityType), key); // copyFeatures leaves the key alone
+			em.persist(entity);
+			em.getTransaction().commit();
+			return entity;
+		}
+	}
+
+	@Override
+	public WriteResult update(EClass entityType, String rawKey, EObject payload, boolean replace) {
+		EntityManagerFactory factory = requireFactory(entityType);
+		EAttribute id = keyAttribute(entityType);
+		Object key = EcoreUtil.createFromString(id.getEAttributeType(), unquote(rawKey));
+		try (EntityManager em = factory.createEntityManager()) {
+			Class<?> javaType = entityType(factory, entityType).getJavaType();
+			em.getTransaction().begin();
+			EObject existing = (EObject) em.find(javaType, key);
+			if (existing == null) { // OData upsert (13.1.1/29) — the URL key wins
+				EObject entity = newInstance(factory, entityType);
+				copyFeatures(entityType, payload, entity, factory, true);
+				entity.eSet(id, key);
+				em.persist(entity);
+				em.getTransaction().commit();
+				return new WriteResult(entity, true);
+			}
+			copyFeatures(entityType, payload, existing, factory, replace);
+			existing.eSet(id, key); // the key is immutable
+			em.getTransaction().commit();
+			return new WriteResult(existing, false);
+		}
+	}
+
+	@Override
+	public boolean delete(EClass entityType, String rawKey) {
+		EntityManagerFactory factory = requireFactory(entityType);
+		EAttribute id = keyAttribute(entityType);
+		Object key = EcoreUtil.createFromString(id.getEAttributeType(), unquote(rawKey));
+		try (EntityManager em = factory.createEntityManager()) {
+			Class<?> javaType = entityType(factory, entityType).getJavaType();
+			em.getTransaction().begin();
+			Object entity = em.find(javaType, key);
+			if (entity == null) {
+				em.getTransaction().rollback();
+				return false;
+			}
+			em.remove(entity);
+			em.getTransaction().commit();
+			return true;
+		}
+	}
+
+	/**
+	 * Applies the payload onto the target entity: attributes directly, containment children
+	 * as freshly built store instances (recursive); non-containment navigations are IGNORED
+	 * in v1 ({@code @odata.bind} is a follow-up). PATCH copies only set features, PUT
+	 * ({@code replace}) additionally resets everything missing to the defaults.
+	 */
+	private void copyFeatures(EClass entityType, EObject payload, EObject target,
+			EntityManagerFactory factory, boolean replace) {
+		EAttribute id = keyAttribute(entityType);
+		for (EStructuralFeature feature : entityType.getEAllStructuralFeatures()) {
+			if (feature == id) {
+				continue;
+			}
+			if (feature instanceof EReference reference && !reference.isContainment()) {
+				continue; // non-containment bindings are a follow-up
+			}
+			if (!payload.eIsSet(feature)) {
+				if (replace && target.eIsSet(feature)) {
+					target.eUnset(feature);
+				}
+				continue;
+			}
+			if (feature instanceof EReference reference) { // containment children
+				Object value = payload.eGet(reference);
+				if (reference.isMany()) {
+					List<EObject> children = new ArrayList<>();
+					for (Object member : (List<?>) value) {
+						children.add(rebuild((EObject) member, factory));
+					}
+					target.eSet(reference, children);
+				} else {
+					target.eSet(reference, value == null ? null : rebuild((EObject) value, factory));
+				}
+			} else {
+				target.eSet(feature, payload.eGet(feature));
+			}
+		}
+	}
+
+	/** A payload child as a store instance of ITS OWN class (recursive, incl. derived types). */
+	private EObject rebuild(EObject payload, EntityManagerFactory factory) {
+		EObject instance = newInstance(factory, payload.eClass());
+		copyFeatures(payload.eClass(), payload, instance, factory, true);
+		EAttribute id = payload.eClass().getEAllAttributes().stream()
+				.filter(EAttribute::isID).findFirst().orElse(null);
+		if (id != null && payload.eIsSet(id)) {
+			instance.eSet(id, payload.eGet(id));
+		}
+		return instance;
+	}
+
+	/** A fresh dynamic store instance — payload EObjects are plain EMF, not entity classes. */
+	private EObject newInstance(EntityManagerFactory factory, EClass entityType) {
+		return (EObject) JpaHelper.getServerSession(factory)
+				.getDescriptorForAlias(entityType.getName())
+				.getInstantiationPolicy().buildNewInstance();
+	}
+
+	private Object typedKey(EClass entityType, EObject payload) {
+		EAttribute id = keyAttribute(entityType);
+		if (!payload.eIsSet(id) || payload.eGet(id) == null) {
+			throw new IllegalArgumentException(
+					"the key property '" + id.getName() + "' is required");
+		}
+		return payload.eGet(id);
+	}
+
+	private static EAttribute keyAttribute(EClass entityType) {
+		return entityType.getEAllAttributes().stream()
+				.filter(EAttribute::isID).findFirst()
+				.orElseThrow(() -> new IllegalArgumentException(
+						"entity type " + entityType.getName() + " has no key"));
+	}
+
+	private static String unquote(String rawKey) {
+		if (rawKey != null && rawKey.length() >= 2 && rawKey.startsWith("'") && rawKey.endsWith("'")) {
+			return rawKey.substring(1, rawKey.length() - 1).replace("''", "'");
+		}
+		return rawKey;
+	}
+
+	private EntityManagerFactory requireFactory(EClass entityType) {
+		EntityManagerFactory factory = factoryFor(entityType);
+		if (factory == null) {
+			throw new IllegalStateException(
+					"no persistence unit for entity type " + entityType.getName());
+		}
+		return factory;
 	}
 
 	// --- entity resolution: EClass name = entity name (Fennec Persistence JPA contract) ---

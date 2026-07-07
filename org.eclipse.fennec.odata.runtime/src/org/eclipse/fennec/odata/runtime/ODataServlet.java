@@ -50,11 +50,14 @@ import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
 import org.eclipse.fennec.odata.csdl.OdataResolver;
 import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
+import org.eclipse.fennec.codec.resource.CodecResource;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
+import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
+import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.CachingODataQueryParser;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataResourceParser;
@@ -117,6 +120,7 @@ public class ODataServlet extends HttpServlet {
 
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	private final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
+	private final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
 	private final CachingODataQueryParser parser = new CachingODataQueryParser();
 	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
 	private final Map<EPackage, ODataPackageProfile> profiles =
@@ -147,6 +151,15 @@ public class ODataServlet extends HttpServlet {
 
 	void removeQueryService(QueryService queryService) {
 		queryServices.remove(queryService);
+	}
+
+	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void addWriteService(WriteService writeService) {
+		writeServices.add(writeService);
+	}
+
+	void removeWriteService(WriteService writeService) {
+		writeServices.remove(writeService);
 	}
 
 	@Reference
@@ -218,12 +231,184 @@ public class ODataServlet extends HttpServlet {
 	@Override
 	protected void service(HttpServletRequest request, HttpServletResponse response)
 			throws jakarta.servlet.ServletException, IOException {
-		if ("GET".equals(request.getMethod())) {
-			super.service(request, response);
-		} else {
-			response.setHeader("OData-Version", negotiateVersion(request));
-			error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED, "read-only service (v1): only GET is supported");
+		switch (request.getMethod()) {
+			case "GET" -> super.service(request, response);
+			case "POST", "PATCH", "PUT", "DELETE" -> write(request, response);
+			default -> {
+				response.setHeader("OData-Version", negotiateVersion(request));
+				error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+						"method not supported");
+			}
 		}
+	}
+
+	// --- write path (OASIS "Updatable Service" v1: POST set, PATCH/PUT/DELETE entity) ---
+
+	private void write(HttpServletRequest request, HttpServletResponse response) throws IOException {
+		response.setHeader("OData-Version", negotiateVersion(request));
+		try {
+			dispatchWrite(request, response);
+		} catch (WriteConflictException e) {
+			error(response, HttpServletResponse.SC_CONFLICT, e.getMessage());
+		} catch (ODataQueryParseException | IllegalArgumentException e) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
+		} catch (UnsupportedOperationException e) {
+			error(response, 501, "the backend does not support this request");
+		} catch (Exception e) {
+			// no exception details leave the server (no class names, no stack traces)
+			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
+		}
+	}
+
+	private void dispatchWrite(HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		String rawPath = request.getPathInfo() == null ? "/" : request.getPathInfo();
+		if ("/".equals(rawPath) || rawPath.startsWith("/$")) {
+			error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+					"this resource is not writable");
+			return;
+		}
+		ResourcePath path;
+		try {
+			path = resourceParser.parse(rawPath.substring(1));
+		} catch (ODataQueryParseException e) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
+			return;
+		}
+		if (!path.segments().isEmpty()) {
+			error(response, 501, "writes below the entity level are not implemented");
+			return;
+		}
+		EClass entityType = resolveEntityType(path.entitySet());
+		if (entityType == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND,
+					"unknown entity set '" + ODataJson.sanitize(path.entitySet()) + "'");
+			return;
+		}
+		WriteService writeService = writeServices.stream()
+				.filter(s -> s.supports(entityType)).findFirst().orElse(null);
+		if (writeService == null) {
+			error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+					"no writable backend for '" + ODataJson.sanitize(path.entitySet()) + "'");
+			return;
+		}
+
+		switch (request.getMethod()) {
+			case "POST" -> {
+				if (path.key() != null) {
+					error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+							"POST addresses the entity set, not an entity");
+					return;
+				}
+				EObject payload = readPayload(request, response, entityType);
+				if (payload == null) {
+					return; // error already written
+				}
+				EObject created = writeService.create(entityType, payload);
+				respondCreated(path.entitySet(), created, entityType, request, response);
+			}
+			case "PATCH", "PUT" -> {
+				if (path.key() == null) {
+					error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+							request.getMethod() + " addresses one entity by key");
+					return;
+				}
+				EObject payload = readPayload(request, response, entityType);
+				if (payload == null) {
+					return; // error already written
+				}
+				WriteService.WriteResult result = writeService.update(entityType, path.key(),
+						payload, "PUT".equals(request.getMethod()));
+				if (result.created()) { // OData upsert (13.1.1/29)
+					respondCreated(path.entitySet(), result.entity(), entityType, request, response);
+				} else {
+					response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+				}
+			}
+			case "DELETE" -> {
+				if (path.key() == null) {
+					error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+							"DELETE addresses one entity by key");
+					return;
+				}
+				if (writeService.delete(entityType, path.key())) {
+					response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+				} else {
+					error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
+				}
+			}
+			default -> error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+					"method not supported");
+		}
+	}
+
+	/**
+	 * Reads and decodes the JSON payload into an EObject of the addressed type — the codec
+	 * leaves exactly the transmitted features set ({@code eIsSet} = "was in the payload").
+	 * Writes the error response and returns null for media-type, size and syntax violations.
+	 */
+	private EObject readPayload(HttpServletRequest request, HttpServletResponse response,
+			EClass entityType) throws IOException {
+		String contentType = request.getContentType();
+		if (contentType == null
+				|| !contentType.toLowerCase(java.util.Locale.ROOT).startsWith("application/json")) {
+			error(response, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE,
+					"write payloads must be application/json");
+			return null;
+		}
+		byte[] body = request.getInputStream().readNBytes(limits.maxBodyBytes() + 1);
+		if (body.length > limits.maxBodyBytes()) {
+			error(response, 413, "payload exceeds the maximum size of "
+					+ limits.maxBodyBytes() + " bytes");
+			return null;
+		}
+		if (body.length == 0) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "empty payload");
+			return null;
+		}
+		ODataJsonResourceImpl resource = new ODataJsonResourceImpl(
+				URI.createURI("request.odatajson"), metadataService);
+		Map<Object, Object> options = new HashMap<>();
+		options.put(CodecResource.CODEC_ROOT_TYPE, entityType);
+		try {
+			resource.load(new java.io.ByteArrayInputStream(body), options);
+		} catch (Exception e) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+			return null;
+		}
+		if (resource.getContents().isEmpty()
+				|| !(resource.getContents().get(0) instanceof EObject entity)) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+			return null;
+		}
+		return entity;
+	}
+
+	/** 201 with Location/OData-EntityId (the entity's edit URL) and the created entity body. */
+	private void respondCreated(String setName, EObject entity, EClass entityType,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		EAttribute id = entityType.getEAllAttributes().stream()
+				.filter(EAttribute::isID).findFirst().orElse(null);
+		String editUrl = contextRoot(request) + "/" + setName
+				+ (id == null ? "" : "(" + urlKeyLiteral(id, entity.eGet(id)) + ")");
+		response.setStatus(HttpServletResponse.SC_CREATED);
+		response.setHeader("Location", editUrl);
+		response.setHeader("OData-EntityId", editUrl);
+		String json = entityJson(entity, entityType, null, Set.of());
+		String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
+				+ "/$entity\",";
+		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		response.getWriter().write("{" + context + json.substring(1));
+	}
+
+	/** URL form of a key value: quoted (with {@code ''} escape) for strings, raw otherwise. */
+	private static String urlKeyLiteral(EAttribute id, Object value) {
+		String text = String.valueOf(value);
+		if (id.getEAttributeType() != null
+				&& String.class.equals(id.getEAttributeType().getInstanceClass())) {
+			return "'" + text.replace("'", "''") + "'";
+		}
+		return text;
 	}
 
 	/** The response is 4.01 unless the client pins {@code OData-MaxVersion: 4.0} (8.1.5). */

@@ -305,6 +305,33 @@ public class ODataHttpIntegrationTest {
 		HttpResponse<String> post = client.send(HttpRequest.newBuilder(URI.create(BASE + "/Product"))
 				.POST(HttpRequest.BodyPublishers.ofString("{}")).build(),
 				HttpResponse.BodyHandlers.ofString());
-		assertEquals(405, post.statusCode(), "read-only v1");
+		assertEquals(415, post.statusCode(),
+				"the write path guards the media type first (no JSON content type sent)");
+	}
+
+	@Test
+	@Order(6)
+	@DisplayName("write round trip over real HTTP: POST 201 → GET → DELETE 204 → 404")
+	void writeRoundTrip() throws Exception {
+		HttpResponse<String> created = client.send(
+				HttpRequest.newBuilder(URI.create(BASE + "/Product"))
+						.header("Content-Type", "application/json")
+						.POST(HttpRequest.BodyPublishers.ofString(
+								"{\"id\":\"w-e2e\",\"name\":\"Created over HTTP\"}"))
+						.build(),
+				HttpResponse.BodyHandlers.ofString());
+		assertEquals(201, created.statusCode(), created.body());
+		assertTrue(created.headers().firstValue("Location").orElse("")
+				.endsWith("/Product('w-e2e')"), "Location is the edit URL");
+
+		HttpResponse<String> fetched = get("/Product('w-e2e')");
+		assertEquals(200, fetched.statusCode());
+		assertTrue(fetched.body().contains("Created over HTTP"), fetched.body());
+
+		HttpResponse<String> deleted = client.send(
+				HttpRequest.newBuilder(URI.create(BASE + "/Product('w-e2e')")).DELETE().build(),
+				HttpResponse.BodyHandlers.ofString());
+		assertEquals(204, deleted.statusCode());
+		assertEquals(404, get("/Product('w-e2e')").statusCode(), "really gone");
 	}
 }

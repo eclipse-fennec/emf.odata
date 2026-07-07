@@ -25,17 +25,27 @@ import org.eclipse.fennec.odata.query.ODataQueryParseException;
  * @param maxTop              enforced {@code $top} ceiling (applies even without a client value)
  * @param maxExpressionLength maximum length of any expression query option
  * @param maxNestingDepth     maximum parenthesis nesting (parser-bomb guard)
+ * @param maxBodyBytes        maximum accepted request-body size for writes
  */
-public record RequestLimits(int maxTop, int maxExpressionLength, int maxNestingDepth) {
+public record RequestLimits(int maxTop, int maxExpressionLength, int maxNestingDepth,
+		int maxBodyBytes) {
 
-	public static final RequestLimits DEFAULTS = new RequestLimits(1000, 4096, 64);
+	public static final RequestLimits DEFAULTS = new RequestLimits(1000, 4096, 64, 1_048_576);
+
+	/** Limits without a body cap change (compatibility for read-only setups). */
+	public RequestLimits(int maxTop, int maxExpressionLength, int maxNestingDepth) {
+		this(maxTop, maxExpressionLength, maxNestingDepth, DEFAULTS_BODY_BYTES);
+	}
+
+	private static final int DEFAULTS_BODY_BYTES = 1_048_576;
 
 	/** Reads limits from component configuration, falling back to {@link #DEFAULTS}. */
 	public static RequestLimits fromConfiguration(Map<String, Object> configuration) {
 		return new RequestLimits(
 				intValue(configuration, "odata.max.top", DEFAULTS.maxTop()),
 				intValue(configuration, "odata.max.expression.length", DEFAULTS.maxExpressionLength()),
-				intValue(configuration, "odata.max.nesting.depth", DEFAULTS.maxNestingDepth()));
+				intValue(configuration, "odata.max.nesting.depth", DEFAULTS.maxNestingDepth()),
+				intValue(configuration, "odata.max.body.size", DEFAULTS.maxBodyBytes()));
 	}
 
 	private static int intValue(Map<String, Object> configuration, String key, int fallback) {

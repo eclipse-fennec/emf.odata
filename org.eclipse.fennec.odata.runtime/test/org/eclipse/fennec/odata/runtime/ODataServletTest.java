@@ -43,6 +43,8 @@ import org.eclipse.fennec.model.metadata.api.MetadataWhiteboard;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
+import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
+import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -72,6 +74,13 @@ class ODataServletTest {
 	private boolean applySupported = true;
 	private final AtomicReference<org.eclipse.fennec.odata.persistence.api.ApplyQuery> lastApplyQuery =
 			new AtomicReference<>();
+	private final AtomicReference<EObject> lastWritePayload = new AtomicReference<>();
+	private final AtomicReference<String> lastWriteKey = new AtomicReference<>();
+	private final AtomicReference<Boolean> lastReplace = new AtomicReference<>();
+	private boolean writeSupported = true;
+	private boolean writeConflict = false;
+	private boolean upsertCreates = false;
+	private boolean deleteFound = true;
 
 	@BeforeEach
 	void setUp() throws Exception {
@@ -82,7 +91,8 @@ class ODataServletTest {
 
 		servlet = new ODataServlet();
 		servlet.activate(Map.of("odata.max.top", "50",
-				"odata.max.expression.length", "128", "odata.max.nesting.depth", "8"));
+				"odata.max.expression.length", "128", "odata.max.nesting.depth", "8",
+				"odata.max.body.size", "256"));
 		servlet.addEPackage(pkg);
 		MetadataWhiteboard metadataService = MetadataServiceFactory.create();
 		metadataService.registerPackage(pkg);
@@ -115,6 +125,36 @@ class ODataServletTest {
 						query.count() ? applyResult.size() : -1);
 			}
 		});
+		servlet.addWriteService(new WriteService() {
+			@Override
+			public boolean supports(EClass entityType) {
+				return writeSupported && entityType == productClass;
+			}
+
+			@Override
+			public EObject create(EClass entityType, EObject entity) {
+				if (writeConflict) {
+					throw new WriteConflictException("an entity with this key already exists");
+				}
+				lastWritePayload.set(entity);
+				return entity;
+			}
+
+			@Override
+			public WriteResult update(EClass entityType, String rawKey, EObject payload,
+					boolean replace) {
+				lastWritePayload.set(payload);
+				lastWriteKey.set(rawKey);
+				lastReplace.set(replace);
+				return new WriteResult(payload, upsertCreates);
+			}
+
+			@Override
+			public boolean delete(EClass entityType, String rawKey) {
+				lastWriteKey.set(rawKey);
+				return deleteFound;
+			}
+		});
 	}
 
 	@AfterEach
@@ -143,11 +183,28 @@ class ODataServletTest {
 		return call(method, path, parameters, accept, maxVersion, Map.of());
 	}
 
+	/** A write call carrying a JSON body (or another content type for the 415 case). */
+	private Response callWrite(String method, String path, String body, String contentType)
+			throws Exception {
+		return call(method, path, Map.of(), null, null, Map.of(), body, contentType);
+	}
+
 	private Response call(String method, String path, Map<String, String> parameters, String accept,
 			String maxVersion, Map<String, String> requestHeaders) throws Exception {
+		return call(method, path, parameters, accept, maxVersion, requestHeaders, null, null);
+	}
+
+	private Response call(String method, String path, Map<String, String> parameters, String accept,
+			String maxVersion, Map<String, String> requestHeaders, String payload, String contentType)
+			throws Exception {
 		HttpServletRequest request = mock(HttpServletRequest.class);
 		when(request.getMethod()).thenReturn(method);
 		when(request.getPathInfo()).thenReturn(path);
+		when(request.getContentType()).thenReturn(contentType);
+		if (payload != null) {
+			when(request.getInputStream()).thenReturn(
+					servletInputStream(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+		}
 		when(request.getHeader("Accept")).thenReturn(accept);
 		when(request.getHeader("OData-MaxVersion")).thenReturn(maxVersion);
 		requestHeaders.forEach((name, value) -> when(request.getHeader(name)).thenReturn(value));
@@ -176,6 +233,30 @@ class ODataServletTest {
 
 		servlet.service(request, response);
 		return new Response(status.get(), body.toString(), headers);
+	}
+
+	private static jakarta.servlet.ServletInputStream servletInputStream(byte[] data) {
+		java.io.ByteArrayInputStream bytes = new java.io.ByteArrayInputStream(data);
+		return new jakarta.servlet.ServletInputStream() {
+			@Override
+			public int read() {
+				return bytes.read();
+			}
+
+			@Override
+			public boolean isFinished() {
+				return bytes.available() == 0;
+			}
+
+			@Override
+			public boolean isReady() {
+				return true;
+			}
+
+			@Override
+			public void setReadListener(jakarta.servlet.ReadListener listener) {
+			}
+		};
 	}
 
 	@Test
@@ -272,7 +353,8 @@ class ODataServletTest {
 		assertEquals(404, unknown.status());
 		assertEquals("4.01", unknown.headers().get("OData-Version"), "headers also on errors");
 
-		assertEquals(405, call("POST", "/Product", Map.of()).status());
+		assertEquals(405, call("TRACE", "/Product", Map.of()).status(),
+				"non-OData methods stay rejected (writes are routed since the write path)");
 
 		backendFailure.set(new IllegalStateException("secret connection string: jdbc://internal"));
 		Response failure = get("/Product", Map.of());
@@ -572,6 +654,77 @@ class ODataServletTest {
 		assertEquals(200, get("/Product('p1')", Map.of("$expand", "category")).status());
 		assertEquals(Set.of("category"), lastQuery.get().expand(),
 				"$expand on a single entity is a prefetch hint too");
+	}
+
+	@Test
+	@DisplayName("write path: POST 201+Location, PATCH/PUT 204 (201 on upsert), DELETE 204/404")
+	void writePath() throws Exception {
+		Response created = callWrite("POST", "/Product",
+				"{\"id\":\"n1\",\"name\":\"New\"}", "application/json");
+		assertEquals(201, created.status(), created.body());
+		assertTrue(created.headers().get("Location").endsWith("/Product('n1')"),
+				"Location is the edit URL: " + created.headers());
+		assertEquals(created.headers().get("Location"), created.headers().get("OData-EntityId"));
+		assertTrue(created.body().contains("\"@odata.context\"")
+				&& created.body().contains("\"id\":\"n1\""), created.body());
+		assertEquals("New", lastWritePayload.get()
+				.eGet(productClass.getEStructuralFeature("name")),
+				"the decoded payload reached the backend");
+
+		assertEquals(204, callWrite("PATCH", "/Product('p1')",
+				"{\"name\":\"Renamed\"}", "application/json").status());
+		assertEquals("'p1'", lastWriteKey.get());
+		assertEquals(Boolean.FALSE, lastReplace.get(), "PATCH merges");
+
+		assertEquals(204, callWrite("PUT", "/Product('p1')",
+				"{\"name\":\"Replaced\"}", "application/json").status());
+		assertEquals(Boolean.TRUE, lastReplace.get(), "PUT replaces");
+
+		upsertCreates = true;
+		Response upserted = callWrite("PATCH", "/Product('u1')",
+				"{\"id\":\"u1\",\"name\":\"Upserted\"}", "application/json");
+		upsertCreates = false;
+		assertEquals(201, upserted.status(), "upsert creating → 201 with Location");
+		assertTrue(upserted.headers().get("Location").endsWith("/Product('u1')"));
+
+		assertEquals(204, callWrite("DELETE", "/Product('p1')", null, null).status());
+		deleteFound = false;
+		assertEquals(404, callWrite("DELETE", "/Product('gone')", null, null).status());
+		deleteFound = true;
+	}
+
+	@Test
+	@DisplayName("write path guards: media type, body size, malformed payloads, wrong targets")
+	void writeGuards() throws Exception {
+		assertEquals(415, callWrite("POST", "/Product", "{}", "text/plain").status(),
+				"writes must be application/json");
+		assertEquals(400, callWrite("POST", "/Product", "", "application/json").status(),
+				"empty payload");
+		assertEquals(400, callWrite("POST", "/Product", "{invalid json",
+				"application/json").status(), "malformed payload");
+		assertEquals(413, callWrite("POST", "/Product",
+				"{\"name\":\"" + "x".repeat(300) + "\"}", "application/json").status(),
+				"payload above the configured body limit");
+
+		assertEquals(405, callWrite("POST", "/Product('p1')",
+				"{}", "application/json").status(), "POST addresses the set");
+		assertEquals(405, callWrite("PATCH", "/Product",
+				"{}", "application/json").status(), "PATCH addresses one entity");
+		assertEquals(405, callWrite("POST", "/$metadata", "{}", "application/json").status());
+		assertEquals(404, callWrite("POST", "/NoSuchSet", "{}", "application/json").status());
+		assertEquals(501, callWrite("POST", "/Product('p1')/reviews",
+				"{}", "application/json").status(), "writes below the entity level");
+
+		writeConflict = true;
+		Response conflict = callWrite("POST", "/Product",
+				"{\"id\":\"p1\",\"name\":\"Clone\"}", "application/json");
+		writeConflict = false;
+		assertEquals(409, conflict.status(), "key conflicts are 409, not 500");
+
+		writeSupported = false;
+		assertEquals(405, callWrite("POST", "/Product",
+				"{\"id\":\"x\"}", "application/json").status(), "no writable backend → 405");
+		writeSupported = true;
 	}
 
 	@Test
