@@ -28,6 +28,16 @@
       <eParameters name="n" lowerBound="1"
           eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
     </eOperations>
+    <eOperations name="featured" lowerBound="1" eType="#//Product">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Bound" value="false"/>
+      </eAnnotations>
+    </eOperations>
+    <eOperations name="label" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eParameters name="prefix" lowerBound="1"
+          eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    </eOperations>
   </eClassifiers>
   <eClassifiers xsi:type="ecore:EClass" name="DiscountedProduct" eSuperTypes="#//Product">
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="discount"

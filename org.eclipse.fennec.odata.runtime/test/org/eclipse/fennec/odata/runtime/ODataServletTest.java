@@ -626,6 +626,49 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("function returning an entity serializes as a single entity with $entity context")
+	void functionReturningEntity() throws Exception {
+		servlet.addOperationHandler(new ODataOperationHandler() {
+			@Override
+			public boolean handles(String qualifiedOperationName) {
+				return qualifiedOperationName.endsWith(".featured");
+			}
+
+			@Override
+			public Object invoke(org.eclipse.emf.ecore.EOperation operation, EObject boundInstance,
+					Map<String, Object> parameters) {
+				return product("p9", "Featured", "9.99", null);
+			}
+		});
+		Response result = get("/featured()", Map.of());
+		assertEquals(200, result.status(), result.body());
+		assertTrue(result.body().contains("\"Featured\""), result.body());
+		assertTrue(result.body().contains("$entity"), "an entity result carries the $entity context");
+	}
+
+	@Test
+	@DisplayName("bound function Set(key)/Ns.Func(p=…) is invoked on the addressed entity")
+	void boundFunctionOnEntity() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		servlet.addOperationHandler(new ODataOperationHandler() {
+			@Override
+			public boolean handles(String qualifiedOperationName) {
+				return qualifiedOperationName.endsWith(".label");
+			}
+
+			@Override
+			public Object invoke(org.eclipse.emf.ecore.EOperation operation, EObject boundInstance,
+					Map<String, Object> parameters) {
+				Object name = boundInstance.eGet(boundInstance.eClass().getEStructuralFeature("name"));
+				return parameters.get("prefix") + ":" + name;
+			}
+		});
+		Response result = get("/Product('p1')/webshop.label(prefix='X')", Map.of());
+		assertEquals(200, result.status(), result.body());
+		assertTrue(result.body().contains("\"value\":\"X:Milk\""), result.body());
+	}
+
+	@Test
 	@DisplayName("$orderby parses to typed IR that reaches the backend; unknown property → 400")
 	void orderByReachesBackendOrFails() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));

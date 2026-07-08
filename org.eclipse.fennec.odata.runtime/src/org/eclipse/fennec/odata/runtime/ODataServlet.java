@@ -1098,6 +1098,10 @@ public class ODataServlet extends HttpServlet {
 			functionImport(rawPath, request, response); // GET FuncName(p=…) — the resource parser
 			return;                                      // deliberately does not model function segments
 		}
+		if (isBoundFunctionCall(rawPath)) {
+			boundFunction(rawPath, request, response); // GET Set(key)/Ns.Func(p=…)
+			return;
+		}
 		ResourcePath path;
 		try {
 			path = resourceParser.parse(rawPath);
@@ -1167,9 +1171,77 @@ public class ODataServlet extends HttpServlet {
 		if (paren <= 0) {
 			return false;
 		}
-		String inside = rawPath.substring(paren + 1, rawPath.length() - 1);
-		// distinguish from an entity key Set('x')/Set(1): a function has named params (or none)
+		return isFunctionArgs(rawPath.substring(paren + 1, rawPath.length() - 1));
+	}
+
+	/** A multi-segment path whose LAST segment is a function call — a bound function invocation. */
+	private static boolean isBoundFunctionCall(String rawPath) {
+		int lastSlash = rawPath.lastIndexOf('/');
+		if (lastSlash < 0 || !rawPath.endsWith(")")) {
+			return false;
+		}
+		String segment = rawPath.substring(lastSlash + 1);
+		int paren = segment.indexOf('(');
+		return paren > 0 && isFunctionArgs(segment.substring(paren + 1, segment.length() - 1));
+	}
+
+	/** Function arguments distinguish a call from an entity key: named params (or none). */
+	private static boolean isFunctionArgs(String inside) {
 		return inside.isBlank() || inside.matches("\\s*[A-Za-z_]\\w*\\s*=.*");
+	}
+
+	/** Invokes a bound function {@code Set(key)/Ns.Func(p=…)} on the addressed entity. */
+	private void boundFunction(String rawPath, HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		int lastSlash = rawPath.lastIndexOf('/');
+		String prefix = rawPath.substring(0, lastSlash);
+		String segment = rawPath.substring(lastSlash + 1);
+		int paren = segment.indexOf('(');
+		String qualified = segment.substring(0, paren);
+		String localName = qualified.contains(".")
+				? qualified.substring(qualified.lastIndexOf('.') + 1) : qualified;
+		String parameterList = segment.substring(paren + 1, segment.length() - 1);
+
+		ResourcePath path;
+		try {
+			path = resourceParser.parse(prefix);
+		} catch (ODataQueryParseException e) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
+			return;
+		}
+		if (path.key() == null || !path.segments().isEmpty()) {
+			error(response, HttpServletResponse.SC_NOT_FOUND,
+					"a bound function is invoked on a keyed entity");
+			return;
+		}
+		Target target = resolveTarget(path.entitySet(), response);
+		if (target == null) {
+			return;
+		}
+		EObject entity = fetchByKey(target, path.key(), Set.of(), response);
+		if (entity == null) {
+			return; // error already written
+		}
+		EOperation operation = entity.eClass().getEAllOperations().stream()
+				.filter(op -> op.getName().equals(localName) && !isUnbound(op)).findFirst().orElse(null);
+		if (operation == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "no bound function '" + localName + "'");
+			return;
+		}
+		String qualifiedName = operationNamespace(target.entityType()) + "." + localName;
+		ODataOperationHandler handler = operationHandlers.stream()
+				.filter(h -> h.handles(qualifiedName)).findFirst().orElse(null);
+		if (handler == null) {
+			error(response, 501, "no handler for the operation");
+			return;
+		}
+		Object result = handler.invoke(operation, entity, functionParameters(parameterList, operation));
+		writeFunctionResult(result, request, response);
+	}
+
+	private String operationNamespace(EClass entityType) {
+		return profiles.computeIfAbsent(entityType.getEPackage(), p -> new OdataResolver().resolve(p))
+				.getNamespace();
 	}
 
 	/** Invokes an unbound function import: resolve the operation, coerce params, dispatch, serialize. */
@@ -1191,7 +1263,7 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		Object result = handler.invoke(resolved.operation(), null, parameters);
-		writeFunctionResult(result, response);
+		writeFunctionResult(result, request, response);
 	}
 
 	/** An unbound operation plus its namespace-qualified name (the handler dispatch key). */
@@ -1253,16 +1325,34 @@ public class ODataServlet extends HttpServlet {
 		return literal;
 	}
 
-	/** Serializes a function result. Primitive/void for now; entity/collection follow (→ 501). */
-	private void writeFunctionResult(Object result, HttpServletResponse response) throws IOException {
+	/** Serializes a function/action result: void (204), a single entity, a collection, or a value. */
+	private void writeFunctionResult(Object result, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
 		if (result == null) {
 			response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 			return;
 		}
-		if (result instanceof EObject || result instanceof java.util.Collection) {
-			throw new UnsupportedOperationException("entity/collection function results");
-		}
 		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		if (result instanceof EObject entity) {
+			String json = entityJson(entity, entity.eClass(), null, Set.of());
+			String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#"
+					+ entity.eClass().getName() + "/$entity\",";
+			response.getWriter().write("{" + context + json.substring(1));
+			return;
+		}
+		if (result instanceof java.util.Collection<?> collection) {
+			StringBuilder body = new StringBuilder("{\"value\":[");
+			boolean first = true;
+			for (Object element : collection) {
+				if (!(element instanceof EObject entity)) {
+					throw new ODataQueryParseException("a collection function result must hold entities");
+				}
+				body.append(first ? "" : ",").append(entityJson(entity, entity.eClass(), null, Set.of()));
+				first = false;
+			}
+			response.getWriter().write(body.append("]}").toString());
+			return;
+		}
 		response.getWriter().write("{\"value\":" + JSON.writeValueAsString(result) + "}");
 	}
 
