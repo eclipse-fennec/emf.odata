@@ -20,13 +20,20 @@ import org.eclipse.fennec.odata.schema.api.ODataSchema;
 import org.eclipse.fennec.odata.schema.api.ODataSchemaRegistrar;
 import org.eclipse.fennec.odata.schema.api.ODataSchemaResolver;
 import org.eclipse.fennec.odata.schema.api.SchemaScope;
+import org.osgi.service.component.annotations.Component;
 
 /**
  * Default schema registry (ADR-0007): an in-process, per-instance store keyed by endpoint scope.
  * Because each instance holds one endpoint's schema in isolation, the semantic nsURIs (derived from
  * the OData namespace) never collide across endpoints — the instance IS the scope boundary. An
  * alternative implementation (e.g. the Model Atlas) persists across endpoints using its own scopes.
+ *
+ * <p>Registered as a DS service at a NEGATIVE {@code service.ranking} so a downstream, persistent
+ * implementation (e.g. the Atlas) that ships alongside it is preferred automatically — without any
+ * change to the consuming {@link ODataSchemaManager}.
  */
+@Component(service = { ODataSchemaRegistrar.class, ODataSchemaResolver.class },
+		property = "service.ranking:Integer=-100")
 public final class EPackageSchemaRegistry implements ODataSchemaRegistrar, ODataSchemaResolver {
 
 	private final ConcurrentMap<SchemaScope, ODataSchema> byScope = new ConcurrentHashMap<>();

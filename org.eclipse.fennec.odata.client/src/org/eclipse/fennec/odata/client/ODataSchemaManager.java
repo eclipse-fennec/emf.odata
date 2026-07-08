@@ -21,13 +21,20 @@ import org.eclipse.fennec.odata.schema.api.ODataSchemaRegistrar;
 import org.eclipse.fennec.odata.schema.api.ODataSchemaResolver;
 import org.eclipse.fennec.odata.schema.api.ODataSchemaResolver.SchemaVersion;
 import org.eclipse.fennec.odata.schema.api.SchemaScope;
+import org.osgi.service.component.annotations.Activate;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Reference;
 
 /**
  * Ties the reader, registrar and resolver into the endpoint lifecycle (ADR-0007): register a schema
  * when an endpoint is added to the system, re-check it on demand (downloading only when the server
  * reports a change), and drop it on removal. This is the ONLY place that couples "fetch" to
  * "persist"; the client data path never touches it.
+ *
+ * <p>As a DS service it binds the highest-ranked reader/registrar/resolver, so shipping an
+ * alternative registry (e.g. the Atlas) transparently redirects registration there.
  */
+@Component(service = ODataSchemaManager.class)
 public final class ODataSchemaManager {
 
 	/** Outcome of {@link #refresh(SchemaScope)}. */
@@ -44,8 +51,9 @@ public final class ODataSchemaManager {
 	private final ODataSchemaRegistrar registrar;
 	private final ODataSchemaResolver resolver;
 
-	public ODataSchemaManager(ODataSchemaReader reader, ODataSchemaRegistrar registrar,
-			ODataSchemaResolver resolver) {
+	@Activate
+	public ODataSchemaManager(@Reference ODataSchemaReader reader,
+			@Reference ODataSchemaRegistrar registrar, @Reference ODataSchemaResolver resolver) {
 		this.reader = reader;
 		this.registrar = registrar;
 		this.resolver = resolver;

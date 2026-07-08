@@ -30,22 +30,45 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.odata.schema.api.ODataSchema;
 import org.eclipse.fennec.odata.schema.api.ODataSchemaReader;
 import org.eclipse.fennec.odata.schema.api.SchemaScope;
+import org.osgi.service.component.annotations.Activate;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
 
 /**
  * Default {@link ODataSchemaReader}: fetches an endpoint's {@code $metadata} over HTTP and converts
  * the CSDL to Ecore ({@link CsdlMetadataReader} + the E2 converter), side-effect-free (ADR-0007).
  * The content hash of the raw CSDL is the authoritative version; ETag/Last-Modified are captured
  * for a later conditional {@code GET} so an unchanged document is not re-downloaded.
+ *
+ * <p>Usable programmatically with an injected {@link HttpClient}, or as a DS service (the no-arg
+ * constructor creates — and {@link #deactivate() closes} — its own connect-timed client).
  */
+@Component(service = ODataSchemaReader.class)
 public final class HttpODataSchemaReader implements ODataSchemaReader {
 
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 	private static final long MAX_METADATA_BYTES = 16L * 1024 * 1024;
 
 	private final HttpClient http;
+	private final boolean ownsHttp;
 
 	public HttpODataSchemaReader(HttpClient http) {
 		this.http = http;
+		this.ownsHttp = false;
+	}
+
+	/** DS constructor: owns a connect-timed {@link HttpClient} released on deactivation. */
+	@Activate
+	public HttpODataSchemaReader() {
+		this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+		this.ownsHttp = true;
+	}
+
+	@Deactivate
+	void deactivate() {
+		if (ownsHttp) {
+			http.close();
+		}
 	}
 
 	@Override
