@@ -204,14 +204,22 @@ public class OclEvaluator {
 		}
 
 		Object source = evaluate(op.getOwnedSource(), self, bindings);
+		// three-valued logic: any function/operator applied to a null operand is UNKNOWN, which
+		// collapses to a false predicate (row excluded) — matching SQL and the JPA pushdown, rather
+		// than erroring or spuriously succeeding. eq/ne handle the null LITERAL separately (the only
+		// defined null test); relational comparisons signal unknown inside comparison().
+		boolean equality = "=".equals(name) || "<>".equals(name) || "has".equals(name);
+		if (op.getOwnedSource() != null && source == null && !equality) {
+			throw new NullComparison(); // a present operand that resolved to null → unknown
+		}
 		return switch (name) {
-			case "=" -> equalTo(source, evaluate(args.get(0), self, bindings));
-			case "<>" -> !equalTo(source, evaluate(args.get(0), self, bindings));
+			case "=" -> equalTo3vl(op, source, evaluate(args.get(0), self, bindings));
+			case "<>" -> !equalTo3vl(op, source, evaluate(args.get(0), self, bindings));
 			case "<" -> comparison(source, evaluate(args.get(0), self, bindings)) < 0;
 			case "<=" -> comparison(source, evaluate(args.get(0), self, bindings)) <= 0;
 			case ">" -> comparison(source, evaluate(args.get(0), self, bindings)) > 0;
 			case ">=" -> comparison(source, evaluate(args.get(0), self, bindings)) >= 0;
-			case "has" -> equalTo(source, evaluate(args.get(0), self, bindings)); // single-flag semantics
+			case "has" -> equalTo3vl(op, source, evaluate(args.get(0), self, bindings)); // single-flag semantics
 			case "+" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
 			case "-" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
 			case "*" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
@@ -285,6 +293,28 @@ public class OclEvaluator {
 	}
 
 	// --- value coercion ---
+
+	/**
+	 * Equality under three-valued logic: comparing against the null LITERAL ({@code x eq null}) is a
+	 * defined test, but a null VALUE flowing in from a property is UNKNOWN — signalled as
+	 * {@link NullComparison} so it propagates through {@code not}/{@code and}/{@code or} and collapses
+	 * the predicate to false, exactly as SQL (and the JPA backend) treat it.
+	 */
+	private boolean equalTo3vl(OperationCallExp op, Object left, Object right) {
+		if (left == null || right == null) {
+			boolean nullLiteral = isNullLiteral(op.getOwnedSource())
+					|| op.getOwnedArguments().stream().anyMatch(OclEvaluator::isNullLiteral);
+			if (nullLiteral) {
+				return left == right;
+			}
+			throw new NullComparison();
+		}
+		return equalTo(left, right);
+	}
+
+	private static boolean isNullLiteral(OclExpression expression) {
+		return expression instanceof NullLiteralExp;
+	}
 
 	private boolean equalTo(Object left, Object right) {
 		if (left == null || right == null) {

@@ -131,6 +131,36 @@ Konsolidierte Absicherung aus dem Multi-Dimensions-Review; jede Änderung ist mi
 - **Client:** `ODataClient` ist `AutoCloseable` (schließt nur einen selbst erzeugten `HttpClient`);
   ein server-geliefertes `@odata.nextLink` auf einen fremden Origin wird abgelehnt (SSRF-Guard).
 
+### Verlässlichkeits-/Coverage-Pass 2026-07-08
+
+Ergebnis einer Testabdeckungs-Analyse (Fokus: „HTTP 200 mit falschen Zeilen"). Neu:
+
+- **Differenzieller Backend-Harness** (`DifferentialBackendTest`): EIN Datensatz (Edge-Fälle:
+  null, `%`/`_`, Unicode, gleiche Sortierschlüssel) in JPA UND In-Memory geladen, ein Query-Corpus
+  (Vergleich/Logik/`in`/String-/Datums-Funktionen/`$orderby`/`$apply` mit allen sechs Aggregaten)
+  über beide, Ergebnis-Parität asserted. **Deckte einen echten Bug auf:** der In-Memory-Evaluator
+  behandelte Null nicht 3-wertig — `not (price eq 5)` schloss Null-Zeilen fälschlich EIN und
+  `year(null)` warf einen Fehler (JPA/SQL korrekt). Behoben in `OclEvaluator` (Null-Operand ⇒
+  UNKNOWN ⇒ Prädikat falsch; `eq/ne null`-Literal bleibt definierter Test) — jetzt Parität.
+- **Wertformate** (`ODataJsonRoundTripTest`): Int64/TimeOfDay/Duration/Enum/Collection/Null
+  round-trip. Enum serialisiert per Namen, Collections korrekt. **Bekannte Lücke (dokumentiert):**
+  `Edm.Int64 > 2^53` geht als blanke JSON-Zahl über die Leitung (Java-Round-Trip exakt, aber
+  `IEEE754Compatible`-String-Form für JS-Clients fehlt).
+- **CI-Gates:** strukturelle Skalierungs-Asserts (konstante Statement-Zahl bei 50k Zeilen) failen
+  jetzt den Build (`perfTest` ohne `ignoreFailures`; Timing nur geloggt); JaCoCo-Coverage-Floor
+  (30 % Instructions, generierter Code exkludiert) an `check` verdrahtet — als hochziehbare Basis.
+- **Protokoll-Ränder** (`ODataServletTest`): `OData-Version: 4.0`-Downgrade, `$orderby` als IR +
+  parse-or-fail→400, Deep-Insert (verschachtelte Containment-Kinder erreichen das Write-Backend).
+- **Client:** Real-World-`$metadata` (TripPin) parst; `nextPage`-Happy-Path; Request-Timeout +
+  gedeckelter (gestreamter) Response-Read gegen OOM.
+- **Write-Atomarität** (`JpaWriteRollbackTest`): ein Fehler zwischen `begin()` und `commit()` lässt
+  keinen Teilzustand zurück (beobachtet, nicht nur Exception-Typ).
+
+**Bewusst offen (nächste Runde):** In-Memory-Backend ist NICHT subtyp-polymorph (`entities(Typ)`
+liefert nur den exakten Typ; JPA liefert Subtypen) — Base-Type-Queries divergieren, daher aus dem
+Differenz-Corpus ausgeklammert. Ebenso: `Edm.Int64` `IEEE754Compatible`-Aushandlung, System-weite
+Concurrency-/Fuzz-Tests, 406/`return=`-Preference.
+
 ## Review-Notizen (2026-07-03)
 
 **SOLID:** SRP durch Bundle-Schnitt + Servlet-Extraktion (`RequestLimits`/`EntityShaper`/

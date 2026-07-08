@@ -48,6 +48,7 @@ import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
+import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -581,13 +582,48 @@ class ODataServletTest {
 	void versionAndOptionContract() throws Exception {
 		assertEquals(400, call("GET", "/Product", Map.of(), null, "3.0").status(),
 				"MaxVersion below 4.0 fails the request");
-		assertEquals(200, call("GET", "/Product", Map.of(), null, "4.01").status());
+		// 8.1.5 negotiation: the RESPONSE OData-Version follows the pinned MaxVersion, not just 200
+		Response pinned40 = call("GET", "/Product", Map.of(), null, "4.0");
+		assertEquals(200, pinned40.status());
+		assertEquals("4.0", pinned40.headers().get("OData-Version"),
+				"OData-MaxVersion: 4.0 pins the response to 4.0");
+		Response v401 = call("GET", "/Product", Map.of(), null, "4.01");
+		assertEquals(200, v401.status());
+		assertEquals("4.01", v401.headers().get("OData-Version"), "otherwise the response is 4.01");
 
 		assertEquals(501, get("/Product", Map.of("$search", "milk")).status(),
 				"known-but-unsupported system option → 501");
 		assertEquals(501, get("/Product", Map.of("$compute", "price mul 2 as d")).status());
 		assertEquals(400, get("/Product", Map.of("$frobnicate", "x")).status(),
 				"unknown $-option → 400");
+	}
+
+	@Test
+	@DisplayName("$orderby parses to typed IR that reaches the backend; unknown property → 400")
+	void orderByReachesBackendOrFails() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		Response ok = get("/Product", Map.of("$orderby", "name desc"));
+		assertEquals(200, ok.status(), ok.body());
+		List<OrderBySegment> orderBy = lastQuery.get().orderBy();
+		assertEquals(1, orderBy.size(), "the $orderby segment reaches the backend as IR");
+		assertFalse(orderBy.get(0).ascending(), "the desc direction is carried through");
+		// ABNF parse-or-fail (13.1.2): an unknown property is a 400 at the parser, never ignored
+		assertEquals(400, get("/Product", Map.of("$orderby", "nosuchprop")).status());
+	}
+
+	@Test
+	@DisplayName("deep insert: nested containment children in one POST body reach the write backend")
+	void deepInsertContainmentChildren() throws Exception {
+		Response created = callWrite("POST", "/Product",
+				"{\"id\":\"n1\",\"name\":\"Milk\","
+						+ "\"reviews\":[{\"id\":\"r1\",\"stars\":5},{\"id\":\"r2\",\"stars\":4}]}",
+				"application/json");
+		assertEquals(201, created.status(), created.body());
+		EObject payload = lastWritePayload.get();
+		assertNotNull(payload, "the created entity reached the write backend");
+		List<?> reviews = (List<?>) payload.eGet(productClass.getEStructuralFeature("reviews"));
+		assertEquals(2, reviews.size(),
+				"both nested containment children are decoded and handed to the backend (13.1.1/32)");
 	}
 
 	@Test

@@ -26,13 +26,13 @@ subprojects {
         }
     }
 
-    // Dedicated task for performance and thread-safety tests (@Tag("perf"))
+    // Dedicated task for the slow scaling tests (@Tag("perf"), kept out of the fast build).
+    // Their STRUCTURAL assertions (constant SQL statement counts at scale — deterministic) DO gate;
+    // timing is only logged, so this task is safe to fail the build on a real regression.
     tasks.register('perfTest', Test) {
         useJUnitPlatform {
             includeTags 'perf'
         }
-        // Don't fail the build on perf test failures — results are informational
-        ignoreFailures = true
     }
 
     // Add JUnit dependencies for modules that have Gradle tests
@@ -41,6 +41,42 @@ subprojects {
         testImplementation 'org.junit.platform:junit-platform-launcher:1.14.2'
         testImplementation 'org.mockito:mockito-junit-jupiter:5.21.0'
         testImplementation 'org.assertj:assertj-core:3.27.7'
+    }
+
+    // Coverage floor: a catastrophic-regression tripwire (e.g. a bundle's tests deleted) wired
+    // into `check`. Conservative baseline of 30% instructions on the hand-written code of the
+    // library bundles that carry plain-JUnit tests — generated code and test-only/OSGi-covered
+    // bundles are out of scope. Ratchet upward as coverage is deliberately raised.
+    def coverageFloorBundles = [
+            'org.eclipse.fennec.odata.query',
+            'org.eclipse.fennec.odata.runtime',
+            'org.eclipse.fennec.odata.persistence.jpa',
+            'org.eclipse.fennec.odata.persistence.inmemory',
+            'org.eclipse.fennec.odata.csdl',
+            'org.eclipse.fennec.odata.codec.json',
+            'org.eclipse.fennec.odata.client',
+            'org.eclipse.fennec.odata.vocabularies',
+    ]
+    afterEvaluate {
+        if (project.name in coverageFloorBundles) {
+            tasks.named('jacocoTestCoverageVerification') {
+                // exclude generated code (ANTLR parser, EMF src-gen models/profiles)
+                def generated = ['**/antlr/**', '**/profile/**', 'org/open/oasis/**']
+                classDirectories.setFrom(files(classDirectories.files.collect {
+                    fileTree(dir: it, exclude: generated)
+                }))
+                violationRules {
+                    rule {
+                        limit {
+                            counter = 'INSTRUCTION'
+                            value = 'COVEREDRATIO'
+                            minimum = 0.30
+                        }
+                    }
+                }
+            }
+            tasks.named('check').configure { dependsOn 'jacocoTestCoverageVerification' }
+        }
     }
 
 }

@@ -164,7 +164,68 @@ class ODataJsonRoundTripTest {
 				new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), options));
 	}
 
+	@Test
+	@DisplayName("Int64 / TimeOfDay / Duration / enum / collection value formats round-trip")
+	@SuppressWarnings("unchecked")
+	void extendedValueFormats() throws IOException {
+		EObject product = pkg.getEFactoryInstance().create(productClass);
+		product.eSet(idAttr, "p9");
+		long bigSerial = 9007199254740993L; // 2^53 + 1 — NOT representable as an IEEE754 double
+		product.eSet(feature("serial"), bigSerial);
+		product.eSet(feature("openingTime"), Date.from(Instant.parse("1970-01-01T08:30:00Z")));
+		product.eSet(feature("warranty"), "P1Y6M");
+		org.eclipse.emf.ecore.EEnum colorEnum = (org.eclipse.emf.ecore.EEnum) pkg.getEClassifier("Color");
+		product.eSet(feature("color"), colorEnum.getEEnumLiteral("Green").getInstance());
+		((java.util.List<Object>) product.eGet(feature("tags"))).addAll(java.util.List.of("a", "b"));
+
+		String json = serialize(product);
+		assertTrue(json.contains("\"warranty\":\"P1Y6M\""), "Edm.Duration passes through: " + json);
+		assertTrue(json.contains("\"openingTime\":\"08:30\""), "Edm.TimeOfDay (seconds omitted): " + json);
+		assertTrue(json.contains("\"tags\":[\"a\",\"b\"]"), "collection of primitives: " + json);
+		assertTrue(json.contains("\"color\":\"Green\""), "enum by member NAME, not ordinal: " + json);
+		// Int64: currently a bare JSON number. Exact for a Java/long client; a JavaScript/double
+		// client loses precision above 2^53 — the IEEE754Compatible string form is a known gap.
+		assertTrue(json.contains("\"serial\":9007199254740993"), "Int64 wire form: " + json);
+
+		EObject loaded = load(json);
+		assertEquals(bigSerial, ((Number) loaded.eGet(feature("serial"))).longValue(),
+				"Int64 survives the round-trip exactly at the Java level");
+		assertEquals(Date.from(Instant.parse("1970-01-01T08:30:00Z")), loaded.eGet(feature("openingTime")));
+		assertEquals("P1Y6M", loaded.eGet(feature("warranty")));
+		assertEquals(java.util.List.of("a", "b"), loaded.eGet(feature("tags")));
+		assertEquals("Green", String.valueOf(loaded.eGet(feature("color"))));
+	}
+
+	@Test
+	@DisplayName("absent optional values are omitted from the payload and stay unset on read")
+	void nullValuesOmitted() throws IOException {
+		EObject product = pkg.getEFactoryInstance().create(productClass);
+		product.eSet(idAttr, "p10");
+		product.eSet(nameAttr, "Bare");
+		// price / releaseDate / photo / serial left unset
+		String json = serialize(product);
+		assertFalse(json.contains("\"price\""), "unset value is omitted, not null: " + json);
+		assertFalse(json.contains("\"releaseDate\""), json);
+
+		EObject loaded = load(json);
+		assertFalse(loaded.eIsSet(priceAttr), "an omitted value stays unset after decode");
+		assertEquals("Bare", loaded.eGet(nameAttr));
+	}
+
 	// === helpers ===
+
+	private EAttribute feature(String name) {
+		return (EAttribute) EcoreHelper.getFeature(productClass, name);
+	}
+
+	private EObject load(String json) throws IOException {
+		ODataJsonResourceImpl resource = new ODataJsonResourceImpl(
+				URI.createURI("test://load.odatajson"), metadataService);
+		Map<Object, Object> options = new HashMap<>();
+		options.put(CodecResource.CODEC_ROOT_TYPE, productClass);
+		resource.load(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), options);
+		return resource.getContents().get(0);
+	}
 
 	private EObject sampleProduct() {
 		EObject product = pkg.getEFactoryInstance().create(productClass);

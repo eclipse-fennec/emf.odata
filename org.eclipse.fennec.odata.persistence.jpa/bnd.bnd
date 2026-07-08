@@ -20,6 +20,7 @@ Bundle-Version: 1.0.0
 # uses at runtime.
 -testpath: \
 	com.h2database,\
+	org.eclipse.fennec.odata.persistence.inmemory;version=project,\
 	org.eclipse.persistence.asm;version=latest,\
 	org.eclipse.persistence.jpa;version=latest,\
 	org.eclipse.persistence.jpa.jpql;version=latest,\

@@ -31,5 +31,32 @@
         <details key="OData.Type" value="Edm.Guid"/>
       </eAnnotations>
     </eStructuralFeatures>
+    <!-- ELong -> Edm.Int64: precision on the wire (values above 2^53) -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="serial"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//ELong"/>
+    <!-- EDate -> Edm.TimeOfDay -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="openingTime"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDate">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Type" value="Edm.TimeOfDay"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <!-- string carrying an ISO-8601 duration -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="warranty"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Type" value="Edm.Duration"/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <!-- enum value: must serialize as the member NAME, not the ordinal -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="color" eType="#//Color"/>
+    <!-- collection of a primitive (multi-valued) -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="tags" upperBound="-1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="Color">
+    <eLiterals name="Red"/>
+    <eLiterals name="Green" value="1"/>
+    <eLiterals name="Blue" value="2"/>
   </eClassifiers>
 </ecore:EPackage>

@@ -13,6 +13,7 @@
 package org.eclipse.fennec.odata.client;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -193,6 +194,41 @@ class ODataClientTest {
 				() -> client.entitySet("Category").list());
 		assertEquals(404, error.status());
 		assertTrue(error.getMessage().contains("unknown resource"), error.getMessage());
+	}
+
+	@Test
+	@DisplayName("nextPage follows the server's @odata.nextLink to the next page of entities")
+	void followsNextLink() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		ODataPage first = client.entitySet("Product").list();
+		assertTrue(first.hasMore(), "the stub's first page carries a nextLink");
+
+		ODataPage second = client.entitySet("Product").nextPage(first);
+		assertEquals(2, second.entities().size(), "the follow-up request decodes into entities");
+		assertTrue(lastRequest.get().toString().contains("$skip=2"),
+				"the nextLink's query is carried onto the follow-up request: " + lastRequest.get());
+	}
+
+	@Test
+	@DisplayName("real-world foreign $metadata (OData.org TripPin) parses into Ecore packages")
+	void parsesRealWorldMetadata() throws Exception {
+		String trippin = Files.readString(findResource(
+				"testdata/metadata-samples/trippin-v4-metadata.xml",
+				"org.eclipse.fennec.odata.csdl/testdata/trippin-v4-metadata.xml"));
+		List<EPackage> packages = CsdlMetadataReader.read(trippin);
+		assertFalse(packages.isEmpty(), "a foreign service's metadata converts to at least one EPackage");
+		assertTrue(packages.stream().anyMatch(p -> p.getEClassifier("Person") != null),
+				"TripPin's Person entity type survives the client read path");
+	}
+
+	@Test
+	@DisplayName("an oversized response is rejected, not buffered unbounded into the client heap")
+	void oversizedResponseRejected() {
+		ODataClient client = ODataClient.connect(serviceRoot); // $metadata fetched under the default cap
+		client.maxResponseBytes = 10; // now clamp hard
+		ODataClientException error = assertThrows(ODataClientException.class,
+				() -> client.entitySet("Product").list());
+		assertTrue(error.getMessage().contains("exceeds the client limit"), error.getMessage());
 	}
 
 	@Test

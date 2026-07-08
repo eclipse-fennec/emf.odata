@@ -13,10 +13,13 @@
 package org.eclipse.fennec.odata.client;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 
 import org.eclipse.emf.ecore.EClass;
@@ -40,11 +43,22 @@ import org.eclipse.fennec.model.metadata.api.MetadataWhiteboard;
  */
 public final class ODataClient implements AutoCloseable {
 
+	/** Per-request timeout so a hung/slow service cannot block the calling thread indefinitely. */
+	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
+	private static final long DEFAULT_MAX_RESPONSE_BYTES = 16L * 1024 * 1024;
+
 	private final HttpClient http;
 	private final boolean ownsHttp;
 	private final URI serviceRoot;
 	private final List<EPackage> packages;
 	private final MetadataService metadataService;
+
+	/**
+	 * Inbound-size cap: a foreign service without server-driven paging (or a hostile one) must not
+	 * OOM the client by streaming an unbounded body. Package-private and mutable so tests can lower
+	 * it; adjust before issuing the request whose response you want bounded.
+	 */
+	long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
 
 	private ODataClient(HttpClient http, boolean ownsHttp, URI serviceRoot, List<EPackage> packages,
 			MetadataWhiteboard whiteboard) {
@@ -63,8 +77,10 @@ public final class ODataClient implements AutoCloseable {
 	}
 
 	public static ODataClient connect(String serviceRoot) {
-		// the HttpClient is created here, so this client OWNS it and closes it in close()
-		return connect(serviceRoot, HttpClient.newHttpClient(), null, true);
+		// the HttpClient is created here, so this client OWNS it and closes it in close();
+		// a connect timeout bounds establishing the connection (the request timeout bounds the rest)
+		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+		return connect(serviceRoot, http, null, true);
 	}
 
 	public static ODataClient connect(String serviceRoot, HttpClient http) {
@@ -138,23 +154,40 @@ public final class ODataClient implements AutoCloseable {
 					"refusing to follow a link to a different origin than the service root: " + target);
 		}
 		HttpRequest request = HttpRequest.newBuilder(target)
+				.timeout(REQUEST_TIMEOUT)
 				.header("Accept", accept)
 				.header("OData-MaxVersion", "4.01")
 				.GET().build();
-		HttpResponse<String> response;
+		HttpResponse<InputStream> response;
 		try {
-			response = http.send(request, HttpResponse.BodyHandlers.ofString());
+			response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
 		} catch (IOException e) {
 			throw new ODataClientException("GET " + target + " failed", e);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			throw new ODataClientException("GET " + target + " interrupted", e);
 		}
+		String body = readBounded(response.body(), target); // streamed + capped, never unbounded
 		if (response.statusCode() / 100 != 2) {
 			throw new ODataClientException("GET " + target + " answered "
-					+ response.statusCode(), response.statusCode(), response.body());
+					+ response.statusCode(), response.statusCode(), body);
 		}
-		return response.body();
+		return body;
+	}
+
+	/** Reads the response body streaming, rejecting anything beyond {@link #maxResponseBytes}. */
+	private String readBounded(InputStream stream, URI target) {
+		int cap = (int) Math.min(maxResponseBytes, Integer.MAX_VALUE - 1L);
+		try (InputStream in = stream) {
+			byte[] bytes = in.readNBytes(cap + 1);
+			if (bytes.length > cap) {
+				throw new ODataClientException("the response from " + target
+						+ " exceeds the client limit of " + maxResponseBytes + " bytes");
+			}
+			return new String(bytes, StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			throw new ODataClientException("reading the response from " + target + " failed", e);
+		}
 	}
 
 	/** Same scheme, host and (default-aware) port — the origin the service root was reached at. */

@@ -90,7 +90,9 @@ class JpaScalePerfTest extends JpaWebshopTestBase {
 		assertEquals(4, selectCount(),
 				"page + tags batch + reviews batch + count — independent of table size:\n"
 						+ String.join("\n", selectStatements()));
-		assertTrue(millis < 5_000, "paged read took " + millis + " ms");
+		// timing is an observation, not a gate (CI machines vary); the structural assert above IS
+		System.getLogger(JpaScalePerfTest.class.getName())
+				.log(System.Logger.Level.INFO, "paged read over 50k rows took {0} ms", millis);
 	}
 
 	@Test
@@ -111,6 +113,7 @@ class JpaScalePerfTest extends JpaWebshopTestBase {
 				.mapToLong(r -> ((Number) r.get("Cnt")).longValue()).sum();
 		assertEquals(ROWS, bulkTotal, "every bulk row is aggregated — in the database");
 		assertEquals(1, selectCount(), "ONE grouped statement, no materialization of 50k rows");
-		assertTrue(millis < 5_000, "aggregation took " + millis + " ms");
+		System.getLogger(JpaScalePerfTest.class.getName())
+				.log(System.Logger.Level.INFO, "aggregation over 50k rows took {0} ms", millis);
 	}
 }

@@ -198,6 +198,16 @@ abstract class JpaWebshopTestBase {
 	}
 
 	private void persistWebshopData() {
+		persist(buildSeedData().toArray(EObject[]::new));
+	}
+
+	/**
+	 * The reference webshop graph as detached EObjects (categories before products so JPA can
+	 * persist references; reviews ride along as containment). Overridable so a differential test
+	 * can seed the SAME dataset into a second backend; called fresh each time to hand out
+	 * independent instances.
+	 */
+	protected List<EObject> buildSeedData() {
 		EEnum color = (EEnum) pkg.getEClassifier("Color");
 		EObject food = instance("Category", "id", "c0", "name", "Food");
 		EObject dairy = instance("Category", "id", "c1", "name", "Dairy", "parent", food);
@@ -219,7 +229,7 @@ abstract class JpaWebshopTestBase {
 		EObject sale = instance("DiscountedProduct", "id", "d1", "name", "SaleMilk",
 				"price", new BigDecimal("0.90"), "discount", 20, "category", dairy);
 
-		persist(food, dairy, bakery, milk, cheese, bread, salt, sale);
+		return new ArrayList<>(List.of(food, dairy, bakery, milk, cheese, bread, salt, sale));
 	}
 
 	protected void persist(EObject... objects) {

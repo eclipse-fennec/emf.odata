@@ -13,6 +13,7 @@
 package org.eclipse.fennec.odata.persistence.inmemory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -188,6 +189,13 @@ class InMemoryQueryServiceTest {
 				"Salt has no price — excluded, not an error");
 		assertEquals(List.of("Salt"), names(query("price eq null", null, 0, -1, false)));
 		assertEquals(List.of("Milk", "Cheese", "Bread"), names(query("price ne null", null, 0, -1, false)));
+		// 3VL: not(<null comparison>) is UNKNOWN, not true — the null-priced row must be excluded
+		// (matches SQL / the JPA backend), never silently included.
+		assertFalse(names(query("not (price eq 999)", null, 0, -1, false)).contains("Salt"),
+				"Salt (null price) is excluded by not(price eq 999) under three-valued logic");
+		// a function of a null operand is UNKNOWN → the row is skipped, NOT a 500/400 error
+		assertFalse(names(query("year(released) eq 3000", null, 0, -1, false)).contains("Salt"),
+				"year() over a null date yields unknown, not an evaluation error");
 	}
 
 	@Test
