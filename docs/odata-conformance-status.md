@@ -73,8 +73,19 @@ Regressionstest belegt statt gebaut, analog präfixlose Enum-Literale) und **nes
 (`$select=name,category($select=name)`: `SelectTree`-Parser mit Klammer-bewusstem Splitting +
 Modell-Validierung, `EntityShaper` prunt rekursiv, Sub-Optionen außer `$select` → klare
 Ablehnung, `$select`-Werte laufen durch die Pre-Parse-Limits)
-· ❌ `$filter` auf expandierten Entities (SHOULD), Query-Optionen auf Navigationspfaden (501),
-`$search` (SHOULD) — **alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; Rest sind SHOULDs**.
+· ✅ **NEU 2026-07-08 (Intermediate-SHOULDs nachgezogen)**: `$search` (server-seitig als
+`contains`-OR über String-Properties synthetisiert, AND mit `$filter`, über den bestehenden
+Pushdown → beide Backends; Client-`.search()`), `$compute` (server-seitig: `compute(…)`-Grammatik
+wiederverwendet, pro Entity im Servlet via `OclEvaluator` ausgewertet und in die Antwort gespleißt
+— backend-agnostisch; Client-`.compute()` sendet es), `$filter` auf expandierten Entities
+(`$expand=reviews($filter=…)`, Test `filterInExpand`; die frühere ❌ war veraltet)
+· ✅ **NEU 2026-07-08**: **Functions & Actions** (Advanced): unbound+bound Functions (GET,
+primitiv/Entity/Collection), unbound Actions (POST) via `ODataOperationHandler`-SPI; Client
+`function`/`boundFunction`/`action`
+· ❌ Rest-SHOULDs: Query-Optionen auf Navigationspfaden (501), count-of-filtered-collection auf
+Navigationen, `$compute`-Alias referenziert in `$filter`/`$select`/`$orderby`, `$compute`-Werte
+client-seitig typisiert lesen — **alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen
+Intermediate-SHOULDs (`$search`, `$compute`, `$filter`-in-`$expand`) jetzt ebenfalls**.
 
 ## Priorisierte Findings (Conformance-Fixes, alle klein bis mittel)
 
