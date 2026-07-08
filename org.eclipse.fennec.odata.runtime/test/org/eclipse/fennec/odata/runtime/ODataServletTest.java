@@ -671,6 +671,33 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("query options on a navigation path: $filter/$top/$count on the collection; $orderby → 501")
+	void navigationPathQueryOptions() throws Exception {
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		EObject great = pkg.getEFactoryInstance().create(reviewClass);
+		great.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+		great.eSet(reviewClass.getEStructuralFeature("comment"), "great");
+		EObject poor = pkg.getEFactoryInstance().create(reviewClass);
+		poor.eSet(reviewClass.getEStructuralFeature("stars"), 2);
+		poor.eSet(reviewClass.getEStructuralFeature("comment"), "poor");
+		EObject milk = product("p1", "Milk", "1.20", null);
+		((List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews")))
+				.addAll(List.of(great, poor));
+		backendResult = List.of(milk);
+
+		Response filtered = get("/Product('p1')/reviews", Map.of("$filter", "stars ge 4"));
+		assertEquals(200, filtered.status(), filtered.body());
+		assertTrue(filtered.body().contains("great"), filtered.body());
+		assertFalse(filtered.body().contains("poor"), "$filter trims the navigation collection");
+
+		assertEquals("1", get("/Product('p1')/reviews/$count", Map.of("$filter", "stars ge 4"))
+				.body().trim(), "$count is of the FILTERED collection");
+
+		assertEquals(501, get("/Product('p1')/reviews", Map.of("$orderby", "stars")).status(),
+				"$orderby on a navigation path is not implemented yet");
+	}
+
+	@Test
 	@DisplayName("$search synthesizes a contains-predicate over string properties (no longer 501)")
 	void searchOption() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));
@@ -1242,8 +1269,8 @@ class ODataServletTest {
 
 		assertEquals(404, get("/Product('p1')/nosuch", Map.of()).status(), "unknown segment");
 		assertEquals(501, get("/Product('p1')/category/$ref", Map.of()).status(), "$ref later");
-		assertEquals(501, get("/Product('p1')/category", Map.of("$filter", "name eq 'x'")).status(),
-				"query options on navigation paths → 501");
+		assertEquals(501, get("/Product('p1')/category", Map.of("$orderby", "name")).status(),
+				"unimplemented query options on navigation paths → 501");
 		assertEquals(404, get("/NoSet('x')/name", Map.of()).status());
 	}
 

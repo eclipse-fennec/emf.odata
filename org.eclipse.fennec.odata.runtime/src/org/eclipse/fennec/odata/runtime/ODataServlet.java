@@ -1553,9 +1553,12 @@ public class ODataServlet extends HttpServlet {
 	 */
 	private void walk(ResourcePath path, EObject root, HttpServletRequest request,
 			HttpServletResponse response) throws IOException {
+		// on a navigation path we apply $filter/$top/$skip/$count to a terminal collection (13.1.2
+		// SHOULD); other options ($orderby/$select/$expand/$apply/$search/$compute) stay 501 here
 		for (String option : SUPPORTED_OPTIONS) {
-			if (!"$format".equals(option) && option(request, option) != null) {
-				error(response, 501, "query options on navigation paths are not implemented");
+			boolean handledOnNav = Set.of("$format", "$filter", "$top", "$skip", "$count").contains(option);
+			if (!handledOnNav && option(request, option) != null) {
+				error(response, 501, "this query option is not implemented on navigation paths");
 				return;
 			}
 		}
@@ -1617,7 +1620,7 @@ public class ODataServlet extends HttpServlet {
 						return;
 					}
 					response.setContentType("text/plain;charset=UTF-8");
-					response.getWriter().write(String.valueOf(collection.size()));
+					response.getWriter().write(String.valueOf(filterCollection(collection, request).size()));
 					return;
 				}
 				case ResourcePath.ValueSegment value -> {
@@ -1644,7 +1647,37 @@ public class ODataServlet extends HttpServlet {
 				}
 			}
 		}
+		if (current instanceof List<?> collection) { // terminal nav collection: $filter/$skip/$top
+			current = pageCollection(filterCollection(collection, request), request);
+		}
 		writeWalkedValue(path, current, request, response);
+	}
+
+	/** Applies {@code $filter} to a walked entity collection (in-memory; already materialized). */
+	private List<?> filterCollection(List<?> collection, HttpServletRequest request) {
+		String filter = option(request, "$filter");
+		if (filter == null || filter.isBlank() || collection.isEmpty()
+				|| !(collection.get(0) instanceof EObject sample)) {
+			return collection;
+		}
+		limits.checkExpression(filter);
+		OclExpression predicate = parser.parseFilter(filter, sample.eClass());
+		List<Object> filtered = new ArrayList<>();
+		for (Object item : collection) {
+			if (item instanceof EObject entity && expandFilterEvaluator.matchesNullSafe(predicate, entity)) {
+				filtered.add(entity);
+			}
+		}
+		return filtered;
+	}
+
+	/** Applies {@code $skip}/{@code $top} to a walked collection. */
+	private List<?> pageCollection(List<?> collection, HttpServletRequest request) {
+		int from = Math.min(limits.effectiveSkip(option(request, "$skip")), collection.size());
+		List<?> skipped = collection.subList(from, collection.size());
+		String top = option(request, "$top");
+		return top == null ? skipped
+				: skipped.subList(0, Math.min(limits.effectiveTop(top), skipped.size()));
 	}
 
 	private Object selectByKey(Object collection, String rawKey) {

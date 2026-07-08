@@ -281,7 +281,7 @@ public class ODataHttpIntegrationTest {
 		assertFalse(secondPage.body().contains("@odata.nextLink"),
 				"last page has no link: " + secondPage.body());
 
-		assertEquals(501, get("/Product?$search=milk").statusCode(), "unsupported option");
+		assertEquals(501, get("/Product?$schemaversion=*").statusCode(), "unsupported option");
 		assertEquals(400, get("/Product?$frobnicate=1").statusCode(), "unknown $-option");
 
 		// own resource-path parser (ADR-0005): navigation, property addressing, $value, $count
