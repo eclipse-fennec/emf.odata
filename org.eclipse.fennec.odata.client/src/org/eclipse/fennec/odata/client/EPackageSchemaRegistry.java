@@ -12,6 +12,8 @@
  */
 package org.eclipse.fennec.odata.client;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -56,5 +58,10 @@ public final class EPackageSchemaRegistry implements ODataSchemaRegistrar, OData
 	@Override
 	public Optional<SchemaVersion> version(SchemaScope scope) {
 		return lookup(scope).map(ODataSchema::toVersion);
+	}
+
+	@Override
+	public Collection<SchemaScope> scopes() {
+		return List.copyOf(byScope.keySet());
 	}
 }

@@ -112,6 +112,8 @@ class ODataClientTest {
 					&& exchange.getRequestURI().getRawQuery() != null
 					&& exchange.getRequestURI().getRawQuery().contains("$apply")) {
 				answer = "{\"value\":[{\"category\":{\"name\":\"Dairy\"},\"Total\":5.70}]}";
+			} else if (path.endsWith("/Product('bad')")) {
+				answer = "this is not json"; // a 200 with an undecodable body
 			} else if (path.endsWith("/Product('p1')")) {
 				answer = """
 						{"@odata.context":"/odata/$metadata#Product/$entity","id":"p1",\
@@ -366,6 +368,28 @@ class ODataClientTest {
 
 		client.entitySet("Product").list();
 		assertEquals("Bearer tok123", lastAuth.get(), "and so does a data request");
+	}
+
+	@Test
+	@DisplayName("a service error document is parsed into a structured ODataError")
+	void structuredError() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		ODataClientException error = assertThrows(ODataClientException.class,
+				() -> client.entitySet("Product").get("'nope'"));
+		assertEquals(404, error.status());
+		assertTrue(error.error().isPresent(), "the OData error envelope is parsed: " + error.getMessage());
+		assertEquals("404", error.error().get().code());
+		assertEquals("unknown resource", error.error().get().message());
+	}
+
+	@Test
+	@DisplayName("an undecodable 200 body surfaces as a clear ODataClientException")
+	void undecodableBody() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		ODataClientException error = assertThrows(ODataClientException.class,
+				() -> client.entitySet("Product").get("'bad'"));
+		assertTrue(error.getMessage().toLowerCase().contains("json")
+				|| error.getMessage().toLowerCase().contains("undecodable"), error.getMessage());
 	}
 
 	@Test

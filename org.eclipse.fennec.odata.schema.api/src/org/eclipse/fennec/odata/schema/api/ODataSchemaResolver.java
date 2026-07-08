@@ -12,6 +12,7 @@
  */
 package org.eclipse.fennec.odata.schema.api;
 
+import java.util.Collection;
 import java.util.Optional;
 
 import org.osgi.annotation.versioning.ProviderType;
@@ -30,6 +31,9 @@ public interface ODataSchemaResolver {
 
 	/** The stored version/validators, without loading the packages — for change detection. */
 	Optional<SchemaVersion> version(SchemaScope scope);
+
+	/** Every currently-registered endpoint scope — for bulk re-check (see the refresher). */
+	Collection<SchemaScope> scopes();
 
 	/** The change-detection fingerprint of a registered schema. */
 	record SchemaVersion(String contentHash, Optional<String> etag, Optional<String> lastModified) {

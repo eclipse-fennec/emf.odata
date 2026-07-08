@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.eclipse.emf.common.util.URI;
@@ -151,6 +152,24 @@ class ClientSchemaRegistryTest {
 			ODataClient client = factory.forEndpoint(SCOPE);
 			assertNotNull(client.entityType("Product"), "the factory resolves the schema and wires a client");
 		}
+	}
+
+	@Test
+	@DisplayName("refresher re-checks every registered endpoint and re-registers changed schemas")
+	void refresherReChecksAll() {
+		FakeReader reader = new FakeReader();
+		EPackageSchemaRegistry registry = new EPackageSchemaRegistry();
+		ODataSchemaManager manager = new ODataSchemaManager(reader, registry, registry);
+		reader.next = schema("h1");
+		manager.onRegister(SCOPE);
+
+		reader.next = schema("h2"); // the endpoint changed since registration
+		try (ODataSchemaRefresher refresher = new ODataSchemaRefresher(manager, registry)) {
+			Map<SchemaScope, ODataSchemaManager.RefreshResult> results = refresher.refreshAll();
+			assertEquals(ODataSchemaManager.RefreshResult.UPDATED, results.get(SCOPE));
+		}
+		assertEquals("h2", registry.version(SCOPE).orElseThrow().contentHash(),
+				"the changed schema was re-registered");
 	}
 
 	/** Stands in for the HTTP $metadata reader — returns a preset schema, no network. */
