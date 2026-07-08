@@ -1,0 +1,8 @@
+Bundle-Name: Fennec OData Operation API
+Bundle-Description: SPI for invoking OData functions and actions: a dynamic EMF model only declares operation signatures (EOperation), so an ODataOperationHandler service provides the behaviour — the runtime resolves the addressed operation, finds the handler and serialises the result (ADR-0007 style pluggability)
+Bundle-Version: 1.0.0
+
+-library: enableEMF
+
+-buildpath: \
+	org.osgi.service.condition;version=latest
