@@ -112,6 +112,16 @@ class ODataClientTest {
 					&& exchange.getRequestURI().getRawQuery() != null
 					&& exchange.getRequestURI().getRawQuery().contains("$apply")) {
 				answer = "{\"value\":[{\"category\":{\"name\":\"Dairy\"},\"Total\":5.70}]}";
+			} else if (path.endsWith("/name/$value")) {
+				answer = "Milk";
+				contentType = "text/plain;charset=UTF-8";
+			} else if (path.endsWith("/reviews/$count")) {
+				answer = "2";
+				contentType = "text/plain;charset=UTF-8";
+			} else if (path.endsWith("/category")) {
+				answer = "{\"id\":\"c1\",\"name\":\"Dairy\"}";
+			} else if (path.endsWith("/reviews")) {
+				answer = "{\"value\":[{\"stars\":5,\"comment\":\"great\"},{\"stars\":4,\"comment\":\"good\"}]}";
 			} else if (path.endsWith("/Product('bad')")) {
 				answer = "this is not json"; // a 200 with an undecodable body
 			} else if (path.endsWith("/Product('p1')")) {
@@ -390,6 +400,22 @@ class ODataClientTest {
 				() -> client.entitySet("Product").get("'bad'"));
 		assertTrue(error.getMessage().toLowerCase().contains("json")
 				|| error.getMessage().toLowerCase().contains("undecodable"), error.getMessage());
+	}
+
+	@Test
+	@DisplayName("navigation-path addressing: nav entity/collection, /$value and nav/$count")
+	void navigationPaths() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass category = client.entityType("Category");
+
+		EObject cat = client.entitySet("Product").navigateEntity("'p1'", "category");
+		assertEquals("Dairy", cat.eGet(category.getEStructuralFeature("name")));
+
+		ODataPage reviews = client.entitySet("Product").navigateCollection("'p1'", "reviews");
+		assertEquals(2, reviews.entities().size());
+
+		assertEquals("Milk", client.entitySet("Product").propertyValue("'p1'", "name"));
+		assertEquals(2, client.entitySet("Product").navigationCount("'p1'", "reviews"));
 	}
 
 	@Test

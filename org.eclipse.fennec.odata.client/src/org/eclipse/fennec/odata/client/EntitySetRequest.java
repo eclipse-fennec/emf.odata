@@ -21,6 +21,7 @@ import java.util.Map;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EReference;
 
 /**
  * Fluent read request against one entity set: system query options collect as the request is
@@ -127,6 +128,48 @@ public final class EntitySetRequest {
 		return ODataJsonDecoder.entity(client.fetch(
 				setName + "(" + encodeKey(keyLiteral) + ")" + queryString(), "application/json"),
 				entityType, client.metadataService());
+	}
+
+	// --- navigation-path addressing ---
+
+	/** {@code GET Set(key)/nav} for a single-valued navigation → the related entity. */
+	public EObject navigateEntity(String keyLiteral, String navigation) {
+		EClass target = referenceTarget(navigation);
+		return ODataJsonDecoder.entity(client.fetch(
+				entityPath(keyLiteral) + "/" + navigation + queryString(), "application/json"),
+				target, client.metadataService());
+	}
+
+	/** {@code GET Set(key)/nav} for a collection-valued navigation → a page of related entities. */
+	public ODataPage navigateCollection(String keyLiteral, String navigation) {
+		EClass target = referenceTarget(navigation);
+		return ODataJsonDecoder.page(client.fetch(
+				entityPath(keyLiteral) + "/" + navigation + queryString(), "application/json"),
+				target, client.metadataService());
+	}
+
+	/** {@code GET Set(key)/property/$value} → the raw property value as text. */
+	public String propertyValue(String keyLiteral, String property) {
+		return client.fetch(entityPath(keyLiteral) + "/" + property + "/$value", "text/plain");
+	}
+
+	/** {@code GET Set(key)/nav/$count} → the size of a collection-valued navigation. */
+	public long navigationCount(String keyLiteral, String navigation) {
+		String answer = client.fetch(
+				entityPath(keyLiteral) + "/" + navigation + "/$count", "text/plain");
+		try {
+			return Long.parseLong(answer.trim());
+		} catch (NumberFormatException e) {
+			throw new ODataClientException("the $count answer is not a number: " + answer.trim());
+		}
+	}
+
+	private EClass referenceTarget(String navigation) {
+		if (entityType.getEStructuralFeature(navigation) instanceof EReference reference) {
+			return reference.getEReferenceType();
+		}
+		throw new ODataClientException(
+				"'" + navigation + "' is not a navigation of " + entityType.getName());
 	}
 
 	/** {@code GET Set/$count} with the collected {@code $filter}: the total as a number. */
