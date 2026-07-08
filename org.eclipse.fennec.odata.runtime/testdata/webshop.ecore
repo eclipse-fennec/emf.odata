@@ -38,6 +38,13 @@
       <eParameters name="prefix" lowerBound="1"
           eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
     </eOperations>
+    <eOperations name="touch">
+      <eAnnotations source="https://eclipse.org/fennec/odata">
+        <details key="OData.Bound" value="false"/>
+      </eAnnotations>
+      <eParameters name="id" lowerBound="1"
+          eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    </eOperations>
   </eClassifiers>
   <eClassifiers xsi:type="ecore:EClass" name="DiscountedProduct" eSuperTypes="#//Product">
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="discount"

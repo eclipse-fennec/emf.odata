@@ -91,6 +91,15 @@ final class ODataJsonDecoder {
 		}
 	}
 
+	/** Serializes a value (e.g. an action parameter map) to a JSON string. */
+	static String toJson(Object value) {
+		try {
+			return MAPPER.writeValueAsString(value);
+		} catch (RuntimeException e) {
+			throw new ODataClientException("could not encode the request body", e);
+		}
+	}
+
 	/** Extracts the {@code value} member of a function/primitive response as a plain Java value. */
 	static Object value(String json) {
 		JsonNode value = parse(json).get("value");

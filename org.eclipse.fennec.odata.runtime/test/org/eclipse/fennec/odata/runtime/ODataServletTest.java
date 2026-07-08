@@ -669,6 +669,28 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("unbound action import: POST with a JSON parameter body, void → 204")
+	void unboundActionImport() throws Exception {
+		AtomicReference<String> touched = new AtomicReference<>();
+		servlet.addOperationHandler(new ODataOperationHandler() {
+			@Override
+			public boolean handles(String qualifiedOperationName) {
+				return qualifiedOperationName.endsWith(".touch");
+			}
+
+			@Override
+			public Object invoke(org.eclipse.emf.ecore.EOperation operation, EObject boundInstance,
+					Map<String, Object> parameters) {
+				touched.set(String.valueOf(parameters.get("id")));
+				return null; // void action
+			}
+		});
+		Response result = callWrite("POST", "/touch", "{\"id\":\"p1\"}", "application/json");
+		assertEquals(204, result.status(), result.body());
+		assertEquals("p1", touched.get(), "the body parameter reached the handler");
+	}
+
+	@Test
 	@DisplayName("$orderby parses to typed IR that reaches the backend; unknown property → 400")
 	void orderByReachesBackendOrFails() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));

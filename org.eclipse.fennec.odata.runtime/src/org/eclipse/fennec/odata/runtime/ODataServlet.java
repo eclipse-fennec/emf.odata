@@ -311,6 +311,10 @@ public class ODataServlet extends HttpServlet {
 					"this resource is not writable");
 			return;
 		}
+		if ("POST".equals(request.getMethod()) && isActionImport(rawPath.substring(1))) {
+			actionImport(rawPath.substring(1), request, response); // POST ActionName, params in the body
+			return;
+		}
 		ResourcePath path;
 		try {
 			path = resourceParser.parse(rawPath.substring(1));
@@ -1242,6 +1246,63 @@ public class ODataServlet extends HttpServlet {
 	private String operationNamespace(EClass entityType) {
 		return profiles.computeIfAbsent(entityType.getEPackage(), p -> new OdataResolver().resolve(p))
 				.getNamespace();
+	}
+
+	/** A bare name (no key, no nav) that is an unbound operation rather than an entity set. */
+	private boolean isActionImport(String segment) {
+		return segment.indexOf('/') < 0 && segment.indexOf('(') < 0
+				&& resolveEntityType(segment) == null && resolveUnboundFunction(segment) != null;
+	}
+
+	/** Invokes an unbound action import: {@code POST ActionName} with the parameters in the body. */
+	private void actionImport(String name, HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		UnboundOperation resolved = resolveUnboundFunction(name);
+		Map<String, Object> parameters = readActionParameters(request, resolved.operation(), response);
+		if (parameters == null) {
+			return; // error already written
+		}
+		ODataOperationHandler handler = operationHandlers.stream()
+				.filter(h -> h.handles(resolved.qualifiedName())).findFirst().orElse(null);
+		if (handler == null) {
+			error(response, 501, "no handler for the operation");
+			return;
+		}
+		writeFunctionResult(handler.invoke(resolved.operation(), null, parameters), request, response);
+	}
+
+	/** Reads action parameters from the JSON request body, coerced to the operation's parameter types. */
+	private Map<String, Object> readActionParameters(HttpServletRequest request, EOperation operation,
+			HttpServletResponse response) throws IOException {
+		byte[] body = request.getInputStream().readNBytes(limits.maxBodyBytes() + 1);
+		if (body.length > limits.maxBodyBytes()) {
+			error(response, 413, "payload exceeds the maximum size of " + limits.maxBodyBytes() + " bytes");
+			return null;
+		}
+		Map<String, Object> parameters = new LinkedHashMap<>();
+		if (body.length == 0) {
+			return parameters; // a parameterless action
+		}
+		JsonNode node;
+		try {
+			node = JSON.readTree(body);
+		} catch (Exception e) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+			return null;
+		}
+		if (!(node instanceof ObjectNode object)) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "action parameters must be a JSON object");
+			return null;
+		}
+		for (EParameter parameter : operation.getEParameters()) {
+			JsonNode value = object.get(parameter.getName());
+			if (value != null && !value.isNull()) {
+				parameters.put(parameter.getName(), parameter.getEType() instanceof EDataType dataType
+						? EcoreUtil.createFromString(dataType, value.asString())
+						: value.asString());
+			}
+		}
+		return parameters;
 	}
 
 	/** Invokes an unbound function import: resolve the operation, coerce params, dispatch, serialize. */

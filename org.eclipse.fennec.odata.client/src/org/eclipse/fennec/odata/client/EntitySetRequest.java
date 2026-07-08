@@ -164,6 +164,32 @@ public final class EntitySetRequest {
 		}
 	}
 
+	/**
+	 * Invokes a bound function on an entity: {@code GET Set(key)/Ns.Func(p=…)}. Returns the
+	 * response's primitive {@code value}. {@code qualifiedName} is the service's namespace-qualified
+	 * function name (e.g. {@code My.Shop.label}).
+	 */
+	public Object boundFunction(String keyLiteral, String qualifiedName, Map<String, ?> parameters) {
+		StringBuilder call = new StringBuilder(entityPath(keyLiteral)).append('/')
+				.append(qualifiedName).append('(');
+		boolean first = true;
+		for (Map.Entry<String, ?> parameter : parameters.entrySet()) {
+			if (!first) {
+				call.append(',');
+			}
+			first = false;
+			call.append(parameter.getKey()).append('=').append(literal(parameter.getValue()));
+		}
+		call.append(')');
+		return ODataJsonDecoder.value(client.fetch(call.toString(), "application/json"));
+	}
+
+	private static String literal(Object value) {
+		return value instanceof CharSequence text
+				? "'" + text.toString().replace("'", "''") + "'"
+				: String.valueOf(value);
+	}
+
 	private EClass referenceTarget(String navigation) {
 		if (entityType.getEStructuralFeature(navigation) instanceof EReference reference) {
 			return reference.getEReferenceType();

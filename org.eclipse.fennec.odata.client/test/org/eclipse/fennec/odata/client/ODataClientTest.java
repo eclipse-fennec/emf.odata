@@ -15,6 +15,7 @@ package org.eclipse.fennec.odata.client;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -114,6 +115,8 @@ class ODataClientTest {
 				answer = "{\"value\":[{\"category\":{\"name\":\"Dairy\"},\"Total\":5.70}]}";
 			} else if (path.contains("/doubleOf(")) {
 				answer = "{\"value\":42}"; // unbound function import result
+			} else if (path.contains("/webshop.label(")) {
+				answer = "{\"value\":\"X:Milk\"}"; // bound function result
 			} else if (path.endsWith("/name/$value")) {
 				answer = "Milk";
 				contentType = "text/plain;charset=UTF-8";
@@ -405,12 +408,34 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("unbound action import posts the parameters as a JSON body")
+	void actionImportCall() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		Object result = client.action("touch", java.util.Map.of("id", "p1"));
+		assertNull(result, "a void action returns null");
+		assertEquals("POST", lastWriteMethod.get());
+		assertTrue(lastRequest.get().getRawPath().endsWith("/touch"), lastRequest.get().toString());
+		assertTrue(lastWriteBody.get().contains("\"id\":\"p1\""), lastWriteBody.get());
+	}
+
+	@Test
 	@DisplayName("unbound function import call formats params and returns the value")
 	void functionImportCall() {
 		ODataClient client = ODataClient.connect(serviceRoot);
 		Object result = client.function("doubleOf", java.util.Map.of("n", 21));
 		assertEquals(42, ((Number) result).intValue());
 		assertTrue(lastRequest.get().getRawPath().endsWith("/doubleOf(n=21)"),
+				lastRequest.get().toString());
+	}
+
+	@Test
+	@DisplayName("bound function call addresses the entity and returns the value")
+	void boundFunctionCall() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		Object result = client.entitySet("Product")
+				.boundFunction("'p1'", "webshop.label", java.util.Map.of("prefix", "X"));
+		assertEquals("X:Milk", result);
+		assertTrue(lastRequest.get().getRawPath().endsWith("/webshop.label(prefix='X')"),
 				lastRequest.get().toString());
 	}
 

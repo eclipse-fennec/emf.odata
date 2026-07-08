@@ -226,6 +226,23 @@ public final class ODataClient implements AutoCloseable {
 		return String.valueOf(value);
 	}
 
+	/**
+	 * Invokes an unbound action import: {@code POST Name} with the parameters as the JSON body.
+	 * Returns the response {@code value} (or {@code null} for a 204 / bodiless action).
+	 */
+	public Object action(String name, Map<String, ?> parameters) {
+		String body = ODataJsonDecoder.toJson(parameters);
+		Response response = exchange("POST", name, "application/json", body, "application/json", Map.of());
+		if (response.status() == 204) {
+			return null;
+		}
+		if (response.status() / 100 != 2) {
+			throw new ODataClientException("POST " + serviceRoot.resolve(name) + " answered "
+					+ response.status(), response.status(), response.body());
+		}
+		return response.body().isBlank() ? null : ODataJsonDecoder.value(response.body());
+	}
+
 	/** Status, body text and response headers of an HTTP exchange. */
 	record Response(int status, String body, HttpHeaders headers) {
 
