@@ -197,6 +197,21 @@ public class ODataHttpIntegrationTest {
 	}
 
 	@Test
+	@Order(2)
+	@DisplayName("$compute alias referable in $filter/$orderby end-to-end (inlined → pushed down)")
+	void computeAliasQuery() throws Exception {
+		HttpResponse<String> response = get("/Product?$compute=" + encode("price mul 2 as doubled")
+				+ "&$filter=" + encode("doubled ge 8") + "&$orderby=" + encode("doubled desc"));
+		assertEquals(200, response.statusCode(), response.body());
+		assertTrue(response.body().contains("\"Cheese\""),
+				"Cheese (2×4.50 = 9.00) passes the computed filter: " + response.body());
+		assertFalse(response.body().contains("\"Milk\""),
+				"Milk (2×1.20 = 2.40) is filtered out by the computed alias: " + response.body());
+		assertTrue(response.body().contains("\"doubled\":9.00"),
+				"the computed member is present: " + response.body());
+	}
+
+	@Test
 	@Order(3)
 	@DisplayName("destructive: injection-style filters die with 400, nothing leaks")
 	void injection() throws Exception {

@@ -79,6 +79,12 @@ Pushdown → beide Backends; Client-`.search()`), `$compute` (server-seitig: `co
 wiederverwendet, pro Entity im Servlet via `OclEvaluator` ausgewertet und in die Antwort gespleißt
 — backend-agnostisch; Client-`.compute()` sendet es), `$filter` auf expandierten Entities
 (`$expand=reviews($filter=…)`, Test `filterInExpand`; die frühere ❌ war veraltet)
+· ✅ **NEU 2026-07-08**: **`$compute`-Alias in `$filter`/`$orderby`/`$select`**: der Alias wird über
+`parseFilterAfterApply`/`parseOrderByAfterApply` aufgelöst und dann **in die OCL eingesetzt** (die
+`VariableExp` des Alias wird durch eine Kopie des definierenden Ausdrucks ersetzt) → referenziert nur
+reale Properties, wird also normal ins Backend gepusht (kein In-Memory-Nachfiltern, Paging bleibt
+korrekt). `$select` toleriert Alias-Token (reale Properties validieren, Alias-Member werden projiziert).
+End-to-end-itest `computeAliasQuery` (`price mul 2 as doubled` → `$filter=doubled ge 8`)
 · ✅ **NEU 2026-07-08**: **Functions & Actions** (Advanced): unbound+bound Functions (GET,
 primitiv/Entity/Collection), unbound Actions (POST) via `ODataOperationHandler`-SPI; Client
 `function`/`boundFunction`/`action` **plus typisierte Varianten** `functionAsEntity`/
@@ -96,8 +102,7 @@ Query-Option-Builder über `navigateCollection`
 `multipart/mixed` → `415`; Client-Builder `ODataClient.batch()` (`read`/`create`/`update`/`delete`/
 `add`, `Result.asEntity`/`asPage`). ⚠️ **Lücke**: `atomicityGroup` wird geparst, aber es gibt kein
 Cross-Request-Rollback (WriteService committet pro Aufruf) → Change-Sets best-effort, nicht atomar.
-· ❌ Rest-SHOULDs: `$compute`-Alias referenziert in `$filter`/`$select`/`$orderby`, `$compute`-Werte
-client-seitig typisiert lesen, atomare `$batch`-Change-Sets —
+· ❌ Rest-SHOULDs: `$compute`-Werte client-seitig typisiert lesen, atomare `$batch`-Change-Sets —
 **alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen Intermediate-SHOULDs (`$search`,
 `$compute`, `$filter`-in-`$expand`, Nav-Pfad-Query-Optionen) plus `$batch` jetzt ebenfalls**.
 

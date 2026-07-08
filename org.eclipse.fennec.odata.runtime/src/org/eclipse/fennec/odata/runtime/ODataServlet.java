@@ -63,6 +63,8 @@ import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.Variable;
+import org.eclipse.fennec.m2x.model.ocl.VariableExp;
 import org.eclipse.fennec.model.metadata.api.MetadataService;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
@@ -1467,20 +1469,29 @@ public class ODataServlet extends HttpServlet {
 		// a cast makes the DERIVED type the context: its properties are addressable in options
 		EClass context = castType != null ? castType : target.entityType();
 		boolean xml = wantsXml(request);
-		SelectTree select = selectOption(request, context);
+		// $compute defines dynamic aliases that may be referenced from $filter/$orderby/$select
+		ApplyPipeline computePipeline = computePipeline(request, context);
+		Map<String, OclExpression> computeAliases = computeAliasMap(computePipeline);
+		SelectTree select = selectOption(request, context, computeAliases.keySet());
 		Map<String, OclExpression> expand = expandOption(request, context);
 		Map<String, String> aliases = parameterAliases(request);
 
 		List<OrderBySegment> orderBy = parseChecked(option(request, "$orderby"),
-				value -> aliases.isEmpty() ? parser.parseOrderBy(value, context)
-						: parser.parseOrderBy(value, context, aliases));
+				value -> inlineOrderBy(computePipeline != null
+						? parser.parseOrderByAfterApply(value, context, computePipeline, aliases)
+						: aliases.isEmpty() ? parser.parseOrderBy(value, context)
+								: parser.parseOrderBy(value, context, aliases),
+						computeAliases));
 		int skip = limits.effectiveSkip(option(request, "$skip"));
 		int top = pageSize(request, response, limits.effectiveTop(option(request, "$top")));
 		// peek one row beyond the page: partial results MUST carry @odata.nextLink (13.1.1/3)
 		EntityQuery query = new EntityQuery(target.entityType(), castType,
 				parseChecked(filterWithSearch(request, context),
-						filter -> aliases.isEmpty() ? parser.parseFilter(filter, context)
-								: parser.parseFilter(filter, context, aliases)),
+						filter -> inlineComputeAliases(computePipeline != null
+								? parser.parseFilterAfterApply(filter, context, computePipeline, aliases)
+								: aliases.isEmpty() ? parser.parseFilter(filter, context)
+										: parser.parseFilter(filter, context, aliases),
+								computeAliases)),
 				orderBy == null ? List.of() : orderBy,
 				skip, top + 1,
 				"true".equals(option(request, "$count")),
@@ -1502,7 +1513,7 @@ public class ODataServlet extends HttpServlet {
 		if (result.totalCount() >= 0) {
 			json.append(",\"@odata.count\":").append(result.totalCount());
 		}
-		List<ComputeExpression> computes = computeExpressions(request, context);
+		List<ComputeExpression> computes = selectedComputes(computePipeline, request, computeAliases);
 		json.append(",\"value\":[");
 		for (int i = 0; i < page.size(); i++) {
 			if (i > 0) {
@@ -2450,18 +2461,102 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/**
-	 * {@code $compute} expressions (13.1.2 SHOULD): parsed by reusing the {@code $apply}
-	 * {@code compute(…)} grammar. The computed members are added to the response by the servlet
-	 * (evaluated per entity), so it is backend-agnostic.
+	 * {@code $compute} (13.1.2 SHOULD) parsed by reusing the {@code $apply} {@code compute(…)}
+	 * grammar into a one-stage pipeline. The pipeline is reused both to make the aliases referable
+	 * from {@code $filter}/{@code $orderby}/{@code $select} and to splice the computed members into
+	 * the response (evaluated per entity), so it stays backend-agnostic. Null when no {@code $compute}.
 	 */
-	private List<ComputeExpression> computeExpressions(HttpServletRequest request, EClass context) {
+	private ApplyPipeline computePipeline(HttpServletRequest request, EClass context) {
 		String compute = option(request, "$compute");
 		if (compute == null || compute.isBlank()) {
-			return List.of();
+			return null;
 		}
 		limits.checkExpression(compute);
-		ApplyPipeline pipeline = parser.parseApply("compute(" + compute + ")", context);
-		return ((ComputeTransformation) pipeline.getTransformations().get(0)).getComputeExpressions();
+		return parser.parseApply("compute(" + compute + ")", context);
+	}
+
+	private List<ComputeExpression> computeExpressions(ApplyPipeline computePipeline) {
+		if (computePipeline == null) {
+			return List.of();
+		}
+		return ((ComputeTransformation) computePipeline.getTransformations().get(0))
+				.getComputeExpressions();
+	}
+
+	/** Alias → defining expression for every {@code $compute} item (insertion order). */
+	private Map<String, OclExpression> computeAliasMap(ApplyPipeline computePipeline) {
+		Map<String, OclExpression> map = new LinkedHashMap<>();
+		for (ComputeExpression compute : computeExpressions(computePipeline)) {
+			map.put(compute.getAlias(), compute.getExpression());
+		}
+		return map;
+	}
+
+	/**
+	 * The computes to splice into the response: all of them when there is no {@code $select},
+	 * otherwise only those whose alias appears as a top-level {@code $select} token (projection).
+	 */
+	private List<ComputeExpression> selectedComputes(ApplyPipeline computePipeline,
+			HttpServletRequest request, Map<String, OclExpression> computeAliases) {
+		List<ComputeExpression> all = computeExpressions(computePipeline);
+		String select = option(request, "$select");
+		if (select == null || select.isBlank() || all.isEmpty()) {
+			return all;
+		}
+		Set<String> selected = new HashSet<>();
+		for (String token : SelectTree.splitTopLevel(select, ',')) {
+			selected.add(token.trim());
+		}
+		return all.stream().filter(c -> selected.contains(c.getAlias())).toList();
+	}
+
+	/**
+	 * Rewrites a parsed {@code $filter}/{@code $orderby} tree so every reference to a {@code $compute}
+	 * alias (a {@link VariableExp}) is replaced by a copy of the alias' defining expression. The
+	 * result references only real properties, so it pushes down to the backend like any other filter.
+	 */
+	private OclExpression inlineComputeAliases(OclExpression expression,
+			Map<String, OclExpression> computeAliases) {
+		if (expression == null || computeAliases.isEmpty()) {
+			return expression;
+		}
+		if (aliasOf(expression, computeAliases) != null) { // the whole expression IS an alias reference
+			return EcoreUtil.copy(computeAliases.get(aliasOf(expression, computeAliases)));
+		}
+		List<VariableExp> references = new ArrayList<>();
+		expression.eAllContents().forEachRemaining(node -> {
+			if (node instanceof VariableExp variable && aliasOf(variable, computeAliases) != null) {
+				references.add(variable);
+			}
+		});
+		for (VariableExp reference : references) {
+			EcoreUtil.replace(reference, EcoreUtil.copy(computeAliases.get(aliasOf(reference, computeAliases))));
+		}
+		return expression;
+	}
+
+	private List<OrderBySegment> inlineOrderBy(List<OrderBySegment> segments,
+			Map<String, OclExpression> computeAliases) {
+		if (segments == null || computeAliases.isEmpty()) {
+			return segments;
+		}
+		List<OrderBySegment> inlined = new ArrayList<>();
+		for (OrderBySegment segment : segments) {
+			inlined.add(new OrderBySegment(
+					inlineComputeAliases(segment.expression(), computeAliases), segment.ascending()));
+		}
+		return inlined;
+	}
+
+	/** The compute-alias name a node refers to (when it is a {@link VariableExp} for one), else null. */
+	private static String aliasOf(Object node, Map<String, OclExpression> computeAliases) {
+		if (node instanceof VariableExp variable) {
+			Variable referred = variable.getReferredVariable();
+			if (referred != null && computeAliases.containsKey(referred.getName())) {
+				return referred.getName();
+			}
+		}
+		return null;
 	}
 
 	/** Splices the {@code $compute} members (evaluated against the entity) into its JSON object. */
@@ -2510,13 +2605,35 @@ public class ODataServlet extends HttpServlet {
 
 	// --- $select / $expand / formats ---
 
-	/** Validated {@code $select} tree (nested selects incl., 4.01), or null when absent. */
 	private SelectTree selectOption(HttpServletRequest request, EClass entityType) {
+		return selectOption(request, entityType, Set.of());
+	}
+
+	/**
+	 * Validated {@code $select} tree (nested selects incl., 4.01), or null when absent. Any top-level
+	 * token that names a {@code $compute} alias is stripped before model validation (the computed
+	 * member is projected separately); a {@code $select} of only aliases leaves no real-property
+	 * projection constraint (null).
+	 */
+	private SelectTree selectOption(HttpServletRequest request, EClass entityType,
+			Set<String> computeAliases) {
 		String select = option(request, "$select");
 		if (select == null || select.isBlank()) {
 			return null;
 		}
 		limits.checkExpression(select); // nested trees are parsed — same hostile-input guard
+		if (!computeAliases.isEmpty()) {
+			List<String> realProperties = new ArrayList<>();
+			for (String token : SelectTree.splitTopLevel(select, ',')) {
+				if (!computeAliases.contains(token.trim())) {
+					realProperties.add(token);
+				}
+			}
+			if (realProperties.isEmpty()) {
+				return null;
+			}
+			select = String.join(",", realProperties);
+		}
 		return SelectTree.parse(select, entityType);
 	}
 

@@ -128,7 +128,7 @@ public final class SelectTree {
 	}
 
 	/** Splits on {@code separator} outside parentheses (nested option lists stay intact). */
-	private static List<String> splitTopLevel(String value, char separator) {
+	static List<String> splitTopLevel(String value, char separator) {
 		List<String> parts = new ArrayList<>();
 		int depth = 0;
 		int start = 0;

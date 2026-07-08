@@ -40,6 +40,7 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.codec.util.MetadataServiceFactory;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
+import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.model.metadata.api.MetadataWhiteboard;
@@ -779,6 +780,49 @@ class ODataServletTest {
 		assertTrue(result.body().contains("\"doublePrice\":2.40"),
 				"the computed property is spliced into the entity: " + result.body());
 		assertTrue(result.body().contains("\"Milk\""), "the original properties remain");
+	}
+
+	@Test
+	@DisplayName("$compute alias is referable in $filter (inlined to real props), $orderby, $select")
+	void computeAliasInOptions() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		// $filter references the alias → the backend receives the INLINED expression (no alias variable)
+		Response filtered = get("/Product",
+				Map.of("$compute", "price mul 2 as doublePrice", "$filter", "doublePrice gt 2"));
+		assertEquals(200, filtered.status(), filtered.body());
+		OclExpression pushed = lastQuery.get().filter();
+		assertEquals(">", ((OperationCallExp) pushed).getName());
+		assertFalse(mentionsVariable(pushed),
+				"the $compute alias is inlined to real properties, not pushed as a variable");
+		assertTrue(filtered.body().contains("\"doublePrice\":2.40"), filtered.body());
+
+		// $orderby references the alias → parses (no 400); the pushed sort key is inlined too
+		Response ordered = get("/Product",
+				Map.of("$compute", "price mul 2 as doublePrice", "$orderby", "doublePrice desc"));
+		assertEquals(200, ordered.status(), ordered.body());
+		assertFalse(mentionsVariable(lastQuery.get().orderBy().get(0).expression()),
+				"the $orderby alias is inlined too");
+
+		// $select mixes a real property and the alias — only those two appear
+		Response projected = get("/Product",
+				Map.of("$compute", "price mul 2 as doublePrice", "$select", "name,doublePrice"));
+		assertEquals(200, projected.status(), projected.body());
+		assertTrue(projected.body().contains("\"name\":\"Milk\""), projected.body());
+		assertTrue(projected.body().contains("\"doublePrice\":2.40"), projected.body());
+		assertFalse(projected.body().contains("\"price\""), "price is not selected: " + projected.body());
+	}
+
+	private static boolean mentionsVariable(OclExpression expression) {
+		if (expression instanceof org.eclipse.fennec.m2x.model.ocl.VariableExp) {
+			return true;
+		}
+		for (var it = expression.eAllContents(); it.hasNext();) {
+			if (it.next() instanceof org.eclipse.fennec.m2x.model.ocl.VariableExp) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	@Test
