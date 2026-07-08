@@ -14,7 +14,6 @@ package org.eclipse.fennec.odata.client;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,6 +21,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -193,6 +193,52 @@ class ODataClientTest {
 				() -> client.entitySet("Category").list());
 		assertEquals(404, error.status());
 		assertTrue(error.getMessage().contains("unknown resource"), error.getMessage());
+	}
+
+	@Test
+	@DisplayName("a $metadata with a DOCTYPE/XXE payload is rejected, never resolved (XXE hardening)")
+	void metadataXxeRejected() {
+		String malicious = """
+				<?xml version="1.0"?>
+				<!DOCTYPE edmx [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
+				<edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx" Version="4.0">
+				  <edmx:DataServices>
+				    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="X">&xxe;</Schema>
+				  </edmx:DataServices>
+				</edmx:Edmx>""";
+		// the DOCTYPE is disallowed outright, so the external entity is never expanded
+		assertThrows(ODataClientException.class, () -> CsdlMetadataReader.read(malicious));
+	}
+
+	@Test
+	@DisplayName("a malformed $metadata (no DataServices) is a clear client error, not a crash")
+	void metadataWithoutDataServices() {
+		String noDataServices =
+				"<edmx:Edmx xmlns:edmx=\"http://docs.oasis-open.org/odata/ns/edmx\" Version=\"4.0\"/>";
+		assertThrows(ODataClientException.class, () -> CsdlMetadataReader.read(noDataServices));
+	}
+
+	@Test
+	@DisplayName("a server @odata.nextLink to a foreign origin is refused (SSRF guard)")
+	void nextLinkToForeignOriginRefused() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		// a link that does NOT reduce to a service-root-relative path would otherwise be followed verbatim
+		ODataPage foreign = new ODataPage(List.of(), -1, "http://evil.example.com/harvest?$skip=2");
+		ODataClientException error = assertThrows(ODataClientException.class,
+				() -> client.entitySet("Product").nextPage(foreign));
+		assertTrue(error.getMessage().contains("different origin"), error.getMessage());
+	}
+
+	@Test
+	@DisplayName("close() releases an owned HttpClient but leaves an injected one open")
+	void injectedHttpClientSurvivesClose() {
+		HttpClient injected = HttpClient.newHttpClient();
+		ODataClient first = ODataClient.connect(serviceRoot, injected);
+		first.close(); // must NOT close the caller-owned client
+
+		ODataClient second = ODataClient.connect(serviceRoot, injected);
+		assertEquals(1, second.metadata().size(), "the injected HttpClient is still usable after close()");
+		injected.close();
 	}
 
 	// --- stub metadata through the REAL E2 write path ---

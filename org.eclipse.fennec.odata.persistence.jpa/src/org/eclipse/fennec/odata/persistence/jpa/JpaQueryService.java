@@ -17,6 +17,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
 
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
@@ -33,6 +34,7 @@ import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.persistence.jpa.JpaHelper;
+import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
@@ -69,13 +71,32 @@ import jakarta.persistence.metamodel.EntityType;
  * without a pushdown raise {@link UnsupportedOperationException} — never a silently wrong
  * result (the servlet answers 501).
  */
-@Component(service = { QueryService.class, WriteService.class },
+@Component(service = { QueryService.class, WriteService.class }, configurationPid = JpaQueryService.PID,
 		property = "fennec.odata.backend=jpa")
 public class JpaQueryService implements QueryService, WriteService {
+
+	public static final String PID = "org.eclipse.fennec.odata.persistence.jpa";
+
+	/**
+	 * Server-driven paging safety net: the maximum number of rows a single query materializes when
+	 * the request carries no (bounded) {@code $top}. Prevents an unbounded {@code getResultList()}
+	 * from pulling an entire large table into the heap. Configurable via
+	 * {@code odata.jpa.max.page.size}; {@code <= 0} disables the cap (unbounded, legacy behaviour).
+	 */
+	static final int DEFAULT_MAX_PAGE_SIZE = 1000;
 
 	private final List<EntityManagerFactory> factories = new CopyOnWriteArrayList<>();
 	private final OclToCriteriaTranslator translator = new OclToCriteriaTranslator();
 	private final JpaApplyExecutor applyExecutor = new JpaApplyExecutor();
+	private volatile int maxPageSize = DEFAULT_MAX_PAGE_SIZE;
+
+	@Activate
+	void activate(Map<String, Object> configuration) {
+		Object value = configuration == null ? null : configuration.get("odata.jpa.max.page.size");
+		if (value != null) {
+			maxPageSize = Integer.parseInt(String.valueOf(value));
+		}
+	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
 	void addEntityManagerFactory(EntityManagerFactory factory) {
@@ -157,6 +178,10 @@ public class JpaQueryService implements QueryService, WriteService {
 			}
 			if (query.top() >= 0) {
 				typedQuery.setMaxResults(query.top());
+			} else if (maxPageSize > 0) {
+				// no client $top: cap at the server page size so an unbounded set is never
+				// materialized whole (server-driven paging), rather than fetching every row
+				typedQuery.setMaxResults(maxPageSize);
 			}
 			List<EObject> entities = new ArrayList<>();
 			for (Object row : typedQuery.getResultList()) {
@@ -314,19 +339,21 @@ public class JpaQueryService implements QueryService, WriteService {
 		EntityManagerFactory factory = requireFactory(entityType);
 		Object key = typedKey(entityType, payload);
 		try (EntityManager em = factory.createEntityManager()) {
-			Class<?> javaType = entityType(factory, entityType).getJavaType();
-			em.getTransaction().begin();
-			if (em.find(javaType, key) != null) {
-				em.getTransaction().rollback();
-				throw new WriteConflictException(
-						"an entity with this key already exists in " + entityType.getName());
-			}
-			EObject entity = newInstance(factory, entityType);
-			copyFeatures(entityType, payload, entity, factory, true);
-			entity.eSet(keyAttribute(entityType), key); // copyFeatures leaves the key alone
-			em.persist(entity);
-			em.getTransaction().commit();
-			return entity;
+			return inTransaction(em, () -> {
+				Class<?> javaType = entityType(factory, entityType).getJavaType();
+				em.getTransaction().begin();
+				if (em.find(javaType, key) != null) {
+					em.getTransaction().rollback();
+					throw new WriteConflictException(
+							"an entity with this key already exists in " + entityType.getName());
+				}
+				EObject entity = newInstance(factory, entityType);
+				copyFeatures(entityType, payload, entity, factory, true);
+				entity.eSet(keyAttribute(entityType), key); // copyFeatures leaves the key alone
+				em.persist(entity);
+				em.getTransaction().commit();
+				return entity;
+			});
 		}
 	}
 
@@ -336,21 +363,23 @@ public class JpaQueryService implements QueryService, WriteService {
 		EAttribute id = keyAttribute(entityType);
 		Object key = EcoreUtil.createFromString(id.getEAttributeType(), unquote(rawKey));
 		try (EntityManager em = factory.createEntityManager()) {
-			Class<?> javaType = entityType(factory, entityType).getJavaType();
-			em.getTransaction().begin();
-			EObject existing = (EObject) em.find(javaType, key);
-			if (existing == null) { // OData upsert (13.1.1/29) — the URL key wins
-				EObject entity = newInstance(factory, entityType);
-				copyFeatures(entityType, payload, entity, factory, true);
-				entity.eSet(id, key);
-				em.persist(entity);
+			return inTransaction(em, () -> {
+				Class<?> javaType = entityType(factory, entityType).getJavaType();
+				em.getTransaction().begin();
+				EObject existing = (EObject) em.find(javaType, key);
+				if (existing == null) { // OData upsert (13.1.1/29) — the URL key wins
+					EObject entity = newInstance(factory, entityType);
+					copyFeatures(entityType, payload, entity, factory, true);
+					entity.eSet(id, key);
+					em.persist(entity);
+					em.getTransaction().commit();
+					return new WriteResult(entity, true);
+				}
+				copyFeatures(entityType, payload, existing, factory, replace);
+				existing.eSet(id, key); // the key is immutable
 				em.getTransaction().commit();
-				return new WriteResult(entity, true);
-			}
-			copyFeatures(entityType, payload, existing, factory, replace);
-			existing.eSet(id, key); // the key is immutable
-			em.getTransaction().commit();
-			return new WriteResult(existing, false);
+				return new WriteResult(existing, false);
+			});
 		}
 	}
 
@@ -360,16 +389,18 @@ public class JpaQueryService implements QueryService, WriteService {
 		EAttribute id = keyAttribute(entityType);
 		Object key = EcoreUtil.createFromString(id.getEAttributeType(), unquote(rawKey));
 		try (EntityManager em = factory.createEntityManager()) {
-			Class<?> javaType = entityType(factory, entityType).getJavaType();
-			em.getTransaction().begin();
-			Object entity = em.find(javaType, key);
-			if (entity == null) {
-				em.getTransaction().rollback();
-				return false;
-			}
-			em.remove(entity);
-			em.getTransaction().commit();
-			return true;
+			return inTransaction(em, () -> {
+				Class<?> javaType = entityType(factory, entityType).getJavaType();
+				em.getTransaction().begin();
+				Object entity = em.find(javaType, key);
+				if (entity == null) {
+					em.getTransaction().rollback();
+					return false;
+				}
+				em.remove(entity);
+				em.getTransaction().commit();
+				return true;
+			});
 		}
 	}
 
@@ -378,13 +409,15 @@ public class JpaQueryService implements QueryService, WriteService {
 		EntityManagerFactory factory = requireFactory(entityType);
 		EReference reference = requiredReference(entityType, navigation);
 		try (EntityManager em = factory.createEntityManager()) {
-			em.getTransaction().begin();
-			EObject owner = requiredManaged(em, factory, entityType, rawKey);
-			EObject instance = rebuild(child, factory);
-			em.persist(instance);
-			attach(owner, reference, instance);
-			em.getTransaction().commit();
-			return instance;
+			return inTransaction(em, () -> {
+				em.getTransaction().begin();
+				EObject owner = requiredManaged(em, factory, entityType, rawKey);
+				EObject instance = rebuild(child, factory);
+				em.persist(instance);
+				attach(owner, reference, instance);
+				em.getTransaction().commit();
+				return instance;
+			});
 		}
 	}
 
@@ -393,15 +426,17 @@ public class JpaQueryService implements QueryService, WriteService {
 		EntityManagerFactory factory = requireFactory(entityType);
 		EReference reference = requiredReference(entityType, navigation);
 		try (EntityManager em = factory.createEntityManager()) {
-			em.getTransaction().begin();
-			EObject owner = requiredManaged(em, factory, entityType, rawKey);
-			EObject target = findManaged(em, factory, reference.getEReferenceType(), targetRawKey);
-			if (target == null) {
-				em.getTransaction().rollback();
-				throw new IllegalArgumentException("the reference target does not exist");
-			}
-			attach(owner, reference, target);
-			em.getTransaction().commit();
+			inTransaction(em, () -> {
+				em.getTransaction().begin();
+				EObject owner = requiredManaged(em, factory, entityType, rawKey);
+				EObject target = findManaged(em, factory, reference.getEReferenceType(), targetRawKey);
+				if (target == null) {
+					em.getTransaction().rollback();
+					throw new IllegalArgumentException("the reference target does not exist");
+				}
+				attach(owner, reference, target);
+				em.getTransaction().commit();
+			});
 		}
 	}
 
@@ -410,24 +445,50 @@ public class JpaQueryService implements QueryService, WriteService {
 		EntityManagerFactory factory = requireFactory(entityType);
 		EReference reference = requiredReference(entityType, navigation);
 		try (EntityManager em = factory.createEntityManager()) {
-			em.getTransaction().begin();
-			EObject owner = requiredManaged(em, factory, entityType, rawKey);
-			boolean removed;
-			if (reference.isMany()) {
-				String key = unquote(targetRawKey);
-				@SuppressWarnings("unchecked")
-				List<EObject> members = (List<EObject>) owner.eGet(reference);
-				removed = members.removeIf(member -> key != null
-						&& key.equals(String.valueOf(member.eGet(keyAttribute(member.eClass())))));
-			} else {
-				removed = owner.eGet(reference) != null;
-				if (removed) {
-					owner.eSet(reference, null);
+			return inTransaction(em, () -> {
+				em.getTransaction().begin();
+				EObject owner = requiredManaged(em, factory, entityType, rawKey);
+				boolean removed;
+				if (reference.isMany()) {
+					String key = unquote(targetRawKey);
+					@SuppressWarnings("unchecked")
+					List<EObject> members = (List<EObject>) owner.eGet(reference);
+					removed = members.removeIf(member -> key != null
+							&& key.equals(String.valueOf(member.eGet(keyAttribute(member.eClass())))));
+				} else {
+					removed = owner.eGet(reference) != null;
+					if (removed) {
+						owner.eSet(reference, null);
+					}
 				}
-			}
-			em.getTransaction().commit();
-			return removed;
+				em.getTransaction().commit();
+				return removed;
+			});
 		}
+	}
+
+	/**
+	 * Runs a transactional write body with an explicit rollback-on-failure safety net: any
+	 * exception between {@code begin()} and {@code commit()} rolls the transaction back HERE
+	 * rather than leaving it active and relying on {@link EntityManager#close()} to clean up. The
+	 * body owns begin()/commit() (and any expected-branch rollback); this covers the unexpected.
+	 */
+	private static <T> T inTransaction(EntityManager em, Supplier<T> body) {
+		try {
+			return body.get();
+		} catch (RuntimeException e) {
+			if (em.getTransaction().isActive()) {
+				em.getTransaction().rollback();
+			}
+			throw e;
+		}
+	}
+
+	private static void inTransaction(EntityManager em, Runnable body) {
+		inTransaction(em, () -> {
+			body.run();
+			return null;
+		});
 	}
 
 	@SuppressWarnings("unchecked")
@@ -517,9 +578,12 @@ public class JpaQueryService implements QueryService, WriteService {
 
 	/** A fresh dynamic store instance — payload EObjects are plain EMF, not entity classes. */
 	private EObject newInstance(EntityManagerFactory factory, EClass entityType) {
-		return (EObject) JpaHelper.getServerSession(factory)
-				.getDescriptorForAlias(entityType.getName())
-				.getInstantiationPolicy().buildNewInstance();
+		var descriptor = JpaHelper.getServerSession(factory).getDescriptorForAlias(entityType.getName());
+		if (descriptor == null) {
+			throw new IllegalStateException(
+					"no JPA descriptor for entity type " + entityType.getName());
+		}
+		return (EObject) descriptor.getInstantiationPolicy().buildNewInstance();
 	}
 
 	private Object typedKey(EClass entityType, EObject payload) {

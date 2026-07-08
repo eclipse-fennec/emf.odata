@@ -15,9 +15,7 @@ package org.eclipse.fennec.odata.client;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
@@ -25,8 +23,8 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
-import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
+import org.eclipse.fennec.odata.csdl.CsdlXmlLoad;
 import org.eclipse.fennec.odata.csdl.EdmToEcoreConverter;
 import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edmx.EdmxPackage;
@@ -50,11 +48,10 @@ final class CsdlMetadataReader {
 		resourceSet.getPackageRegistry().put(EdmPackage.eNS_URI, EdmPackage.eINSTANCE);
 		resourceSet.getPackageRegistry().put(EdmxPackage.eNS_URI, EdmxPackage.eINSTANCE);
 		Resource resource = resourceSet.createResource(URI.createURI("metadata.xml"));
-		Map<Object, Object> options = new HashMap<>();
-		options.put(XMLResource.OPTION_EXTENDED_META_DATA, Boolean.TRUE);
 		try {
+			// XXE-hardened: a malicious/compromised service's $metadata is untrusted input
 			resource.load(new ByteArrayInputStream(csdlXml.getBytes(StandardCharsets.UTF_8)),
-					options);
+					CsdlXmlLoad.secureOptions());
 		} catch (IOException e) {
 			throw new ODataClientException("the service's $metadata is not parseable CSDL XML", e);
 		}
@@ -62,7 +59,14 @@ final class CsdlMetadataReader {
 			throw new ODataClientException("the service's $metadata document is empty");
 		}
 		EObject root = resource.getContents().get(0);
-		TEdmx edmx = root instanceof EdmxRoot edmxRoot ? edmxRoot.getEdmx() : (TEdmx) root;
+		TEdmx edmx;
+		if (root instanceof EdmxRoot edmxRoot) {
+			edmx = edmxRoot.getEdmx();
+		} else if (root instanceof TEdmx tedmx) {
+			edmx = tedmx;
+		} else {
+			throw new ODataClientException("the service's $metadata is not a CSDL EDMX document");
+		}
 		if (edmx == null || edmx.getDataServices() == null) {
 			throw new ODataClientException("the service's $metadata carries no DataServices");
 		}

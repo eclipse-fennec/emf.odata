@@ -13,7 +13,7 @@
 package org.eclipse.fennec.odata.client;
 
 import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -65,7 +65,9 @@ final class ODataJsonDecoder {
 	private static JsonNode parse(String json) {
 		try {
 			return MAPPER.readTree(json);
-		} catch (Exception e) {
+		} catch (RuntimeException e) {
+			// Jackson 3 signals parse failure with an (unchecked) JacksonException; wrap it as the
+			// client's exception type. Errors (OOM/StackOverflow) are NOT swallowed — they propagate.
 			throw new ODataClientException("the service answer is not parseable JSON", e);
 		}
 	}
@@ -83,7 +85,9 @@ final class ODataJsonDecoder {
 		try {
 			resource.load(new ByteArrayInputStream(
 					MAPPER.writeValueAsBytes(object)), options);
-		} catch (Exception e) {
+		} catch (IOException | RuntimeException e) {
+			// codec/IO failures on an untrusted server payload become the client's exception type;
+			// Errors propagate rather than being masked as an "undecodable payload"
 			throw new ODataClientException("undecodable entity payload for type '"
 					+ entityType.getName() + "'", e);
 		}

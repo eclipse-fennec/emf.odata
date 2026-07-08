@@ -94,10 +94,42 @@ Backlogs: `odata-e2-converter-open-points.md`, `odata-e4-query-open-points.md`,
 | Pfad-Leaks | Serialisierungs-Kopien mit MITkopierten Expand-Zielen → nur interne Referenzen | — |
 | Dateizugriff | `FileEntityRepository` liest NUR das konfigurierte Verzeichnis, einmalig bei Aktivierung; Request-Input beeinflusst nie Pfade | `directory` (Factory-PID `…repository.file`) |
 | Schreibzugriffe | Write-Path v1 (2026-07-07): POST/PATCH/PUT/DELETE nur auf Set/Entity-Ebene, nur `application/json` (415), Body-Größenlimit (413), Payload via Codec (kein manuelles JSON-Parsen), Konflikte → 409; ohne registrierten `WriteService` → 405 | `odata.max.body.size` (Default 1 MiB) |
+| Server-Driven-Paging (JPA) | ohne Client-`$top` deckelt das JPA-Backend die Zeilenzahl, statt eine ganze Tabelle in den Heap zu materialisieren; `<= 0` = unbegrenzt | Default 1000, `odata.jpa.max.page.size` (PID `org.eclipse.fennec.odata.persistence.jpa`) |
 | Auth/TLS | out-of-scope (req §4.5) — vorgelagerte Infrastruktur | — |
 
 Getestet unit- (Mockito) UND e2e-seitig (echtes HTTP): Injection-Strings, Parser-Bomben,
 überlange Filter, `$top`-Exhaustion, Leak-Freiheit von 500ern, Key-Injection.
+
+### Härtungs-Pass 2026-07-08 (Concurrency/Injection/NPE/Exception-Review)
+
+Konsolidierte Absicherung aus dem Multi-Dimensions-Review; jede Änderung ist mit Tests belegt:
+
+- **Parser-Bomb-Guard vollständig:** `RequestLimits.checkExpression` wird jetzt AUCH auf `$expand`
+  und dessen verschachteltes `$filter` angewandt (vorher umgangen). Zusätzlich fängt der
+  Query-Parser klammerfreie Tiefen-Rekursion (`not not …`, tiefe Member-Pfade) über einen
+  intrinsischen `StackOverflowError`-Guard ab → 400 statt 500/Crash; Integer-Literal-Overflow und
+  Alias-Wert-Länge werden ebenfalls im Query-Bundle selbst begrenzt. Resource-Pfad hat einen
+  Längen-Cap (`ODataResourceParser.MAX_PATH_LENGTH`, 4096) VOR dem Parsen.
+- **XXE-Härtung (zentral):** `CsdlXmlLoad.secureOptions()` (Bundle `…csdl`) deaktiviert DOCTYPE
+  sowie externe Entities und ist der EINE Ladepfad für CSDL/EDMX-XML — genutzt von den vendored
+  Vocabularies UND vom Client, der das (nicht vertrauenswürdige) `$metadata` eines fremden Service
+  liest. Neutralisiert XXE (Datei-Read/SSRF) und Billion-Laughs in einem Zug.
+- **Evaluation-Fehler → 400:** Typ-/Format-Fehler im In-Memory-`OclEvaluator` (z. B. `contains`
+  auf Zahl, kaputtes Datum) sowie nicht-vergleichbare `$orderby`-Schlüssel werden als
+  `ODataQueryParseException` (→ 400) statt als interner 500 gemeldet.
+- **Optimistic Concurrency:** ein Backend-FEHLER beim If-Match-Read wird nicht mehr still zu
+  „Entity fehlt → Upsert" degradiert (Lost-Update-Risiko), sondern propagiert (→ geloggter 500).
+- **Concurrency In-Memory-Backend:** `createRelated`/`link`/`unlink` mutieren die geteilte EMF-EList
+  jetzt unter dem Per-Klassen-Lock (wie create/update/delete), deadlock-frei (kein verschachteltes
+  Lock).
+- **JPA-Transaktionen:** jeder Write rollt bei einer Ausnahme zwischen `begin()` und `commit()`
+  explizit zurück (statt sich auf `close()` zu verlassen).
+- **Logging:** unerwartete 500er werden serverseitig auf ERROR geloggt (vorher spurlos), Client
+  sieht weiterhin nur die generische Meldung.
+- **Header-Injection:** Entity-Key im `Location`/`OData-EntityId`-Header wird control-char-escaped
+  (kein Response-Splitting).
+- **Client:** `ODataClient` ist `AutoCloseable` (schließt nur einen selbst erzeugten `HttpClient`);
+  ein server-geliefertes `@odata.nextLink` auf einen fremden Origin wird abgelehnt (SSRF-Guard).
 
 ## Review-Notizen (2026-07-03)
 

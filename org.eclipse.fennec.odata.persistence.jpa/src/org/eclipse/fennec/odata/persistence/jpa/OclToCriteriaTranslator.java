@@ -191,11 +191,15 @@ public class OclToCriteriaTranslator {
 			default -> throw new UnsupportedOperationException(
 					"property source kind " + source.eClass().getName());
 		};
+		if (p.getReferredProperty() == null) {
+			throw new UnsupportedOperationException("unresolved property reference in $filter/$orderby");
+		}
 		return base.get(p.getReferredProperty().getName());
 	}
 
 	// --- operations ---
 
+	@SuppressWarnings("unchecked")
 	private Operand operation(OperationCallExp op, Context ctx) {
 		String name = op.getName();
 		List<OclExpression> args = op.getOwnedArguments();
@@ -280,7 +284,7 @@ public class OclToCriteriaTranslator {
 			return negate ? cb.notEqual(expr.expression(), value)
 					: cb.equal(expr.expression(), value);
 		}
-		if (left instanceof Const constant && right instanceof Expr) {
+		if (left instanceof Const && right instanceof Expr) {
 			return equality(right, left, cb, negate);
 		}
 		Expression<?> l = expression(left, cb);
@@ -339,6 +343,7 @@ public class OclToCriteriaTranslator {
 	}
 
 	/** String {@code size} → LENGTH, collection {@code size} → SIZE. */
+	@SuppressWarnings("unchecked")
 	private Operand size(OperationCallExp op, Context ctx) {
 		if (op.getOwnedSource() instanceof PropertyCallExp property
 				&& property.getReferredProperty() != null && property.getReferredProperty().isMany()) {
@@ -443,11 +448,12 @@ public class OclToCriteriaTranslator {
 		return (Expression<String>) expression(operand, cb);
 	}
 
-	@SuppressWarnings({ "unchecked", "rawtypes" })
+	@SuppressWarnings("rawtypes")
 	private Expression numeric(Operand operand, CriteriaBuilder cb) {
 		return (Expression) expression(operand, cb);
 	}
 
+	@SuppressWarnings("unchecked")
 	private Expression<Integer> intExpr(OclExpression exp, Context ctx) {
 		Operand operand = operand(exp, ctx);
 		if (operand instanceof Const constant && constant.value() instanceof Number number) {
@@ -456,7 +462,7 @@ public class OclToCriteriaTranslator {
 		return numeric(operand, ctx.cb()).as(Integer.class);
 	}
 
-	@SuppressWarnings({ "unchecked", "rawtypes" })
+	@SuppressWarnings("rawtypes")
 	private Expression collection(OclExpression exp, Context ctx) {
 		Operand operand = operand(exp, ctx);
 		if (operand instanceof Expr expr) {

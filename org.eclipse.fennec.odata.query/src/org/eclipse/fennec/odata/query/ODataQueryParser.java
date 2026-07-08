@@ -56,6 +56,15 @@ public class ODataQueryParser {
 	/** Max nesting when parameter alias values reference other aliases ({@code @a=@b add 1}). */
 	private static final int MAX_ALIAS_DEPTH = 8;
 
+	/**
+	 * Length cap for an individual parameter-alias value. Alias values are a SEPARATE query
+	 * parameter re-parsed during resolution, so the front-door {@code RequestLimits} length/depth
+	 * check on the top-level {@code $filter} does not cover them — this bounds each one here so a
+	 * small {@code $filter=@a} plus a giant {@code @a=…} cannot smuggle an unbounded expression
+	 * past the guard. Mirrors the default {@code odata.max.expression.length} (4096).
+	 */
+	private static final int MAX_ALIAS_VALUE_LENGTH = 4096;
+
 	/** Parse a {@code $filter} value into a boolean-typed OCL expression. */
 	public OclExpression parseFilter(String filter, EClass context) {
 		return parseFilter(filter, context, Map.of());
@@ -68,10 +77,12 @@ public class ODataQueryParser {
 	 */
 	public OclExpression parseFilter(String filter, EClass context,
 			Map<String, String> parameterAliases) {
-		ODataFilterParser parser = newParser(filter);
-		Supplier<ODataToOclBuilder> factory = () -> new ODataToOclBuilder(context);
-		return typeResolver.resolve(
-				aliasWired(factory, parameterAliases, 0).visit(parser.filter()));
+		return parsing(() -> {
+			ODataFilterParser parser = newParser(filter);
+			Supplier<ODataToOclBuilder> factory = () -> new ODataToOclBuilder(context);
+			return typeResolver.resolve(
+					aliasWired(factory, parameterAliases, 0).visit(parser.filter()));
+		});
 	}
 
 	/**
@@ -86,10 +97,12 @@ public class ODataQueryParser {
 	/** {@link #parseFilterAfterApply} with 4.01 parameter aliases. */
 	public OclExpression parseFilterAfterApply(String filter, EClass context, ApplyPipeline pipeline,
 			Map<String, String> parameterAliases) {
-		ODataFilterParser parser = newParser(filter);
-		Supplier<ODataToOclBuilder> factory = () -> builderWithAliases(context, pipeline);
-		return typeResolver.resolve(
-				aliasWired(factory, parameterAliases, 0).visit(parser.filter()));
+		return parsing(() -> {
+			ODataFilterParser parser = newParser(filter);
+			Supplier<ODataToOclBuilder> factory = () -> builderWithAliases(context, pipeline);
+			return typeResolver.resolve(
+					aliasWired(factory, parameterAliases, 0).visit(parser.filter()));
+		});
 	}
 
 	/** {@code $orderby} counterpart of {@link #parseFilterAfterApply}. */
@@ -101,9 +114,11 @@ public class ODataQueryParser {
 	/** {@link #parseOrderByAfterApply} with 4.01 parameter aliases. */
 	public List<OrderBySegment> parseOrderByAfterApply(String orderBy, EClass context,
 			ApplyPipeline pipeline, Map<String, String> parameterAliases) {
-		ODataFilterParser parser = newParser(orderBy);
-		return orderBySegments(parser,
-				aliasWired(() -> builderWithAliases(context, pipeline), parameterAliases, 0));
+		return parsing(() -> {
+			ODataFilterParser parser = newParser(orderBy);
+			return orderBySegments(parser,
+					aliasWired(() -> builderWithAliases(context, pipeline), parameterAliases, 0));
+		});
 	}
 
 	private ODataToOclBuilder builderWithAliases(EClass context, ApplyPipeline pipeline) {
@@ -126,9 +141,11 @@ public class ODataQueryParser {
 	/** {@link #parseOrderBy(String, EClass)} with 4.01 parameter aliases. */
 	public List<OrderBySegment> parseOrderBy(String orderBy, EClass context,
 			Map<String, String> parameterAliases) {
-		ODataFilterParser parser = newParser(orderBy);
-		return orderBySegments(parser,
-				aliasWired(() -> new ODataToOclBuilder(context), parameterAliases, 0));
+		return parsing(() -> {
+			ODataFilterParser parser = newParser(orderBy);
+			return orderBySegments(parser,
+					aliasWired(() -> new ODataToOclBuilder(context), parameterAliases, 0));
+		});
 	}
 
 	private List<OrderBySegment> orderBySegments(ODataFilterParser parser, ODataToOclBuilder builder) {
@@ -153,6 +170,10 @@ public class ODataQueryParser {
 			if (value == null || value.isBlank()) {
 				throw new ODataQueryParseException("unresolved parameter alias '" + name + "'");
 			}
+			if (value.length() > MAX_ALIAS_VALUE_LENGTH) {
+				throw new ODataQueryParseException("parameter alias '" + name
+						+ "' value exceeds the maximum length of " + MAX_ALIAS_VALUE_LENGTH);
+			}
 			if (depth >= MAX_ALIAS_DEPTH) {
 				throw new ODataQueryParseException(
 						"parameter alias nesting exceeds " + MAX_ALIAS_DEPTH + " levels");
@@ -169,13 +190,15 @@ public class ODataQueryParser {
 	 * (they surface as {@code VariableExp}s — the backend resolves them against its stage output).
 	 */
 	public ApplyPipeline parseApply(String apply, EClass context) {
-		ODataFilterParser parser = newParser(apply);
-		ODataToOclBuilder builder = new ODataToOclBuilder(context);
-		ApplyPipeline pipeline = ApplyFactory.eINSTANCE.createApplyPipeline();
-		for (ODataFilterParser.ApplyTrafoContext trafo : parser.apply().applyTrafo()) {
-			pipeline.getTransformations().add(transformation(trafo, builder));
-		}
-		return pipeline;
+		return parsing(() -> {
+			ODataFilterParser parser = newParser(apply);
+			ODataToOclBuilder builder = new ODataToOclBuilder(context);
+			ApplyPipeline pipeline = ApplyFactory.eINSTANCE.createApplyPipeline();
+			for (ODataFilterParser.ApplyTrafoContext trafo : parser.apply().applyTrafo()) {
+				pipeline.getTransformations().add(transformation(trafo, builder));
+			}
+			return pipeline;
+		});
 	}
 
 	private ApplyTransformation transformation(ODataFilterParser.ApplyTrafoContext ctx,
@@ -246,6 +269,22 @@ public class ODataQueryParser {
 	private static void requireTransformation(String actual, String expected) {
 		if (!expected.equals(actual)) {
 			throw new ODataQueryParseException("unknown or malformed $apply transformation '" + actual + "'");
+		}
+	}
+
+	/**
+	 * Runs a parse action under a stack-overflow guard: paren-free deep recursion (a long
+	 * {@code not not …} chain, deep member paths, {@code f(f(f(…)))}) is NOT caught by the
+	 * paren-counting front-door depth check, and the resulting {@link StackOverflowError} is an
+	 * {@link Error} the ANTLR error listener never sees. Catching it here — the parser is stateless
+	 * and thrown away — turns a would-be 500/DoS into a clean 400. All recursion (ANTLR parse, the
+	 * visitor tree walk, and type resolution) runs inside the action, so one guard covers them all.
+	 */
+	private static <T> T parsing(Supplier<T> action) {
+		try {
+			return action.get();
+		} catch (StackOverflowError e) {
+			throw new ODataQueryParseException("the expression is nested too deeply to parse");
 		}
 	}
 

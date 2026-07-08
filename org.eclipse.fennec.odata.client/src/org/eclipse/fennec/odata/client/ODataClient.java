@@ -38,16 +38,18 @@ import org.eclipse.fennec.model.metadata.api.MetadataWhiteboard;
  *     .list();
  * </pre>
  */
-public final class ODataClient {
+public final class ODataClient implements AutoCloseable {
 
 	private final HttpClient http;
+	private final boolean ownsHttp;
 	private final URI serviceRoot;
 	private final List<EPackage> packages;
 	private final MetadataService metadataService;
 
-	private ODataClient(HttpClient http, URI serviceRoot, List<EPackage> packages,
+	private ODataClient(HttpClient http, boolean ownsHttp, URI serviceRoot, List<EPackage> packages,
 			MetadataWhiteboard whiteboard) {
 		this.http = http;
+		this.ownsHttp = ownsHttp;
 		this.serviceRoot = serviceRoot;
 		this.packages = List.copyOf(packages);
 		// the codec profile lookup runs against a MetadataService — decoupled like the
@@ -61,7 +63,8 @@ public final class ODataClient {
 	}
 
 	public static ODataClient connect(String serviceRoot) {
-		return connect(serviceRoot, HttpClient.newHttpClient());
+		// the HttpClient is created here, so this client OWNS it and closes it in close()
+		return connect(serviceRoot, HttpClient.newHttpClient(), null, true);
 	}
 
 	public static ODataClient connect(String serviceRoot, HttpClient http) {
@@ -70,14 +73,32 @@ public final class ODataClient {
 
 	/**
 	 * Connect with an injected metadata whiteboard (e.g. the OSGi service) — the parsed
-	 * schema packages are registered THERE instead of an internal instance.
+	 * schema packages are registered THERE instead of an internal instance. The caller-supplied
+	 * {@link HttpClient} is NOT owned: {@link #close()} leaves it open.
 	 */
 	public static ODataClient connect(String serviceRoot, HttpClient http,
 			MetadataWhiteboard whiteboard) {
+		return connect(serviceRoot, http, whiteboard, false);
+	}
+
+	private static ODataClient connect(String serviceRoot, HttpClient http,
+			MetadataWhiteboard whiteboard, boolean ownsHttp) {
 		URI root = URI.create(serviceRoot.endsWith("/") ? serviceRoot : serviceRoot + "/");
-		ODataClient boot = new ODataClient(http, root, List.of(), whiteboard);
+		// the throwaway bootstrap client never owns the HttpClient — only the returned one does
+		ODataClient boot = new ODataClient(http, false, root, List.of(), whiteboard);
 		String csdl = boot.fetch("$metadata", "application/xml");
-		return new ODataClient(http, root, CsdlMetadataReader.read(csdl), whiteboard);
+		return new ODataClient(http, ownsHttp, root, CsdlMetadataReader.read(csdl), whiteboard);
+	}
+
+	/**
+	 * Releases the internally-created {@link HttpClient} (its connection pool and selector/worker
+	 * threads). A caller-injected client is left untouched — the caller owns its lifecycle.
+	 */
+	@Override
+	public void close() {
+		if (ownsHttp) {
+			http.close();
+		}
 	}
 
 	/** The client's codec metadata wiring — every schema package is registered. */
@@ -110,6 +131,12 @@ public final class ODataClient {
 	/** GET relative to the service root; non-2xx answers raise with status and error body. */
 	String fetch(String relative, String accept) {
 		URI target = serviceRoot.resolve(relative);
+		// a server-supplied absolute link (e.g. @odata.nextLink) must not steer the client — with
+		// its Accept/version headers and any ambient credentials — to a different host (SSRF)
+		if (!sameOrigin(serviceRoot, target)) {
+			throw new ODataClientException(
+					"refusing to follow a link to a different origin than the service root: " + target);
+		}
 		HttpRequest request = HttpRequest.newBuilder(target)
 				.header("Accept", accept)
 				.header("OData-MaxVersion", "4.01")
@@ -128,5 +155,24 @@ public final class ODataClient {
 					+ response.statusCode(), response.statusCode(), response.body());
 		}
 		return response.body();
+	}
+
+	/** Same scheme, host and (default-aware) port — the origin the service root was reached at. */
+	private static boolean sameOrigin(URI a, URI b) {
+		return equalsIgnoreCase(a.getScheme(), b.getScheme())
+				&& equalsIgnoreCase(a.getHost(), b.getHost())
+				&& effectivePort(a) == effectivePort(b);
+	}
+
+	private static boolean equalsIgnoreCase(String a, String b) {
+		return a == null ? b == null : a.equalsIgnoreCase(b);
+	}
+
+	private static int effectivePort(URI uri) {
+		if (uri.getPort() != -1) {
+			return uri.getPort();
+		}
+		return "https".equalsIgnoreCase(uri.getScheme()) ? 443
+				: "http".equalsIgnoreCase(uri.getScheme()) ? 80 : -1;
 	}
 }

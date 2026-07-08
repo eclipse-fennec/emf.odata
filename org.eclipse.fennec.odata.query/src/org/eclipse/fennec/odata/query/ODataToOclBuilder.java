@@ -386,14 +386,25 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	@Override
 	public OclExpression visitIntLiteral(ODataFilterParser.IntLiteralContext ctx) {
 		IntegerLiteralExp exp = FACTORY.createIntegerLiteralExp();
-		exp.setIntegerSymbol(Long.parseLong(ctx.getText()));
+		String literal = ctx.getText();
+		try {
+			exp.setIntegerSymbol(Long.parseLong(literal));
+		} catch (NumberFormatException e) {
+			throw new ODataQueryParseException(
+					"integer literal is out of the supported 64-bit range: " + literal, e);
+		}
 		return exp;
 	}
 
 	@Override
 	public OclExpression visitDecimalLiteral(ODataFilterParser.DecimalLiteralContext ctx) {
 		RealLiteralExp exp = FACTORY.createRealLiteralExp();
-		exp.setRealSymbol(Double.parseDouble(ctx.getText()));
+		String literal = ctx.getText();
+		try {
+			exp.setRealSymbol(Double.parseDouble(literal));
+		} catch (NumberFormatException e) {
+			throw new ODataQueryParseException("decimal literal is not a valid number: " + literal, e);
+		}
 		return exp;
 	}
 

@@ -18,7 +18,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Set;
-import java.util.LinkedHashSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -128,6 +127,14 @@ public class ODataServlet extends HttpServlet {
 	public static final String PID = "org.eclipse.fennec.odata.servlet";
 	private static final long serialVersionUID = 1L;
 
+	private static final System.Logger LOGGER = System.getLogger(ODataServlet.class.getName());
+
+	/**
+	 * Jackson mapper: immutable-config and thread-safe, so it is created ONCE and shared rather
+	 * than per request (Jackson's documented reuse contract).
+	 */
+	private static final ObjectMapper JSON = new ObjectMapper();
+
 	private final ODataResourceParser resourceParser = new ODataResourceParser();
 
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
@@ -236,7 +243,10 @@ public class ODataServlet extends HttpServlet {
 			// backend without a translation for a construct) — an honest 501
 			error(response, 501, "the backend does not support this request");
 		} catch (Exception e) {
-			// no exception details leave the server (no class names, no stack traces)
+			// no exception details leave the server (no class names, no stack traces) — but the
+			// server MUST record what it hid, so an operator can tell a bug from an attack
+			LOGGER.log(System.Logger.Level.ERROR,
+					() -> "unhandled failure serving GET " + request.getRequestURI(), e);
 			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
 		}
 	}
@@ -268,7 +278,10 @@ public class ODataServlet extends HttpServlet {
 		} catch (UnsupportedOperationException e) {
 			error(response, 501, "the backend does not support this request");
 		} catch (Exception e) {
-			// no exception details leave the server (no class names, no stack traces)
+			// no exception details leave the server (no class names, no stack traces) — but the
+			// server MUST record what it hid, so an operator can tell a bug from an attack
+			LOGGER.log(System.Logger.Level.ERROR, () -> "unhandled failure serving "
+					+ request.getMethod() + " " + request.getRequestURI(), e);
 			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
 		}
 	}
@@ -574,7 +587,7 @@ public class ODataServlet extends HttpServlet {
 			return null;
 		}
 		try {
-			return new ObjectMapper().readTree(body);
+			return JSON.readTree(body);
 		} catch (Exception e) {
 			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
 			return null;
@@ -658,19 +671,43 @@ public class ODataServlet extends HttpServlet {
 		EAttribute keyAttribute = entityType.getEAllAttributes().stream()
 				.filter(EAttribute::isID).findFirst().orElse(null);
 		if (queryService == null || keyAttribute == null) {
-			return null;
+			return null; // no read backend serves this type — no ETag was ever issued, skip the check
 		}
-		try {
-			QueryResult result = queryService.execute(new EntityQuery(entityType, null,
-					keyEquals(keyAttribute, rawKey), List.of(), 0, 1, false));
-			return result.entities().isEmpty() ? null : result.entities().get(0);
-		} catch (RuntimeException e) {
-			return null; // a broken read backend must not block writes
-		}
+		// A backend FAILURE must NOT be silently degraded to "entity absent": that would skip the
+		// If-Match precondition and let a PATCH/PUT/DELETE overwrite a concurrently-changed entity
+		// exactly when the backend is flaky. Let it propagate (→ logged 500); only a genuinely
+		// empty result means "not found".
+		QueryResult result = queryService.execute(new EntityQuery(entityType, null,
+				keyEquals(keyAttribute, rawKey), List.of(), 0, 1, false));
+		return result.entities().isEmpty() ? null : result.entities().get(0);
 	}
 
 	/** A decoded write payload: the entity plus {@code @odata.bind} targets per navigation. */
 	private record WritePayload(EObject entity, Map<EReference, List<String>> bindings) {}
+
+	private static final byte[] ODATA_BIND_MARKER = "@odata.bind".getBytes(StandardCharsets.US_ASCII);
+
+	/**
+	 * Whether {@code haystack} contains the ASCII {@code needle} — a byte scan that avoids
+	 * allocating a full {@code String} copy of the (up to {@code maxBodyBytes}) payload just to
+	 * probe for the rare {@code @odata.bind} marker.
+	 */
+	private static boolean containsAscii(byte[] haystack, byte[] needle) {
+		if (needle.length == 0 || haystack.length < needle.length) {
+			return needle.length == 0;
+		}
+		int last = haystack.length - needle.length;
+		outer:
+		for (int i = 0; i <= last; i++) {
+			for (int j = 0; j < needle.length; j++) {
+				if (haystack[i + j] != needle[j]) {
+					continue outer;
+				}
+			}
+			return true;
+		}
+		return false;
+	}
 
 	/**
 	 * Reads and decodes the JSON payload into an EObject of the addressed type — the codec
@@ -699,7 +736,7 @@ public class ODataServlet extends HttpServlet {
 			return null;
 		}
 		Map<EReference, List<String>> bindings = new LinkedHashMap<>();
-		if (new String(body, StandardCharsets.UTF_8).contains("@odata.bind")) {
+		if (containsAscii(body, ODATA_BIND_MARKER)) {
 			body = extractBindings(body, entityType, bindings, response);
 			if (body == null) {
 				return null; // error already written
@@ -733,7 +770,7 @@ public class ODataServlet extends HttpServlet {
 			throws IOException {
 		JsonNode document;
 		try {
-			document = new ObjectMapper().readTree(body);
+			document = JSON.readTree(body);
 		} catch (Exception e) {
 			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
 			return null;
@@ -756,7 +793,7 @@ public class ODataServlet extends HttpServlet {
 			List<String> targets = new ArrayList<>();
 			if (value.isArray() && reference.isMany()) {
 				for (JsonNode element : value) {
-					if (!element.isTextual()) {
+					if (!element.isString()) {
 						error(response, HttpServletResponse.SC_BAD_REQUEST,
 								"@odata.bind targets must be entity URLs");
 						return null;
@@ -768,7 +805,7 @@ public class ODataServlet extends HttpServlet {
 					}
 					targets.add(key);
 				}
-			} else if (value.isTextual() && !reference.isMany()) {
+			} else if (value.isString() && !reference.isMany()) {
 				String key = refTargetKey(value.asString(), reference.getEReferenceType(), response);
 				if (key == null) {
 					return null; // error already written
@@ -783,7 +820,7 @@ public class ODataServlet extends HttpServlet {
 			bindings.put(reference, targets);
 			object.remove(member);
 		}
-		return new ObjectMapper().writeValueAsBytes(object);
+		return JSON.writeValueAsBytes(object);
 	}
 
 	/** Applies {@code @odata.bind} targets as reference operations after the entity write. */
@@ -825,9 +862,30 @@ public class ODataServlet extends HttpServlet {
 		String text = String.valueOf(value);
 		if (id.getEAttributeType() != null
 				&& String.class.equals(id.getEAttributeType().getInstanceClass())) {
-			return "'" + text.replace("'", "''") + "'";
+			return "'" + encodeControlChars(text.replace("'", "''")) + "'";
 		}
-		return text;
+		return encodeControlChars(text);
+	}
+
+	/**
+	 * Percent-encodes ISO control characters (incl. CR/LF) so a persisted key value cannot inject
+	 * line breaks into the {@code Location}/{@code OData-EntityId} response headers (HTTP response
+	 * splitting). Printable key values pass through unchanged.
+	 */
+	private static String encodeControlChars(String text) {
+		StringBuilder encoded = null;
+		for (int i = 0; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c < 0x20 || c == 0x7F) {
+				if (encoded == null) {
+					encoded = new StringBuilder(text.length() + 8).append(text, 0, i);
+				}
+				encoded.append('%').append(HexFormat.of().withUpperCase().toHexDigits((byte) c));
+			} else if (encoded != null) {
+				encoded.append(c);
+			}
+		}
+		return encoded == null ? text : encoded.toString();
 	}
 
 	/** The response is 4.01 unless the client pins {@code OData-MaxVersion: 4.0} (8.1.5). */
@@ -1162,6 +1220,9 @@ public class ODataServlet extends HttpServlet {
 	 */
 	private EClass resolveCastType(String qualifiedName, EClass baseType) {
 		int dot = qualifiedName.lastIndexOf('.');
+		if (dot < 0) {
+			return null; // an unqualified cast name resolves to no type (→ 404), never crashes
+		}
 		String namespace = qualifiedName.substring(0, dot);
 		String localName = qualifiedName.substring(dot + 1);
 		for (EPackage pkg : packages) {
@@ -1614,6 +1675,7 @@ public class ODataServlet extends HttpServlet {
 		if (expand == null || expand.isBlank()) {
 			return items;
 		}
+		limits.checkExpression(expand); // nested $filter trees are parsed — same hostile-input guard
 		for (String item : splitExpandItems(expand)) {
 			String trimmed = item.trim();
 			String name = trimmed;
@@ -1643,8 +1705,9 @@ public class ODataServlet extends HttpServlet {
 			throw new ODataQueryParseException(
 					"$filter inside $expand applies to collection-valued navigations");
 		}
-		return parser.parseFilter(nested.substring(equals + 1).trim(),
-				reference.getEReferenceType());
+		String nestedFilter = nested.substring(equals + 1).trim();
+		limits.checkExpression(nestedFilter); // defence in depth: guard the inner filter too
+		return parser.parseFilter(nestedFilter, reference.getEReferenceType());
 	}
 
 	/** Top-level comma split of {@code $expand} — parens and string literals stay intact. */

@@ -14,6 +14,7 @@ package org.eclipse.fennec.odata.query;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -27,6 +28,7 @@ import java.util.Map;
 import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.ClassifierType;
 import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
@@ -59,14 +61,48 @@ import org.eclipse.fennec.m2x.model.ocl.VariableExp;
  */
 public class OclEvaluator {
 
-	/** Evaluates a boolean predicate against the given context (an EObject or a $apply row map). */
+	/**
+	 * Evaluates a boolean predicate against the given context (an EObject or a $apply row map).
+	 * Null-valued relational comparisons yield {@code false} (three-valued logic collapsed), and
+	 * evaluation-time type errors from a query that is invalid for the actual data are surfaced as
+	 * {@link ODataQueryParseException} (→ 400), never as an internal fault (→ 500).
+	 */
 	public boolean matches(OclExpression predicate, Object self) {
-		return Boolean.TRUE.equals(evaluate(predicate, self, Map.of()));
+		try {
+			return Boolean.TRUE.equals(evaluate(predicate, self, Map.of()));
+		} catch (NullComparison e) {
+			return false;
+		} catch (RuntimeException e) {
+			throw asClientError(e);
+		}
 	}
 
 	/** Evaluates any expression against the given context (for $orderby keys, aggregates etc.). */
 	public Object evaluate(OclExpression expression, Object self) {
-		return evaluate(expression, self, Map.of());
+		try {
+			return evaluate(expression, self, Map.of());
+		} catch (NullComparison e) {
+			return null;
+		} catch (RuntimeException e) {
+			throw asClientError(e);
+		}
+	}
+
+	/**
+	 * Translates an evaluation fault into a client-facing 400: a type/format mismatch means the
+	 * query is invalid for the data (e.g. {@code contains} on a numeric property, an out-of-range
+	 * literal). Genuine internal faults are left untouched so they still surface as a 500.
+	 */
+	private static RuntimeException asClientError(RuntimeException e) {
+		if (e instanceof ODataQueryParseException parse) {
+			return parse;
+		}
+		if (e instanceof IllegalArgumentException || e instanceof ClassCastException
+				|| e instanceof ArithmeticException || e instanceof DateTimeException) {
+			return new ODataQueryParseException(
+					"the $filter/$orderby expression is not valid for the data: " + e.getMessage(), e);
+		}
+		return e;
 	}
 
 	private Object evaluate(OclExpression exp, Object self, Map<Variable, Object> bindings) {
@@ -95,18 +131,22 @@ public class OclEvaluator {
 						+ (variable == null ? "?" : variable.getName()) + "'");
 			}
 			case PropertyCallExp p -> {
+				EStructuralFeature property = p.getReferredProperty();
+				if (property == null) {
+					throw new IllegalArgumentException("property reference is unresolved");
+				}
 				Object source = p.getOwnedSource() == null ? self : evaluate(p.getOwnedSource(), self, bindings);
 				if (source == null) {
 					yield null; // null propagation along the path
 				}
 				if (source instanceof EObject eObject) {
-					yield eObject.eGet(p.getReferredProperty());
+					yield eObject.eGet(property);
 				}
 				if (source instanceof Map<?, ?> row) { // $apply row: grouping paths are nested maps
-					yield row.get(p.getReferredProperty().getName());
+					yield row.get(property.getName());
 				}
 				throw new IllegalArgumentException(
-						"property '" + p.getReferredProperty().getName() + "' called on a non-object value");
+						"property '" + property.getName() + "' called on a non-object value");
 			}
 			case IteratorExp it -> iterate(it, self, bindings);
 			case OperationCallExp op -> operation(op, self, bindings);
@@ -295,13 +335,12 @@ public class OclEvaluator {
 		private static final long serialVersionUID = 1L;
 	}
 
-	/** Wraps {@link #matches} so null-valued relational comparisons yield false, not errors. */
+	/**
+	 * Retained for API compatibility: {@link #matches} is itself null-safe, so this is a plain
+	 * delegation — null-valued relational comparisons yield {@code false}.
+	 */
 	public boolean matchesNullSafe(OclExpression predicate, Object self) {
-		try {
-			return matches(predicate, self);
-		} catch (NullComparison e) {
-			return false;
-		}
+		return matches(predicate, self);
 	}
 
 	private static BigDecimal decimal(Object value) {

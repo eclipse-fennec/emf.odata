@@ -179,7 +179,9 @@ public class EcoreToEdmConverter {
 		container.getEntitySet().forEach(s -> setByEntityType.put(s.getEntityType(), s));
 
 		for (TEntitySet set : container.getEntitySet()) {
-			for (ODataClassProfile c = byQualifiedName.get(set.getEntityType()); c != null;
+			java.util.Set<String> visited = new java.util.HashSet<>();
+			for (ODataClassProfile c = byQualifiedName.get(set.getEntityType());
+					c != null && visited.add(c.getQualifiedName());
 					c = byQualifiedName.get(c.getBaseTypeQualifiedName())) {
 				for (ODataNavigationProfile n : c.getNavigationProperties()) {
 					if (n.isContainsTarget()) {

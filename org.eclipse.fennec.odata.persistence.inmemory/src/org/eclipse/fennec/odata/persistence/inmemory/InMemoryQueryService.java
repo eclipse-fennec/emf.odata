@@ -25,6 +25,7 @@ import org.eclipse.fennec.odata.persistence.api.EntityRepository;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.query.OclEvaluator;
+import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
@@ -75,7 +76,7 @@ public class InMemoryQueryService implements QueryService {
 			rows.removeIf(row -> !evaluator.matchesNullSafe(query.rowFilter(), row));
 		}
 		if (!query.orderBy().isEmpty()) {
-			rows.sort(rowComparator(query.orderBy()));
+			sortByKeys(rows, rowComparator(query.orderBy()));
 		}
 		long total = query.count() ? rows.size() : -1;
 		int from = Math.min(query.skip(), rows.size());
@@ -115,7 +116,7 @@ public class InMemoryQueryService implements QueryService {
 		}
 
 		if (!query.orderBy().isEmpty()) {
-			matches.sort(comparator(query.orderBy()));
+			sortByKeys(matches, comparator(query.orderBy()));
 		}
 
 		long total = query.count() ? matches.size() : -1;
@@ -136,6 +137,19 @@ public class InMemoryQueryService implements QueryService {
 			comparator = comparator == null ? keyOrder : comparator.thenComparing(keyOrder);
 		}
 		return comparator;
+	}
+
+	/**
+	 * Sorts, translating a heterogeneous-key {@link ClassCastException} (e.g. one row's $orderby
+	 * key resolves to a String, another's to a Date — both {@link Comparable}, but not with each
+	 * other) into a client error (→ 400) instead of an internal 500.
+	 */
+	private static <T> void sortByKeys(List<T> list, Comparator<T> comparator) {
+		try {
+			list.sort(comparator);
+		} catch (ClassCastException e) {
+			throw new ODataQueryParseException("the $orderby keys are not mutually comparable", e);
+		}
 	}
 
 	@SuppressWarnings("unchecked")

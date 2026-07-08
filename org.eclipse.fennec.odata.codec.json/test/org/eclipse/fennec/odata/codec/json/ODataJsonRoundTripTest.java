@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
@@ -148,6 +149,19 @@ class ODataJsonRoundTripTest {
 		assertEquals(Date.from(Instant.parse("2024-05-03T10:15:30Z")), loaded.eGet(modifiedAttr));
 		assertArrayEquals(new byte[] { (byte) 0xFB, (byte) 0xF0 }, (byte[]) loaded.eGet(photoAttr));
 		assertEquals("f89dee73-af9f-4cd4-b330-db93c25ff3c7", loaded.eGet(guidAttr));
+	}
+
+	@Test
+	@DisplayName("a malformed Edm.Date value fails with a typed error, not a raw crash")
+	void malformedDateRejected() {
+		String json = "{\"@odata.type\":\"#" + productClass.getName()
+				+ "\",\"id\":\"p1\",\"name\":\"Widget\",\"releaseDate\":\"2024-13-99\"}";
+		ODataJsonResourceImpl resource = new ODataJsonResourceImpl(
+				URI.createURI("test://bad-date.odatajson"), metadataService);
+		Map<Object, Object> options = new HashMap<>();
+		options.put(CodecResource.CODEC_ROOT_TYPE, productClass);
+		assertThrows(IllegalArgumentException.class, () -> resource.load(
+				new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), options));
 	}
 
 	// === helpers ===

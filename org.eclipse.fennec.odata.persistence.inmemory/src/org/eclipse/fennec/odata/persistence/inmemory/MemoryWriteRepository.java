@@ -102,7 +102,7 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 	@Override
 	public WriteResult update(EClass entityType, String rawKey, EObject payload, boolean replace) {
 		String key = unquote(rawKey);
-		EAttribute id = keyAttribute(entityType);
+		EAttribute id = requiredKeyAttribute(entityType);
 		payload.eSet(id, EcoreUtil.createFromString(id.getEAttributeType(), key)); // URL key wins
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
@@ -127,45 +127,60 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 		}
 	}
 
+	// Relationship mutations lock the OWNER's per-class map — the same discipline as
+	// create/update/delete — so the owner lookup and the shared EMF EList mutation are atomic
+	// against concurrent writers/readers. Any lookup in ANOTHER class store (the child in
+	// createRelated, the target in link) is done FIRST, under that store's own lock, and released
+	// before the owner lock is taken: no method ever holds two class-store locks at once, so the
+	// per-class locks cannot deadlock.
+
 	@Override
 	public EObject createRelated(EClass entityType, String rawKey, String navigation, EObject child) {
-		EObject owner = requiredEntity(entityType, rawKey);
 		EReference reference = requiredReference(entityType, navigation);
 		if (!reference.isContainment()) {
-			create(child.eClass(), child); // related entities live in their own set too
+			create(child.eClass(), child); // related entities live in their own set too (own lock)
 		}
-		attach(owner, reference, child);
+		Map<String, EObject> entities = classStore(entityType);
+		synchronized (entities) {
+			attach(requiredEntity(entities, rawKey), reference, child);
+		}
 		return child;
 	}
 
 	@Override
 	public void link(EClass entityType, String rawKey, String navigation, String targetRawKey) {
-		EObject owner = requiredEntity(entityType, rawKey);
 		EReference reference = requiredReference(entityType, navigation);
-		EObject target = findByKey(reference.getEReferenceType(), unquote(targetRawKey));
+		EObject target = findByKey(reference.getEReferenceType(), unquote(targetRawKey)); // own lock
 		if (target == null) {
 			throw new IllegalArgumentException("the reference target does not exist");
 		}
-		attach(owner, reference, target);
+		Map<String, EObject> entities = classStore(entityType);
+		synchronized (entities) {
+			attach(requiredEntity(entities, rawKey), reference, target);
+		}
 	}
 
 	@Override
 	public boolean unlink(EClass entityType, String rawKey, String navigation, String targetRawKey) {
-		EObject owner = requiredEntity(entityType, rawKey);
 		EReference reference = requiredReference(entityType, navigation);
-		if (reference.isMany()) {
-			String key = unquote(targetRawKey);
-			@SuppressWarnings("unchecked")
-			List<EObject> members = (List<EObject>) owner.eGet(reference);
-			return members.removeIf(member -> key != null && key.equals(keyString(member)));
+		Map<String, EObject> entities = classStore(entityType);
+		synchronized (entities) {
+			EObject owner = requiredEntity(entities, rawKey);
+			if (reference.isMany()) {
+				String key = unquote(targetRawKey);
+				@SuppressWarnings("unchecked")
+				List<EObject> members = (List<EObject>) owner.eGet(reference);
+				return members.removeIf(member -> key != null && key.equals(keyString(member)));
+			}
+			if (owner.eGet(reference) == null) {
+				return false;
+			}
+			owner.eSet(reference, null);
+			return true;
 		}
-		if (owner.eGet(reference) == null) {
-			return false;
-		}
-		owner.eSet(reference, null);
-		return true;
 	}
 
+	/** Attaches under the owner's lock (held by the caller). */
 	@SuppressWarnings("unchecked")
 	private static void attach(EObject owner, EReference reference, EObject target) {
 		if (reference.isMany()) {
@@ -175,9 +190,9 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 		}
 	}
 
-	private EObject requiredEntity(EClass entityType, String rawKey) {
-		Map<String, EObject> entities = store.get(entityType);
-		EObject entity = entities == null ? null : entities.get(unquote(rawKey));
+	/** Owner lookup; the caller must hold the lock on {@code entities}. */
+	private static EObject requiredEntity(Map<String, EObject> entities, String rawKey) {
+		EObject entity = entities.get(unquote(rawKey));
 		if (entity == null) {
 			throw new IllegalArgumentException("entity not found");
 		}
@@ -232,7 +247,7 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 	}
 
 	private String keyOf(EClass entityType, EObject entity) {
-		EAttribute id = keyAttribute(entityType);
+		EAttribute id = requiredKeyAttribute(entityType);
 		Object value = entity.eGet(id);
 		if (value == null || !entity.eIsSet(id)) {
 			throw new IllegalArgumentException(
@@ -244,6 +259,20 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 	private static EAttribute keyAttribute(EClass entityType) {
 		return entityType.getEAllAttributes().stream()
 				.filter(EAttribute::isID).findFirst().orElse(null);
+	}
+
+	/**
+	 * Like {@link #keyAttribute} but fails with a clear client error instead of returning null
+	 * (and, downstream, NPE-ing on a keyless type) — mirrors the JPA sibling. {@link #supports}
+	 * still uses the nullable form to advertise the capability.
+	 */
+	private static EAttribute requiredKeyAttribute(EClass entityType) {
+		EAttribute id = keyAttribute(entityType);
+		if (id == null) {
+			throw new IllegalArgumentException(
+					"entity type '" + entityType.getName() + "' has no key attribute");
+		}
+		return id;
 	}
 
 	private static String unquote(String rawKey) {

@@ -38,6 +38,7 @@ import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
+import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataQueryParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -192,16 +193,20 @@ class InMemoryQueryServiceTest {
 	@Test
 	@DisplayName("destructive: evaluation errors surface, never silent wrong results")
 	void destructiveEvaluation() {
+		// evaluation-time faults surface as the 400-mapped domain exception (not an internal 500):
 		// division by zero inside the predicate
-		assertThrows(IllegalArgumentException.class,
+		assertThrows(ODataQueryParseException.class,
 				() -> query("price div 0 gt 1", null, 0, -1, false));
 		// type confusion: string function on a number
-		assertThrows(IllegalArgumentException.class,
+		assertThrows(ODataQueryParseException.class,
 				() -> query("contains(price, '1')", null, 0, -1, false));
+		// a malformed date must be a 400 whether it fails at parse or at evaluation (never a 500)
+		assertThrows(ODataQueryParseException.class,
+				() -> query("released ge 2024-13-99", null, 0, -1, false));
 		// hand-built AST with an unknown operation name (nothing may 'default' to a value)
 		OperationCallExp unknown = OclFactory.eINSTANCE.createOperationCallExp();
 		unknown.setName("dropTable");
-		assertThrows(IllegalArgumentException.class, () -> service.execute(
+		assertThrows(ODataQueryParseException.class, () -> service.execute(
 				new EntityQuery(productClass, unknown, List.of(), 0, -1, false)));
 		// invalid paging is rejected at the API boundary
 		assertThrows(IllegalArgumentException.class,

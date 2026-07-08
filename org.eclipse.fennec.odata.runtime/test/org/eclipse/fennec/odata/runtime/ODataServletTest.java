@@ -14,6 +14,8 @@ package org.eclipse.fennec.odata.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
@@ -35,6 +37,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.codec.util.MetadataServiceFactory;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
@@ -471,8 +474,11 @@ class ODataServletTest {
 		poor.eSet(reviewClass.getEStructuralFeature("stars"), 2);
 		poor.eSet(reviewClass.getEStructuralFeature("comment"), "poor");
 		EObject milk = product("p1", "Milk", "1.20", null);
-		((List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews")))
-				.addAll(List.of(great, poor));
+		EStructuralFeature reviewsFeature = productClass.getEStructuralFeature("reviews");
+		// many-valued reference: eGet returns the live EList (empty here), never null
+		@SuppressWarnings("unchecked")
+		List<EObject> reviews = (List<EObject>) milk.eGet(reviewsFeature);
+		reviews.addAll(List.of(great, poor));
 		backendResult = List.of(milk);
 
 		Response filtered = get("/Product", Map.of("$expand", "reviews($filter=stars ge 4)"));
@@ -482,7 +488,7 @@ class ODataServletTest {
 				"filtered out of the expanded collection: " + filtered.body());
 		assertEquals(Set.of("reviews"), lastQuery.get().expand(),
 				"the backend still prefetches the plain navigation");
-		assertEquals(2, ((List<?>) milk.eGet(productClass.getEStructuralFeature("reviews"))).size(),
+		assertEquals(2, ((List<?>) milk.eGet(reviewsFeature)).size(),
 				"the nested filter never mutates backend objects");
 
 		Response single = get("/Product('p1')", Map.of("$expand", "reviews($filter=stars ge 4)"));
@@ -833,6 +839,48 @@ class ODataServletTest {
 		backendResult = List.of(); // absent → upsert path, no precondition
 		assertEquals(204, callWrite("PATCH", "/Product('new')",
 				"{\"name\":\"x\"}", "application/json").status());
+	}
+
+	@Test
+	@DisplayName("a backend failure during the If-Match read is a 500, never a silent precondition bypass")
+	void preconditionNotBypassedOnBackendError() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		// the read backend that serves currentEntity() is momentarily broken
+		backendFailure.set(new IllegalStateException("secret: jdbc://internal"));
+
+		Response patched = callWrite("PATCH", "/Product('p1')", Map.of(),
+				"{\"name\":\"x\"}", "application/json", Map.of("If-Match", "*"));
+		assertEquals(500, patched.status(),
+				"a broken read backend must fail the write, not skip optimistic concurrency");
+		assertNull(lastWritePayload.get(), "the write must NOT have reached the backend on a bypass");
+		assertFalse(patched.body().contains("secret"), "no internals leak: " + patched.body());
+		backendFailure.set(null);
+	}
+
+	@Test
+	@DisplayName("$filter nested in $expand is subject to the same pre-parse nesting guard")
+	void expandNestedFilterHonoursLimits() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		// well under the length limit but far past the depth limit (8 in the test config)
+		String bomb = "reviews($filter=" + "(".repeat(20) + "stars eq 5" + ")".repeat(20) + ")";
+		assertEquals(400, get("/Product", Map.of("$expand", bomb)).status(),
+				"the parser-bomb guard must cover $expand's nested $filter, not only top-level $filter");
+	}
+
+	@Test
+	@DisplayName("control characters in a created entity key cannot split response headers")
+	void createdKeyControlCharsEncoded() throws Exception {
+		// JSON-escaped CR/LF: valid JSON whose decoded key value carries the control characters
+		Response created = callWrite("POST", "/Product",
+				"{\"id\":\"a\\r\\nb\",\"name\":\"x\"}", "application/json");
+		assertEquals(201, created.status(), created.body());
+		String location = created.headers().get("Location");
+		assertNotNull(location, "created entity carries a Location");
+		assertFalse(location.contains("\r") || location.contains("\n"),
+				"no raw CR/LF may reach the Location header (response splitting): " + location);
+		assertTrue(location.contains("%0D") && location.contains("%0A"),
+				"control characters are percent-encoded: " + location);
+		assertEquals(location, created.headers().get("OData-EntityId"));
 	}
 
 	@Test

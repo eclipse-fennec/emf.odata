@@ -47,10 +47,30 @@ public class ODataResourceParser {
 	/** Hard segment cap — resource paths are shallow by nature; guards against URI bombs. */
 	public static final int MAX_SEGMENTS = 16;
 
+	/**
+	 * Hard length cap enforced BEFORE parsing. The {@link #MAX_SEGMENTS} check only fires after the
+	 * whole tree is built, so it does not bound parse-time work on a path with tens of thousands of
+	 * tiny segments; this rejects such input at O(n) string-length cost first. Generous enough for
+	 * any legitimate 16-segment path (mirrors the default expression-length limit).
+	 */
+	public static final int MAX_PATH_LENGTH = 4096;
+
 	public ResourcePath parse(String path) {
 		if (path == null || path.isBlank()) {
 			throw new ODataQueryParseException("empty resource path");
 		}
+		if (path.length() > MAX_PATH_LENGTH) {
+			throw new ODataQueryParseException(
+					"resource path exceeds the maximum length of " + MAX_PATH_LENGTH);
+		}
+		try {
+			return parseChecked(path);
+		} catch (StackOverflowError e) {
+			throw new ODataQueryParseException("the resource path is nested too deeply to parse");
+		}
+	}
+
+	private ResourcePath parseChecked(String path) {
 		ODataFilterLexer lexer = new ODataFilterLexer(CharStreams.fromString(path));
 		lexer.removeErrorListeners();
 		lexer.addErrorListener(THROWING);

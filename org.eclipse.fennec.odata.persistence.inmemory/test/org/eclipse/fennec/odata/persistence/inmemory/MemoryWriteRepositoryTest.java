@@ -135,6 +135,34 @@ class MemoryWriteRepositoryTest {
 				() -> repository.link(productClass, "'m1'", "category", "'nosuch'"));
 	}
 
+	@Test
+	@DisplayName("concurrent createRelated on one owner keeps every add (no lost updates / CME)")
+	void concurrentReferenceMutations() throws Exception {
+		repository.create(productClass, product("m1", "Milk", "1.20"));
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		int threads = 8;
+		int perThread = 40;
+		java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+		List<java.util.concurrent.Future<?>> futures = new java.util.ArrayList<>();
+		for (int t = 0; t < threads; t++) {
+			futures.add(pool.submit(() -> {
+				for (int i = 0; i < perThread; i++) {
+					EObject review = pkg.getEFactoryInstance().create(reviewClass);
+					review.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+					repository.createRelated(productClass, "'m1'", "reviews", review);
+				}
+			}));
+		}
+		for (java.util.concurrent.Future<?> f : futures) {
+			f.get(); // propagates any ConcurrentModificationException / lost-update failure
+		}
+		pool.shutdown();
+		EObject milk = read().get(0);
+		assertEquals(threads * perThread,
+				((List<?>) milk.eGet(productClass.getEStructuralFeature("reviews"))).size(),
+				"every concurrent add is retained under the per-owner lock");
+	}
+
 	private List<EObject> read() {
 		return queryService.execute(EntityQuery.all(productClass)).entities();
 	}

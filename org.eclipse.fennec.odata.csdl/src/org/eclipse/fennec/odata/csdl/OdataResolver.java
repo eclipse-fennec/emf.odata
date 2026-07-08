@@ -212,9 +212,7 @@ public class OdataResolver {
 		}
 		o.setComposable(annFlag(op, ODataAnnotationConstants.COMPOSABLE));
 		String kindOverride = ann(op, ODataAnnotationConstants.OPERATION_KIND);
-		ODataOperationKind kind = kindOverride != null
-				? ODataOperationKind.valueOf(kindOverride.toUpperCase())
-				: (op.getEType() == null ? ODataOperationKind.ACTION : ODataOperationKind.FUNCTION);
+		ODataOperationKind kind = operationKind(kindOverride, op.getEType() == null);
 		o.setKind(kind);
 		if (op.getEType() != null) {
 			o.setReturnTypeName(typeName(op.getEType(), op.isMany(), ns));
@@ -288,10 +286,28 @@ public class OdataResolver {
 		return v != null ? Boolean.parseBoolean(v) : fallback;
 	}
 
+	/** Operation kind from the (lenient) annotation override, falling back by return type. */
+	private static ODataOperationKind operationKind(String override, boolean noReturnType) {
+		ODataOperationKind byReturn = noReturnType ? ODataOperationKind.ACTION : ODataOperationKind.FUNCTION;
+		if (override == null) {
+			return byReturn;
+		}
+		try {
+			return ODataOperationKind.valueOf(override.toUpperCase(java.util.Locale.ROOT));
+		} catch (IllegalArgumentException e) {
+			return byReturn; // malformed override → fall back, resolver stays lenient
+		}
+	}
+
 	private static void annInt(EModelElement element, String key, java.util.function.IntConsumer setter) {
 		String v = ann(element, key);
 		if (v != null) {
-			setter.accept(Integer.parseInt(v.trim()));
+			try {
+				setter.accept(Integer.parseInt(v.trim()));
+			} catch (NumberFormatException e) {
+				// the resolver is lenient: a malformed developer-authored annotation is skipped,
+				// not fatal to resolving the rest of the model
+			}
 		}
 	}
 }

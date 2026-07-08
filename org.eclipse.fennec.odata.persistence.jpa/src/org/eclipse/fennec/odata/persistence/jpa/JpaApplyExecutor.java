@@ -41,7 +41,6 @@ import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.From;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Order;
-import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Selection;
@@ -99,7 +98,9 @@ class JpaApplyExecutor {
 		CriteriaQuery<Tuple> cq = cb.createTupleQuery();
 		Root<?> root = cq.from(entity);
 		Composition composition = compose(query, stages, groupings, aggregations, cb, cq, root);
-		cq.multiselect(composition.selections());
+		// cb.tuple(...) (not the deprecated multiselect); the varargs overload is the pre-3.2 form
+		// the JPA provider actually implements — tuple(List) is a 3.2 addition it does not yet have
+		cq.select(cb.tuple(composition.selections().toArray(Selection[]::new)));
 		if (!query.orderBy().isEmpty()) {
 			cq.orderBy(orders(query.orderBy(), cb, cq, root, composition.named()));
 		}
@@ -214,7 +215,7 @@ class JpaApplyExecutor {
 		Root<?> root = cq.from(entity);
 		Composition composition = compose(query, stages, groupings, aggregations, cb, cq, root);
 		int keyColumns = groupings.isEmpty() ? 1 : groupings.size();
-		cq.multiselect(composition.selections().subList(0, keyColumns));
+		cq.select(cb.tuple(composition.selections().subList(0, keyColumns).toArray(Selection[]::new)));
 		return em.createQuery(cq).getResultList().size();
 	}
 

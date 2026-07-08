@@ -65,7 +65,19 @@ public class EdmToEcoreConverter {
 	private static final String PENDING_TARGET = "pendingTargetType";
 
 	public EPackage toEPackage(EdmxRoot root) {
-		return toEPackage(root.getEdmx().getDataServices().getSchema().get(0));
+		List<SchemaType> schemas = requireSchemas(root == null ? null : root.getEdmx());
+		if (schemas.isEmpty()) {
+			throw new IllegalArgumentException("the EDMX document declares no Schema");
+		}
+		return toEPackage(schemas.get(0));
+	}
+
+	/** The document's schemas, or a clear error for a malformed EDMX (no DataServices). */
+	private static List<SchemaType> requireSchemas(TEdmx edmx) {
+		if (edmx == null || edmx.getDataServices() == null) {
+			throw new IllegalArgumentException("the EDMX document carries no DataServices");
+		}
+		return edmx.getDataServices().getSchema();
 	}
 
 	/**
@@ -75,7 +87,7 @@ public class EdmToEcoreConverter {
 	 * {@link EReference} without a type is invalid Ecore and worse than an absent feature.
 	 */
 	public List<EPackage> toEPackages(TEdmx edmx) {
-		List<SchemaType> schemas = edmx.getDataServices().getSchema();
+		List<SchemaType> schemas = requireSchemas(edmx);
 		List<EPackage> packages = new ArrayList<>();
 		Map<String, EPackage> byNamespace = new HashMap<>();
 		for (SchemaType schema : schemas) {
@@ -110,7 +122,7 @@ public class EdmToEcoreConverter {
 					: targetPackage.getEClassifier(qualified.substring(dot + 1));
 			if (target instanceof EClass targetClass) {
 				feature.setEType(targetClass);
-				marker.getDetails().remove(PENDING_TARGET);
+				marker.getDetails().removeKey(PENDING_TARGET);
 				if (marker.getDetails().isEmpty()) {
 					feature.getEAnnotations().remove(marker);
 				}

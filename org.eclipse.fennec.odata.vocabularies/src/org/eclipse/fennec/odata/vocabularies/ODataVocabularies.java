@@ -15,7 +15,6 @@ package org.eclipse.fennec.odata.vocabularies;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,8 +25,8 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
-import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
+import org.eclipse.fennec.odata.csdl.CsdlXmlLoad;
 import org.eclipse.fennec.odata.csdl.EdmToEcoreConverter;
 import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
@@ -76,9 +75,7 @@ public final class ODataVocabularies {
 			rs.getPackageRegistry().put(EdmxPackage.eNS_URI, EdmxPackage.eINSTANCE);
 
 			Resource res = rs.createResource(URI.createURI(namespace + ".xml"));
-			Map<Object, Object> options = new HashMap<>();
-			options.put(XMLResource.OPTION_EXTENDED_META_DATA, Boolean.TRUE);
-			res.load(in, options);
+			res.load(in, CsdlXmlLoad.secureOptions()); // XXE-hardened, shared with the CSDL read path
 			if (!res.getErrors().isEmpty()) {
 				throw new IllegalStateException("vocabulary " + namespace + " did not parse cleanly: "
 						+ res.getErrors().get(0).getMessage());

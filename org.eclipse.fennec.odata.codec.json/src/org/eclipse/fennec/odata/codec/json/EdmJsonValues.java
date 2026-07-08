@@ -13,6 +13,7 @@
 package org.eclipse.fennec.odata.codec.json;
 
 import java.io.IOException;
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -98,21 +99,33 @@ final class EdmJsonValues {
 
 	private static Object readDate(String raw, EAttribute attribute) {
 		if (targetsDate(attribute)) {
-			return Date.from(LocalDate.parse(raw).atStartOfDay(ZoneOffset.UTC).toInstant());
+			try {
+				return Date.from(LocalDate.parse(raw).atStartOfDay(ZoneOffset.UTC).toInstant());
+			} catch (DateTimeException e) {
+				throw new IllegalArgumentException("invalid Edm.Date value", e);
+			}
 		}
 		return raw;
 	}
 
 	private static Object readTimeOfDay(String raw, EAttribute attribute) {
 		if (targetsDate(attribute)) {
-			return Date.from(LocalTime.parse(raw).atDate(LocalDate.EPOCH).toInstant(ZoneOffset.UTC));
+			try {
+				return Date.from(LocalTime.parse(raw).atDate(LocalDate.EPOCH).toInstant(ZoneOffset.UTC));
+			} catch (DateTimeException e) {
+				throw new IllegalArgumentException("invalid Edm.TimeOfDay value", e);
+			}
 		}
 		return raw;
 	}
 
 	private static Object readDateTimeOffset(String raw, EAttribute attribute) {
 		if (targetsDate(attribute)) {
-			return Date.from(OffsetDateTime.parse(raw).toInstant());
+			try {
+				return Date.from(OffsetDateTime.parse(raw).toInstant());
+			} catch (DateTimeException e) {
+				throw new IllegalArgumentException("invalid Edm.DateTimeOffset value", e);
+			}
 		}
 		return raw;
 	}
@@ -120,8 +133,12 @@ final class EdmJsonValues {
 	private static Object readBinary(String raw, EAttribute attribute) {
 		try {
 			return Base64.getUrlDecoder().decode(raw);
-		} catch (IllegalArgumentException e) {
-			return Base64.getDecoder().decode(raw); // tolerate plain base64 on input
+		} catch (IllegalArgumentException urlDecodeFailed) {
+			try {
+				return Base64.getDecoder().decode(raw); // tolerate plain base64 on input
+			} catch (IllegalArgumentException e) {
+				throw new IllegalArgumentException("invalid Edm.Binary (base64) value", e);
+			}
 		}
 	}
 
