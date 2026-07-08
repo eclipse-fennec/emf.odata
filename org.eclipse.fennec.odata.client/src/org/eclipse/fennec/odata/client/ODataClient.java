@@ -202,6 +202,14 @@ public final class ODataClient implements AutoCloseable {
 	}
 
 	/**
+	 * Starts an OData v4.01 JSON {@code $batch}: accumulate sub-requests on the returned builder and
+	 * call {@link ODataBatch#execute()} to send them in one round-trip.
+	 */
+	public ODataBatch batch() {
+		return new ODataBatch(this);
+	}
+
+	/**
 	 * Invokes an unbound function import: {@code GET Name(p1=v1,…)}. Parameters are formatted as
 	 * OData literals (strings quoted). Returns the primitive {@code value} of the response.
 	 */

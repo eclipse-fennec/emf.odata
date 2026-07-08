@@ -343,4 +343,36 @@ public class ODataHttpIntegrationTest {
 		assertEquals(204, deleted.statusCode());
 		assertEquals(404, get("/Product('w-e2e')").statusCode(), "really gone");
 	}
+
+	@Test
+	@Order(8)
+	@DisplayName("$batch round trip over real HTTP: a GET and a create dispatch and answer in order")
+	void batchRoundTrip() throws Exception {
+		String body = """
+				{"requests":[
+				  {"id":"1","method":"GET","url":"Product"},
+				  {"id":"2","method":"POST","url":"Product","headers":{"content-type":"application/json"},\
+				"body":{"id":"batch-e2e","name":"Batched"}},
+				  {"id":"3","method":"GET","url":"Product('batch-e2e')","dependsOn":["2"]}
+				]}""";
+		HttpResponse<String> batch = client.send(
+				HttpRequest.newBuilder(URI.create(BASE + "/$batch"))
+						.header("Content-Type", "application/json")
+						.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+				HttpResponse.BodyHandlers.ofString());
+		assertEquals(200, batch.statusCode(), batch.body());
+		assertTrue(batch.body().contains("\"responses\""), batch.body());
+		assertTrue(batch.body().contains("\"status\":200"), batch.body());
+		assertTrue(batch.body().contains("\"status\":201"), "the create answers 201: " + batch.body());
+		assertTrue(batch.body().contains("Batched"),
+				"the dependent GET sees the created entity: " + batch.body());
+
+		// non-JSON batch (classic multipart) is refused
+		HttpResponse<String> multipart = client.send(
+				HttpRequest.newBuilder(URI.create(BASE + "/$batch"))
+						.header("Content-Type", "multipart/mixed;boundary=b")
+						.POST(HttpRequest.BodyPublishers.ofString("--b--")).build(),
+				HttpResponse.BodyHandlers.ofString());
+		assertEquals(415, multipart.statusCode(), multipart.body());
+	}
 }

@@ -53,7 +53,7 @@ Deep Updates, `@odata.bind`, PATCH-Delta auf Sets.
 | SHOULD `in` | ✅ · SHOULD `divby` ✅ **2026-07-06** (→ OCL `/`, Dezimaldivision) · SHOULD negatives substring ✅ **2026-07-07**: negativer Start zählt vom Ende (geklemmt), Start > Länge → Leerstring; in-memory UND JPA-Pushdown (CASE über LENGTH), Tests in beiden Differentialtests |
 | SHOULD `eq/ne null` auf Single-Navs | ✅ **belegt 2026-07-06**: funktionierte end-to-end (terminale EReference → ClassifierType, Evaluator-Objektgleichheit mit null); Regressionstest `navigationNullComparison` in InMemoryQueryServiceTest |
 | SHOULD CSDL-XML **und** CSDL-JSON | ❌ (JSON fehlt, Q9) |
-| SHOULD `Core.ODataVersions` / Capabilities-Annotations | ✅ **komplett seit 2026-07-06**: `Core.ODataVersions="4.0 4.01"` + Capabilities am EntityContainer (`ConformanceLevel=Minimal`, `BatchSupported=false`, `AsynchronousRequestsSupported=false`, `KeyAsSegmentSupported=false`) + Core-/Capabilities-`edmx:Reference` |
+| SHOULD `Core.ODataVersions` / Capabilities-Annotations | ✅ **komplett seit 2026-07-06**: `Core.ODataVersions="4.0 4.01"` + Capabilities am EntityContainer (`ConformanceLevel=Minimal`, `BatchSupported=true` seit 2026-07-08, `AsynchronousRequestsSupported=false`, `KeyAsSegmentSupported=false`) + Core-/Capabilities-`edmx:Reference` |
 
 **Bewertung: 4.01 Minimal (read-only) erfüllt** — verbleibendes ❌ ist ein SHOULD (CSDL-JSON/Q9).
 
@@ -82,10 +82,21 @@ wiederverwendet, pro Entity im Servlet via `OclEvaluator` ausgewertet und in die
 · ✅ **NEU 2026-07-08**: **Functions & Actions** (Advanced): unbound+bound Functions (GET,
 primitiv/Entity/Collection), unbound Actions (POST) via `ODataOperationHandler`-SPI; Client
 `function`/`boundFunction`/`action`
-· ❌ Rest-SHOULDs: Query-Optionen auf Navigationspfaden (501), count-of-filtered-collection auf
-Navigationen, `$compute`-Alias referenziert in `$filter`/`$select`/`$orderby`, `$compute`-Werte
-client-seitig typisiert lesen — **alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen
-Intermediate-SHOULDs (`$search`, `$compute`, `$filter`-in-`$expand`) jetzt ebenfalls**.
+· ✅ **NEU 2026-07-08**: **Query-Optionen auf Navigationspfaden**: `$filter`/`$top`/`$skip`/`$count`
+auf einer Navigations-Collection (`Set(key)/nav?$filter=…`), `/$count` zählt die **gefilterte**
+Collection; nicht implementierte Optionen (`$orderby`, `$expand`, …) auf Nav-Pfaden weiterhin 501;
+Client threadet die Query-Option-Builder über `navigateCollection`
+· ✅ **NEU 2026-07-08**: **`$batch` (OData-v4.01-JSON-Batch-Format)**: `POST <root>/$batch` mit
+`{"requests":[…]}`; jede Sub-Request wird über eine synthetische Request/Response durch dieselbe
+`service()`-Pipeline dispatcht (Query-Optionen, Writes, Functions verhalten sich wie top-level);
+`dependsOn` → `424 Failed Dependency` bei fehlgeschlagenem Vorgänger; klassisches
+`multipart/mixed` → `415`; Client-Builder `ODataClient.batch()` (`read`/`create`/`update`/`delete`/
+`add`, `Result.asEntity`/`asPage`). ⚠️ **Lücke**: `atomicityGroup` wird geparst, aber es gibt kein
+Cross-Request-Rollback (WriteService committet pro Aufruf) → Change-Sets best-effort, nicht atomar.
+· ❌ Rest-SHOULDs: `$compute`-Alias referenziert in `$filter`/`$select`/`$orderby`, `$orderby` auf
+Navigationspfaden, `$compute`-Werte client-seitig typisiert lesen, atomare `$batch`-Change-Sets —
+**alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen Intermediate-SHOULDs (`$search`,
+`$compute`, `$filter`-in-`$expand`, Nav-Pfad-Query-Optionen) plus `$batch` jetzt ebenfalls**.
 
 ## Priorisierte Findings (Conformance-Fixes, alle klein bis mittel)
 

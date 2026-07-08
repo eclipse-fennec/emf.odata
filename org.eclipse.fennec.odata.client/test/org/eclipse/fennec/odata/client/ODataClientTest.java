@@ -75,6 +75,7 @@ class ODataClientTest {
 	private final AtomicReference<String> lastAuth = new AtomicReference<>();
 	private final AtomicReference<String> lastMaxVersion = new AtomicReference<>();
 	private final AtomicReference<String> lastCsrf = new AtomicReference<>();
+	private final AtomicReference<String> lastBatchBody = new AtomicReference<>();
 
 	@BeforeAll
 	void setUpStub() throws Exception {
@@ -96,6 +97,10 @@ class ODataClientTest {
 			}
 			String path = exchange.getRequestURI().getPath();
 			String method = exchange.getRequestMethod();
+			if (path.endsWith("/$batch")) {
+				handleBatch(exchange);
+				return;
+			}
 			if (!"GET".equals(method)) {
 				handleWrite(exchange, method, path);
 				return;
@@ -460,6 +465,42 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("$batch: builder assembles a JSON requests envelope and decodes the responses")
+	void jsonBatch() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject fresh = product.getEPackage().getEFactoryInstance().create(product);
+		fresh.eSet(product.getEStructuralFeature("id"), "p9");
+		fresh.eSet(product.getEStructuralFeature("name"), "Butter");
+
+		ODataBatch batch = client.batch();
+		batch.create("Product", fresh); // id "0"
+		batch.read("Product");          // id "1"
+		java.util.List<ODataBatch.Result> results = batch.execute();
+
+		String sent = lastBatchBody.get();
+		assertTrue(sent.contains("\"requests\""), sent);
+		assertTrue(sent.contains("\"method\":\"POST\""), sent);
+		assertTrue(sent.contains("\"Butter\""), "the created entity is encoded into the sub-request body: " + sent);
+
+		assertEquals(2, results.size());
+		assertTrue(results.get(0).isSuccess());
+		assertEquals("Milk", results.get(0).asEntity(product).eGet(product.getEStructuralFeature("name")));
+		assertEquals(1, results.get(1).asPage(product).entities().size());
+	}
+
+	@Test
+	@DisplayName("$batch: dependsOn references thread into the request envelope")
+	void jsonBatchDependsOn() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		ODataBatch batch = client.batch();
+		batch.add("c1", "POST", "Product", null, java.util.List.of());
+		batch.add("g1", "GET", "Product", null, java.util.List.of("c1"));
+		batch.execute();
+		assertTrue(lastBatchBody.get().contains("\"dependsOn\":[\"c1\"]"), lastBatchBody.get());
+	}
+
+	@Test
 	@DisplayName("query options thread onto a navigation-collection request ($filter/$top)")
 	void navigationPathQueryOptions() {
 		ODataClient client = ODataClient.connect(serviceRoot);
@@ -522,6 +563,22 @@ class ODataClientTest {
 
 		client.entitySet("Product").create(p);
 		assertEquals("tok-xyz", lastCsrf.get(), "the write carries the fetched X-CSRF-Token");
+	}
+
+	/** Stub JSON-batch endpoint: echoes each posted sub-request's id back with a canned 200 response. */
+	private void handleBatch(HttpExchange exchange) throws IOException {
+		String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+		lastBatchBody.set(body);
+		String answer = """
+				{"responses":[\
+				{"id":"0","status":200,"body":{"id":"p1","name":"Milk","price":"1.20","rating":3,"active":true}},\
+				{"id":"1","status":200,"body":{"@odata.context":"/odata/$metadata#Product","value":[\
+				{"id":"p1","name":"Milk","price":"1.20","rating":3,"active":true}]}}]}""";
+		byte[] bytes = answer.getBytes(StandardCharsets.UTF_8);
+		exchange.getResponseHeaders().set("Content-Type", "application/json");
+		exchange.sendResponseHeaders(200, bytes.length);
+		exchange.getResponseBody().write(bytes);
+		exchange.close();
 	}
 
 	private void handleWrite(HttpExchange exchange, String method, String path) throws IOException {

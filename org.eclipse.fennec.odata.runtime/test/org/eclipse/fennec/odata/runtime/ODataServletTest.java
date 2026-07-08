@@ -345,7 +345,7 @@ class ODataServletTest {
 				"the conformance level is advertised (12 / 13.2.1 SHOULD)");
 		assertTrue(metadata.body().contains("Org.OData.Capabilities.V1.BatchSupported")
 				&& metadata.body().contains("Org.OData.Capabilities.V1.AsynchronousRequestsSupported"),
-				"unsupported capabilities are announced as false");
+				"capabilities are advertised ($batch now supported, async still false)");
 		assertTrue(metadata.body().contains("Org.OData.Capabilities.V1.xml"),
 				"the Capabilities vocabulary reference resolves the terms");
 	}
@@ -668,6 +668,53 @@ class ODataServletTest {
 		Response result = get("/Product('p1')/webshop.label(prefix='X')", Map.of());
 		assertEquals(200, result.status(), result.body());
 		assertTrue(result.body().contains("\"value\":\"X:Milk\""), result.body());
+	}
+
+	@Test
+	@DisplayName("$batch (JSON): sub-requests dispatch through the normal pipeline; results are collected in order")
+	void jsonBatch() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		String batch = """
+				{"requests":[
+				  {"id":"r1","method":"GET","url":"Product"},
+				  {"id":"r2","method":"GET","url":"Product('p1')"}
+				]}""";
+		Response res = callWrite("POST", "/$batch", batch, "application/json");
+		assertEquals(200, res.status(), res.body());
+
+		tools.jackson.databind.JsonNode responses =
+				new tools.jackson.databind.ObjectMapper().readTree(res.body()).get("responses");
+		assertEquals(2, responses.size(), res.body());
+		assertEquals("r1", responses.get(0).get("id").asString());
+		assertEquals(200, responses.get(0).get("status").asInt());
+		assertEquals("r2", responses.get(1).get("id").asString());
+		assertEquals(200, responses.get(1).get("status").asInt());
+		assertTrue(responses.get(1).toString().contains("Milk"), res.body());
+	}
+
+	@Test
+	@DisplayName("$batch: a request whose dependsOn predecessor failed is short-circuited to 424")
+	void jsonBatchFailedDependency() throws Exception {
+		backendResult = List.of();
+		String batch = """
+				{"requests":[
+				  {"id":"a","method":"GET","url":"NoSuchSet"},
+				  {"id":"b","method":"GET","url":"Product","dependsOn":["a"]}
+				]}""";
+		Response res = callWrite("POST", "/$batch", batch, "application/json");
+		assertEquals(200, res.status(), res.body());
+
+		tools.jackson.databind.JsonNode responses =
+				new tools.jackson.databind.ObjectMapper().readTree(res.body()).get("responses");
+		assertTrue(responses.get(0).get("status").asInt() >= 400, res.body());
+		assertEquals(424, responses.get(1).get("status").asInt(), res.body());
+	}
+
+	@Test
+	@DisplayName("$batch rejects non-JSON payloads (multipart/mixed) with 415")
+	void jsonBatchRejectsMultipart() throws Exception {
+		Response res = callWrite("POST", "/$batch", "--boundary", "multipart/mixed;boundary=boundary");
+		assertEquals(415, res.status(), res.body());
 	}
 
 	@Test

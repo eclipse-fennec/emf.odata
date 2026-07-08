@@ -12,10 +12,17 @@
  */
 package org.eclipse.fennec.odata.runtime;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.ArrayList;
@@ -99,14 +106,21 @@ import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
 
+import jakarta.servlet.ReadListener;
 import jakarta.servlet.Servlet;
+import jakarta.servlet.ServletInputStream;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
 import jakarta.servlet.http.HttpServlet;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponseWrapper;
 
 /**
  * Catch-all OData servlet (E6/E7 skeleton, ADR-0001: plain Jakarta Servlet on the OSGi HTTP
@@ -274,6 +288,11 @@ public class ODataServlet extends HttpServlet {
 	@Override
 	protected void service(HttpServletRequest request, HttpServletResponse response)
 			throws jakarta.servlet.ServletException, IOException {
+		String pathInfo = request.getPathInfo() == null ? "/" : request.getPathInfo();
+		if ("/$batch".equals(pathInfo)) {
+			batch(request, response);
+			return;
+		}
 		switch (request.getMethod()) {
 			case "GET" -> super.service(request, response);
 			case "POST", "PATCH", "PUT", "DELETE" -> write(request, response);
@@ -282,6 +301,420 @@ public class ODataServlet extends HttpServlet {
 				error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
 						"method not supported");
 			}
+		}
+	}
+
+	// --- $batch (OData v4.01 JSON batch format, OASIS Part 1 §11.7 + JSON batch spec) ---
+
+	/**
+	 * Executes a JSON {@code $batch} request. Sub-requests are dispatched sequentially back through
+	 * {@link #service}, each against a synthetic request/response pair, so every code path (query
+	 * options, writes, functions) behaves exactly as it would for a top-level call.
+	 *
+	 * <p>Ordering follows the {@code requests} array; {@code dependsOn} is honored by short-circuiting
+	 * a request to {@code 424 Failed Dependency} when any predecessor it names failed (status ≥ 400)
+	 * or was itself short-circuited. {@code atomicityGroup} is accepted and its members are treated as
+	 * mutually dependent, but there is no cross-request rollback — the {@link WriteService} SPI commits
+	 * per call, so a change set is best-effort, not transactional (documented conformance gap).
+	 */
+	private void batch(HttpServletRequest request, HttpServletResponse response) throws IOException {
+		response.setHeader("OData-Version", negotiateVersion(request));
+		if (!"POST".equals(request.getMethod())) {
+			error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED, "$batch requires POST");
+			return;
+		}
+		String contentType = request.getContentType();
+		if (contentType == null || !contentType.toLowerCase(Locale.ROOT).contains("application/json")) {
+			error(response, 415, "only the OData JSON batch format is supported");
+			return;
+		}
+
+		byte[] body = request.getInputStream().readNBytes(limits.maxBodyBytes() + 1);
+		if (body.length > limits.maxBodyBytes()) {
+			error(response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "batch body too large");
+			return;
+		}
+		JsonNode root;
+		try {
+			root = JSON.readTree(new String(body, StandardCharsets.UTF_8));
+		} catch (Exception e) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed batch body");
+			return;
+		}
+		JsonNode requests = root.get("requests");
+		if (requests == null || !requests.isArray()) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "batch body must carry a \"requests\" array");
+			return;
+		}
+
+		ArrayNode responses = JSON.createArrayNode();
+		Map<String, Integer> statusById = new HashMap<>();
+		Set<String> failedIds = new HashSet<>();
+		for (JsonNode sub : requests) {
+			ObjectNode result = executeBatchRequest(request, response, sub, statusById, failedIds);
+			responses.add(result);
+		}
+
+		response.setStatus(HttpServletResponse.SC_OK);
+		response.setContentType("application/json;charset=UTF-8");
+		ObjectNode envelope = JSON.createObjectNode();
+		envelope.set("responses", responses);
+		response.getWriter().write(JSON.writeValueAsString(envelope));
+	}
+
+	private ObjectNode executeBatchRequest(HttpServletRequest outer, HttpServletResponse outerResponse,
+			JsonNode sub, Map<String, Integer> statusById, Set<String> failedIds) throws IOException {
+		String id = sub.path("id").asString(null);
+		ObjectNode result = JSON.createObjectNode();
+		if (id != null) {
+			result.put("id", id);
+		}
+
+		JsonNode dependsOn = sub.get("dependsOn");
+		if (dependsOn != null && dependsOn.isArray()) {
+			for (JsonNode dep : dependsOn) {
+				String depId = dep.asString(null);
+				if (depId != null && (failedIds.contains(depId)
+						|| statusById.getOrDefault(depId, 500) >= 400)) {
+					result.put("status", 424);
+					result.set("body", JSON.readTree(ODataJson.error(424,
+							"skipped: a request it depends on (" + depId + ") failed")));
+					if (id != null) {
+						failedIds.add(id);
+					}
+					return result;
+				}
+			}
+		}
+
+		String method = sub.path("method").asString("GET").toUpperCase(Locale.ROOT);
+		String url = sub.path("url").asString("");
+		if (url.startsWith("$batch") || url.startsWith("/$batch")) {
+			result.put("status", HttpServletResponse.SC_BAD_REQUEST);
+			result.set("body", JSON.readTree(ODataJson.error(400, "nested $batch is not allowed")));
+			if (id != null) {
+				failedIds.add(id);
+			}
+			return result;
+		}
+
+		byte[] subBody = new byte[0];
+		JsonNode bodyNode = sub.get("body");
+		if (bodyNode != null && !bodyNode.isNull()) {
+			subBody = JSON.writeValueAsBytes(bodyNode);
+		}
+		Map<String, String> headers = new LinkedHashMap<>();
+		JsonNode headerNode = sub.get("headers");
+		if (headerNode != null && headerNode.isObject()) {
+			headerNode.properties().forEach(e -> headers.put(e.getKey(), e.getValue().asString("")));
+		}
+
+		BatchHttpRequest subRequest = new BatchHttpRequest(outer, method, url, headers, subBody);
+		BatchHttpResponse subResponse = new BatchHttpResponse(outerResponse);
+		try {
+			service(subRequest, subResponse);
+		} catch (Exception e) {
+			LOGGER.log(System.Logger.Level.ERROR, () -> "unhandled failure in batch sub-request", e);
+			subResponse.reset();
+			subResponse.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			subResponse.setContentType("application/json;charset=UTF-8");
+			subResponse.getWriter().write(ODataJson.error(500, "internal server error"));
+		}
+		subResponse.flushBufferQuietly();
+
+		int status = subResponse.status();
+		result.put("status", status);
+		if (id != null) {
+			statusById.put(id, status);
+			if (status >= 400) {
+				failedIds.add(id);
+			}
+		}
+		if (!subResponse.headers().isEmpty()) {
+			ObjectNode responseHeaders = JSON.createObjectNode();
+			subResponse.headers().forEach(responseHeaders::put);
+			result.set("headers", responseHeaders);
+		}
+		byte[] payload = subResponse.body();
+		if (payload.length > 0) {
+			String responseType = subResponse.headers().getOrDefault("content-type", "");
+			String text = new String(payload, StandardCharsets.UTF_8);
+			if (responseType.toLowerCase(Locale.ROOT).contains("json")) {
+				result.set("body", JSON.readTree(text));
+			} else {
+				result.put("body", text);
+			}
+		}
+		return result;
+	}
+
+	/** Synthetic request wrapping one JSON-batch sub-request; delegates everything else to {@code outer}. */
+	private static final class BatchHttpRequest extends HttpServletRequestWrapper {
+		private final String method;
+		private final String pathInfo;
+		private final String queryString;
+		private final Map<String, String[]> parameters;
+		private final Map<String, String> headers; // keys lower-cased
+		private final byte[] body;
+
+		BatchHttpRequest(HttpServletRequest outer, String method, String url,
+				Map<String, String> headers, byte[] body) {
+			super(outer);
+			this.method = method;
+			this.body = body;
+			this.headers = new LinkedHashMap<>();
+			headers.forEach((k, v) -> this.headers.put(k.toLowerCase(Locale.ROOT), v));
+			String relative = url.startsWith("/") ? url : "/" + url;
+			int q = relative.indexOf('?');
+			this.pathInfo = q < 0 ? relative : relative.substring(0, q);
+			this.queryString = q < 0 ? null : relative.substring(q + 1);
+			this.parameters = parseQuery(this.queryString);
+		}
+
+		private static Map<String, String[]> parseQuery(String query) {
+			Map<String, String[]> map = new LinkedHashMap<>();
+			if (query == null || query.isBlank()) {
+				return map;
+			}
+			for (String pair : query.split("&")) {
+				if (pair.isEmpty()) {
+					continue;
+				}
+				int eq = pair.indexOf('=');
+				String name = eq < 0 ? pair : pair.substring(0, eq);
+				String value = eq < 0 ? "" : pair.substring(eq + 1);
+				name = java.net.URLDecoder.decode(name, StandardCharsets.UTF_8);
+				value = java.net.URLDecoder.decode(value, StandardCharsets.UTF_8);
+				String[] existing = map.get(name);
+				if (existing == null) {
+					map.put(name, new String[] { value });
+				} else {
+					String[] grown = java.util.Arrays.copyOf(existing, existing.length + 1);
+					grown[existing.length] = value;
+					map.put(name, grown);
+				}
+			}
+			return map;
+		}
+
+		@Override
+		public String getMethod() {
+			return method;
+		}
+
+		@Override
+		public String getPathInfo() {
+			return pathInfo;
+		}
+
+		@Override
+		public String getRequestURI() {
+			String context = getContextPath() == null ? "" : getContextPath();
+			String servlet = getServletPath() == null ? "" : getServletPath();
+			return context + servlet + pathInfo;
+		}
+
+		@Override
+		public String getQueryString() {
+			return queryString;
+		}
+
+		@Override
+		public String getParameter(String name) {
+			String[] values = parameters.get(name);
+			return values == null ? null : values[0];
+		}
+
+		@Override
+		public Map<String, String[]> getParameterMap() {
+			return Collections.unmodifiableMap(parameters);
+		}
+
+		@Override
+		public Enumeration<String> getParameterNames() {
+			return Collections.enumeration(parameters.keySet());
+		}
+
+		@Override
+		public String[] getParameterValues(String name) {
+			String[] values = parameters.get(name);
+			return values == null ? null : values.clone();
+		}
+
+		@Override
+		public String getHeader(String name) {
+			return headers.get(name.toLowerCase(Locale.ROOT));
+		}
+
+		@Override
+		public Enumeration<String> getHeaders(String name) {
+			String value = headers.get(name.toLowerCase(Locale.ROOT));
+			return value == null ? Collections.emptyEnumeration()
+					: Collections.enumeration(List.of(value));
+		}
+
+		@Override
+		public Enumeration<String> getHeaderNames() {
+			return Collections.enumeration(headers.keySet());
+		}
+
+		@Override
+		public String getContentType() {
+			return headers.get("content-type");
+		}
+
+		@Override
+		public int getContentLength() {
+			return body.length;
+		}
+
+		@Override
+		public long getContentLengthLong() {
+			return body.length;
+		}
+
+		@Override
+		public ServletInputStream getInputStream() {
+			ByteArrayInputStream source = new ByteArrayInputStream(body);
+			return new ServletInputStream() {
+				@Override
+				public int read() {
+					return source.read();
+				}
+
+				@Override
+				public boolean isFinished() {
+					return source.available() == 0;
+				}
+
+				@Override
+				public boolean isReady() {
+					return true;
+				}
+
+				@Override
+				public void setReadListener(ReadListener readListener) {
+					throw new UnsupportedOperationException();
+				}
+			};
+		}
+
+		@Override
+		public BufferedReader getReader() {
+			return new BufferedReader(new InputStreamReader(new ByteArrayInputStream(body),
+					StandardCharsets.UTF_8));
+		}
+	}
+
+	/** Synthetic response that captures status, headers and body of one batch sub-request. */
+	private static final class BatchHttpResponse extends HttpServletResponseWrapper {
+		private int status = HttpServletResponse.SC_OK;
+		private final Map<String, String> headers = new LinkedHashMap<>(); // keys lower-cased
+		private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+		private PrintWriter writer;
+
+		BatchHttpResponse(HttpServletResponse outer) {
+			super(outer);
+		}
+
+		int status() {
+			return status;
+		}
+
+		Map<String, String> headers() {
+			return headers;
+		}
+
+		byte[] body() {
+			flushBufferQuietly();
+			return buffer.toByteArray();
+		}
+
+		void flushBufferQuietly() {
+			if (writer != null) {
+				writer.flush();
+			}
+		}
+
+		@Override
+		public void setStatus(int sc) {
+			this.status = sc;
+		}
+
+		@Override
+		public int getStatus() {
+			return status;
+		}
+
+		@Override
+		public void setContentType(String type) {
+			headers.put("content-type", type);
+		}
+
+		@Override
+		public String getContentType() {
+			return headers.get("content-type");
+		}
+
+		@Override
+		public void setHeader(String name, String value) {
+			headers.put(name.toLowerCase(Locale.ROOT), value);
+		}
+
+		@Override
+		public void addHeader(String name, String value) {
+			headers.put(name.toLowerCase(Locale.ROOT), value);
+		}
+
+		@Override
+		public boolean containsHeader(String name) {
+			return headers.containsKey(name.toLowerCase(Locale.ROOT));
+		}
+
+		@Override
+		public String getHeader(String name) {
+			return headers.get(name.toLowerCase(Locale.ROOT));
+		}
+
+		@Override
+		public void setCharacterEncoding(String charset) {
+			// captured buffer is always UTF-8
+		}
+
+		@Override
+		public PrintWriter getWriter() {
+			if (writer == null) {
+				writer = new PrintWriter(new java.io.OutputStreamWriter(buffer, StandardCharsets.UTF_8));
+			}
+			return writer;
+		}
+
+		@Override
+		public ServletOutputStream getOutputStream() {
+			return new ServletOutputStream() {
+				@Override
+				public void write(int b) {
+					buffer.write(b);
+				}
+
+				@Override
+				public boolean isReady() {
+					return true;
+				}
+
+				@Override
+				public void setWriteListener(WriteListener writeListener) {
+					throw new UnsupportedOperationException();
+				}
+			};
+		}
+
+		@Override
+		public void reset() {
+			buffer.reset();
+			headers.clear();
+			status = HttpServletResponse.SC_OK;
+			writer = null;
 		}
 	}
 
@@ -953,7 +1386,7 @@ public class ODataServlet extends HttpServlet {
 				conformance.setEnumMember1(List.of("Org.OData.Capabilities.V1.ConformanceLevelType/Minimal"));
 				container.getAnnotation().add(conformance);
 				container.getAnnotation().add(
-						boolCapability("Org.OData.Capabilities.V1.BatchSupported", false));
+						boolCapability("Org.OData.Capabilities.V1.BatchSupported", true));
 				container.getAnnotation().add(
 						boolCapability("Org.OData.Capabilities.V1.AsynchronousRequestsSupported", false));
 				container.getAnnotation().add(
