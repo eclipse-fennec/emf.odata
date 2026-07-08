@@ -595,7 +595,7 @@ class ODataServletTest {
 
 		assertEquals(200, get("/Product", Map.of("$search", "milk")).status(),
 				"$search is implemented → 200 (13.1.2 SHOULD)");
-		assertEquals(501, get("/Product", Map.of("$compute", "price mul 2 as d")).status(),
+		assertEquals(501, get("/Product", Map.of("$schemaversion", "1")).status(),
 				"a still-unimplemented known option → 501");
 		assertEquals(400, get("/Product", Map.of("$frobnicate", "x")).status(),
 				"unknown $-option → 400");
@@ -692,6 +692,17 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("$compute adds a computed property to each entity (no longer 501)")
+	void computeOption() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		Response result = get("/Product", Map.of("$compute", "price mul 2 as doublePrice"));
+		assertEquals(200, result.status(), result.body());
+		assertTrue(result.body().contains("\"doublePrice\":2.40"),
+				"the computed property is spliced into the entity: " + result.body());
+		assertTrue(result.body().contains("\"Milk\""), "the original properties remain");
+	}
+
+	@Test
 	@DisplayName("unbound action import: POST with a JSON parameter body, void → 204")
 	void unboundActionImport() throws Exception {
 		AtomicReference<String> touched = new AtomicReference<>();
@@ -760,8 +771,8 @@ class ODataServletTest {
 
 		assertEquals(200, get("/Product", Map.of("x-trace-id", "abc123")).status(),
 				"custom query options (no $, no option name) are ignored (11.2.12)");
-		assertEquals(501, get("/Product", Map.of("COMPUTE", "price mul 2 as d")).status(),
-				"the whitelist normalizes too: COMPUTE = $compute → 501");
+		assertEquals(501, get("/Product", Map.of("SCHEMAVERSION", "1")).status(),
+				"the whitelist normalizes too: SCHEMAVERSION = $schemaversion → 501");
 	}
 
 	@Test

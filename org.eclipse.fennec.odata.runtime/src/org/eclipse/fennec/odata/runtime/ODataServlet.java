@@ -78,6 +78,8 @@ import org.eclipse.fennec.odata.query.ODataResourceParser;
 import org.eclipse.fennec.odata.query.ResourcePath;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
+import org.eclipse.fennec.odata.query.apply.ComputeExpression;
+import org.eclipse.fennec.odata.query.apply.ComputeTransformation;
 import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edm.AnnotationType;
 import org.open.oasis.docs.odata.ns.edm.EdmFactory;
@@ -207,10 +209,10 @@ public class ODataServlet extends HttpServlet {
 	/** System query options this service implements. */
 	private static final Set<String> SUPPORTED_OPTIONS = Set.of(
 			"$filter", "$orderby", "$top", "$skip", "$count", "$select", "$expand", "$apply", "$format",
-			"$search");
+			"$search", "$compute");
 	/** Spec-defined options we know but do not implement yet → 501 (conformance 13.1.1/7). */
 	private static final Set<String> KNOWN_UNSUPPORTED_OPTIONS = Set.of(
-			"$compute", "$skiptoken", "$deltatoken", "$id", "$index", "$schemaversion", "$levels");
+			"$skiptoken", "$deltatoken", "$id", "$index", "$schemaversion", "$levels");
 
 	@Override
 	protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -1066,12 +1068,14 @@ public class ODataServlet extends HttpServlet {
 		if (result.totalCount() >= 0) {
 			json.append(",\"@odata.count\":").append(result.totalCount());
 		}
+		List<ComputeExpression> computes = computeExpressions(request, context);
 		json.append(",\"value\":[");
 		for (int i = 0; i < page.size(); i++) {
 			if (i > 0) {
 				json.append(',');
 			}
-			json.append(entityJson(page.get(i), context, select, expand));
+			json.append(withComputed(entityJson(page.get(i), context, select, expand),
+					page.get(i), computes));
 		}
 		json.append(']');
 		if (hasMore) {
@@ -1930,6 +1934,40 @@ public class ODataServlet extends HttpServlet {
 				.orElse("false"); // no string properties → matches nothing
 		return filter == null || filter.isBlank() ? searchExpr
 				: "(" + filter + ") and (" + searchExpr + ")";
+	}
+
+	/**
+	 * {@code $compute} expressions (13.1.2 SHOULD): parsed by reusing the {@code $apply}
+	 * {@code compute(…)} grammar. The computed members are added to the response by the servlet
+	 * (evaluated per entity), so it is backend-agnostic.
+	 */
+	private List<ComputeExpression> computeExpressions(HttpServletRequest request, EClass context) {
+		String compute = option(request, "$compute");
+		if (compute == null || compute.isBlank()) {
+			return List.of();
+		}
+		limits.checkExpression(compute);
+		ApplyPipeline pipeline = parser.parseApply("compute(" + compute + ")", context);
+		return ((ComputeTransformation) pipeline.getTransformations().get(0)).getComputeExpressions();
+	}
+
+	/** Splices the {@code $compute} members (evaluated against the entity) into its JSON object. */
+	private String withComputed(String entityJson, EObject entity, List<ComputeExpression> computes) {
+		if (computes.isEmpty()) {
+			return entityJson;
+		}
+		StringBuilder members = new StringBuilder();
+		for (ComputeExpression compute : computes) {
+			Object value = expandFilterEvaluator.evaluate(compute.getExpression(), entity);
+			try {
+				members.append(",\"").append(compute.getAlias()).append("\":")
+						.append(JSON.writeValueAsString(value));
+			} catch (Exception e) {
+				throw new ODataQueryParseException("could not serialize $compute '" + compute.getAlias() + "'");
+			}
+		}
+		String inner = entityJson.substring(1, entityJson.length() - 1);
+		return "{" + (inner.isEmpty() ? members.substring(1) : inner + members) + "}";
 	}
 
 	private <T> T parseChecked(String expression, java.util.function.Function<String, T> parse) {
