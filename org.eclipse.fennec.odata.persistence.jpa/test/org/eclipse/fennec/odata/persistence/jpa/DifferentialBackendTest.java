@@ -206,7 +206,6 @@ class DifferentialBackendTest extends JpaWebshopTestBase {
 	}
 
 	/** Rows keyed by their grouping value (category/name, or "∅" for the null-navigation group). */
-	@SuppressWarnings("unchecked")
 	private static Map<String, Map<String, Object>> groups(List<Map<String, Object>> rows) {
 		Map<String, Map<String, Object>> byGroup = new TreeMap<>();
 		for (Map<String, Object> row : rows) {
