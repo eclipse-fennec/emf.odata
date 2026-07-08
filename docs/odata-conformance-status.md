@@ -100,9 +100,16 @@ Query-Option-Builder über `navigateCollection`
 `service()`-Pipeline dispatcht (Query-Optionen, Writes, Functions verhalten sich wie top-level);
 `dependsOn` → `424 Failed Dependency` bei fehlgeschlagenem Vorgänger; klassisches
 `multipart/mixed` → `415`; Client-Builder `ODataClient.batch()` (`read`/`create`/`update`/`delete`/
-`add`, `Result.asEntity`/`asPage`). ⚠️ **Lücke**: `atomicityGroup` wird geparst, aber es gibt kein
-Cross-Request-Rollback (WriteService committet pro Aufruf) → Change-Sets best-effort, nicht atomar.
-· ❌ Rest-SHOULDs: `$compute`-Werte client-seitig typisiert lesen, atomare `$batch`-Change-Sets —
+`add`, `Result.asEntity`/`asPage`).
+· ✅ **NEU 2026-07-08**: **atomare `$batch`-Change-Sets (`atomicityGroup`)**: ein zusammenhängender
+Lauf gleicher-Gruppen-Requests läuft in einer Transaktion auf jedem transaktionalen Write-Backend
+(`WriteService.transactional()`/`begin`/`commit`/`rollback`, thread-gebunden). Alle Mitglieder
+erfolgreich → commit; ein Fehler → rollback und jedes nicht-fehlerhafte Mitglied wird zu `424`
+(all-or-nothing). Das In-Memory-Referenz-Backend implementiert es per Store-Snapshot (atomar, aber
+nicht voll isoliert gegen gleichzeitige Schreiber — ein echtes JPA-Write-Backend würde das liefern).
+Client: `ODataBatch.add(…, atomicityGroup)`. End-to-end-itest `batchAtomicityGroupRollback`.
+· ❌ Rest-SHOULDs: `$compute`-Werte client-seitig typisiert lesen (nur `listRaw`/`Map`), JPA-Write-
+Backend (derzeit nur In-Memory schreibt → JPA-`$batch`-Atomarität sobald es existiert) —
 **alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen Intermediate-SHOULDs (`$search`,
 `$compute`, `$filter`-in-`$expand`, Nav-Pfad-Query-Optionen) plus `$batch` jetzt ebenfalls**.
 

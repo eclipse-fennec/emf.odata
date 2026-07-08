@@ -88,6 +88,31 @@ public interface WriteService {
 		throw new UnsupportedOperationException("reference updates are not supported");
 	}
 
+	/**
+	 * Whether this backend supports the thread-bound transaction hooks below. When {@code false}
+	 * (the default), {@code $batch} atomicity groups are executed non-atomically (best-effort).
+	 */
+	default boolean transactional() {
+		return false;
+	}
+
+	/**
+	 * Begins a thread-bound transaction: every {@code create}/{@code update}/{@code delete}/link
+	 * call on the SAME thread joins it until {@link #commit()} or {@link #rollback()}. Used by the
+	 * protocol layer for {@code $batch} atomicity groups (all-or-nothing change sets). No-op unless
+	 * {@link #transactional()} is {@code true}.
+	 */
+	default void begin() {
+	}
+
+	/** Commits the thread-bound transaction opened by {@link #begin()}. */
+	default void commit() {
+	}
+
+	/** Rolls back the thread-bound transaction, discarding every write since {@link #begin()}. */
+	default void rollback() {
+	}
+
 	/** Outcome of an {@link #update}: the persisted entity, created vs. updated. */
 	record WriteResult(EObject entity, boolean created) {
 	}

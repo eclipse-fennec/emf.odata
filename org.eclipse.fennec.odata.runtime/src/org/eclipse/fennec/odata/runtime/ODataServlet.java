@@ -316,9 +316,13 @@ public class ODataServlet extends HttpServlet {
 	 *
 	 * <p>Ordering follows the {@code requests} array; {@code dependsOn} is honored by short-circuiting
 	 * a request to {@code 424 Failed Dependency} when any predecessor it names failed (status ≥ 400)
-	 * or was itself short-circuited. {@code atomicityGroup} is accepted and its members are treated as
-	 * mutually dependent, but there is no cross-request rollback — the {@link WriteService} SPI commits
-	 * per call, so a change set is best-effort, not transactional (documented conformance gap).
+	 * or was itself short-circuited.
+	 *
+	 * <p>{@code atomicityGroup} runs a CONTIGUOUS run of same-group requests inside a transaction on
+	 * every {@linkplain WriteService#transactional() transactional} write backend: if all members
+	 * succeed the group commits, otherwise it rolls back and every non-failing member is reported as
+	 * {@code 424} (all-or-nothing change set). Backends that are not transactional execute the group
+	 * best-effort (no rollback). Non-contiguous re-use of a group id starts a fresh transaction.
 	 */
 	private void batch(HttpServletRequest request, HttpServletResponse response) throws IOException {
 		response.setHeader("OData-Version", negotiateVersion(request));
@@ -353,16 +357,70 @@ public class ODataServlet extends HttpServlet {
 		ArrayNode responses = JSON.createArrayNode();
 		Map<String, Integer> statusById = new HashMap<>();
 		Set<String> failedIds = new HashSet<>();
+		String currentGroup = null;
+		List<ObjectNode> groupBuffer = new ArrayList<>();
+		boolean groupFailed = false;
 		for (JsonNode sub : requests) {
+			String group = sub.path("atomicityGroup").asString(null);
+			if (!java.util.Objects.equals(group, currentGroup)) {
+				finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
+				groupBuffer = new ArrayList<>();
+				groupFailed = false;
+				currentGroup = group;
+				if (group != null) {
+					transactionalWriteServices().forEach(WriteService::begin);
+				}
+			}
 			ObjectNode result = executeBatchRequest(request, response, sub, statusById, failedIds);
-			responses.add(result);
+			if (group == null) {
+				responses.add(result);
+			} else {
+				groupBuffer.add(result);
+				groupFailed |= result.path("status").asInt(200) >= 400;
+			}
 		}
+		finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
 
 		response.setStatus(HttpServletResponse.SC_OK);
 		response.setContentType("application/json;charset=UTF-8");
 		ObjectNode envelope = JSON.createObjectNode();
 		envelope.set("responses", responses);
 		response.getWriter().write(JSON.writeValueAsString(envelope));
+	}
+
+	/**
+	 * Commits or rolls back a finished atomicity group and appends its buffered results. On failure
+	 * the transaction is rolled back and every non-failing member is rewritten to {@code 424}, so the
+	 * whole change set is all-or-nothing.
+	 */
+	private void finalizeGroup(String group, List<ObjectNode> buffer, boolean failed, ArrayNode responses,
+			Map<String, Integer> statusById, Set<String> failedIds) {
+		if (group == null) {
+			return; // singletons were appended as they ran
+		}
+		List<WriteService> transactional = transactionalWriteServices();
+		if (failed) {
+			transactional.forEach(WriteService::rollback);
+			for (ObjectNode result : buffer) {
+				if (result.path("status").asInt(200) < 400) {
+					result.put("status", 424);
+					result.set("body", JSON.readTree(ODataJson.error(424,
+							"atomicity group '" + group + "' was rolled back")));
+					String id = result.path("id").asString(null);
+					if (id != null) {
+						statusById.put(id, 424);
+						failedIds.add(id);
+					}
+				}
+			}
+		} else {
+			transactional.forEach(WriteService::commit);
+		}
+		buffer.forEach(responses::add);
+	}
+
+	private List<WriteService> transactionalWriteServices() {
+		return writeServices.stream().filter(WriteService::transactional).toList();
 	}
 
 	private ObjectNode executeBatchRequest(HttpServletRequest outer, HttpServletResponse outerResponse,

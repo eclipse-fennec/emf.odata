@@ -390,4 +390,30 @@ public class ODataHttpIntegrationTest {
 				HttpResponse.BodyHandlers.ofString());
 		assertEquals(415, multipart.statusCode(), multipart.body());
 	}
+
+	@Test
+	@Order(9)
+	@DisplayName("$batch atomicity group rolls back all-or-nothing when a member fails")
+	void batchAtomicityGroupRollback() throws Exception {
+		// two creates in one group; the second reuses the first's key → 409 → the whole group rolls back
+		String body = """
+				{"requests":[
+				  {"id":"1","atomicityGroup":"g1","method":"POST","url":"Product",\
+				"headers":{"content-type":"application/json"},"body":{"id":"atomic-e2e","name":"First"}},
+				  {"id":"2","atomicityGroup":"g1","method":"POST","url":"Product",\
+				"headers":{"content-type":"application/json"},"body":{"id":"atomic-e2e","name":"Dup"}}
+				]}""";
+		HttpResponse<String> batch = client.send(
+				HttpRequest.newBuilder(URI.create(BASE + "/$batch"))
+						.header("Content-Type", "application/json")
+						.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+				HttpResponse.BodyHandlers.ofString());
+		assertEquals(200, batch.statusCode(), batch.body());
+		assertTrue(batch.body().contains("\"status\":409"), "the duplicate create fails: " + batch.body());
+		assertTrue(batch.body().contains("\"status\":424"),
+				"the first member is rolled back to 424: " + batch.body());
+
+		assertEquals(404, get("/Product('atomic-e2e')").statusCode(),
+				"the first create was rolled back — nothing persisted");
+	}
 }

@@ -49,6 +49,12 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	private final Map<EClass, Map<String, EObject>> store = new ConcurrentHashMap<>();
+	/**
+	 * Per-thread snapshot of the whole store, taken at {@link #begin()} and restored on
+	 * {@link #rollback()}. The reference backend gives $batch change sets ATOMICITY (all-or-nothing)
+	 * this way, not full isolation from concurrent writers — a real transactional backend (JPA) would.
+	 */
+	private final ThreadLocal<Map<EClass, Map<String, EObject>>> snapshot = new ThreadLocal<>();
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
 	void addEPackage(EPackage ePackage) {
@@ -75,6 +81,63 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 		synchronized (entities) {
 			return new ArrayList<>(entities.values());
 		}
+	}
+
+	// --- transactions (thread-bound; atomic change sets for $batch) ---
+
+	@Override
+	public boolean transactional() {
+		return true;
+	}
+
+	@Override
+	public void begin() {
+		EcoreUtil.Copier copier = new EcoreUtil.Copier();
+		List<EObject> all = new ArrayList<>();
+		store.forEach((type, entities) -> {
+			synchronized (entities) {
+				all.addAll(entities.values());
+			}
+		});
+		copier.copyAll(all); // one copier over the whole store keeps cross-entity references consistent
+		copier.copyReferences();
+		Map<EClass, Map<String, EObject>> snap = new LinkedHashMap<>();
+		store.forEach((type, entities) -> {
+			synchronized (entities) {
+				Map<String, EObject> copy = new LinkedHashMap<>();
+				entities.forEach((key, value) -> copy.put(key, copier.get(value)));
+				snap.put(type, copy);
+			}
+		});
+		snapshot.set(snap);
+	}
+
+	@Override
+	public void commit() {
+		snapshot.remove();
+	}
+
+	@Override
+	public void rollback() {
+		Map<EClass, Map<String, EObject>> snap = snapshot.get();
+		if (snap == null) {
+			return;
+		}
+		store.forEach((type, entities) -> { // classes that gained a store during the tx are emptied
+			if (!snap.containsKey(type)) {
+				synchronized (entities) {
+					entities.clear();
+				}
+			}
+		});
+		snap.forEach((type, copy) -> {
+			Map<String, EObject> entities = classStore(type);
+			synchronized (entities) {
+				entities.clear();
+				entities.putAll(copy);
+			}
+		});
+		snapshot.remove();
 	}
 
 	// --- write side ---

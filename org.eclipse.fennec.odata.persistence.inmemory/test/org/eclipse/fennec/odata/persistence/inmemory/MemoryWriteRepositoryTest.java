@@ -163,6 +163,38 @@ class MemoryWriteRepositoryTest {
 				"every concurrent add is retained under the per-owner lock");
 	}
 
+	@Test
+	@DisplayName("transaction: rollback discards writes since begin(), commit keeps them")
+	void transactionalChangeSet() {
+		assertTrue(repository.transactional());
+		repository.create(productClass, product("keep", "Water", "0.50"));
+
+		// rollback: a create and a mutation done after begin() are both undone
+		repository.begin();
+		repository.create(productClass, product("temp", "Soda", "2.00"));
+		repository.update(productClass, "'keep'", patch("keep", "Sparkling Water"), false);
+		assertEquals(2, read().size(), "writes are visible while the transaction is open");
+		repository.rollback();
+
+		List<EObject> afterRollback = read();
+		assertEquals(1, afterRollback.size(), "the temp create is gone");
+		assertEquals("Water", afterRollback.get(0).eGet(productClass.getEStructuralFeature("name")),
+				"the mutation to 'keep' is reverted");
+
+		// commit: writes persist
+		repository.begin();
+		repository.create(productClass, product("added", "Juice", "1.80"));
+		repository.commit();
+		assertEquals(2, read().size(), "committed writes remain");
+	}
+
+	private EObject patch(String id, String newName) {
+		EObject payload = pkg.getEFactoryInstance().create(productClass);
+		payload.eSet(productClass.getEStructuralFeature("id"), id);
+		payload.eSet(productClass.getEStructuralFeature("name"), newName);
+		return payload;
+	}
+
 	private List<EObject> read() {
 		return queryService.execute(EntityQuery.all(productClass)).entities();
 	}

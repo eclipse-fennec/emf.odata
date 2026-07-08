@@ -529,6 +529,17 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("$batch: atomicityGroup threads into the request envelope")
+	void jsonBatchAtomicityGroup() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		ODataBatch batch = client.batch();
+		batch.add("a", "POST", "Product", null, java.util.List.of(), "grp");
+		batch.add("b", "POST", "Product", null, java.util.List.of(), "grp");
+		batch.execute();
+		assertTrue(lastBatchBody.get().contains("\"atomicityGroup\":\"grp\""), lastBatchBody.get());
+	}
+
+	@Test
 	@DisplayName("query options thread onto a navigation-collection request ($filter/$orderby/$top)")
 	void navigationPathQueryOptions() {
 		ODataClient client = ODataClient.connect(serviceRoot);

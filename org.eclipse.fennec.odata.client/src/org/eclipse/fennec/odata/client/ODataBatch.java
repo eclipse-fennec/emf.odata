@@ -70,6 +70,16 @@ public final class ODataBatch {
 	 * {@code dependsOn} references. Returns {@code this} for chaining.
 	 */
 	public ODataBatch add(String id, String method, String url, JsonNode body, List<String> dependsOn) {
+		return add(id, method, url, body, dependsOn, null);
+	}
+
+	/**
+	 * As {@link #add(String, String, String, JsonNode, List)} but places the request in an
+	 * {@code atomicityGroup}: a contiguous run of same-group requests commits or rolls back as one
+	 * change set on transactional backends.
+	 */
+	public ODataBatch add(String id, String method, String url, JsonNode body, List<String> dependsOn,
+			String atomicityGroup) {
 		ObjectNode request = MAPPER.createObjectNode();
 		request.put("id", id);
 		request.put("method", method);
@@ -84,6 +94,9 @@ public final class ODataBatch {
 			ArrayNode deps = MAPPER.createArrayNode();
 			dependsOn.forEach(deps::add);
 			request.set("dependsOn", deps);
+		}
+		if (atomicityGroup != null && !atomicityGroup.isBlank()) {
+			request.put("atomicityGroup", atomicityGroup);
 		}
 		requests.add(request);
 		return this;
