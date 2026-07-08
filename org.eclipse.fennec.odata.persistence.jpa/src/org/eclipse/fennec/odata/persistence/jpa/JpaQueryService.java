@@ -17,7 +17,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.function.Supplier;
 
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
@@ -89,6 +88,13 @@ public class JpaQueryService implements QueryService, WriteService {
 	private final OclToCriteriaTranslator translator = new OclToCriteriaTranslator();
 	private final JpaApplyExecutor applyExecutor = new JpaApplyExecutor();
 	private volatile int maxPageSize = DEFAULT_MAX_PAGE_SIZE;
+	/**
+	 * Ambient per-thread transaction for {@code $batch} atomicity groups: {@link #begin()} opens one
+	 * {@link EntityManager} (with an active transaction) per factory, every write on the same thread
+	 * joins its factory's ambient EM instead of self-committing, and {@link #commit()}/{@link #rollback()}
+	 * finish them all. Absent (thread not in a group), each write runs in its own transaction as before.
+	 */
+	private final ThreadLocal<Map<EntityManagerFactory, EntityManager>> ambient = new ThreadLocal<>();
 
 	@Activate
 	void activate(Map<String, Object> configuration) {
@@ -338,22 +344,19 @@ public class JpaQueryService implements QueryService, WriteService {
 	public EObject create(EClass entityType, EObject payload) {
 		EntityManagerFactory factory = requireFactory(entityType);
 		Object key = typedKey(entityType, payload);
-		try (EntityManager em = factory.createEntityManager()) {
-			return inTransaction(em, () -> {
-				Class<?> javaType = entityType(factory, entityType).getJavaType();
-				em.getTransaction().begin();
-				if (em.find(javaType, key) != null) {
-					em.getTransaction().rollback();
-					throw new WriteConflictException(
-							"an entity with this key already exists in " + entityType.getName());
-				}
-				EObject entity = newInstance(factory, entityType);
-				copyFeatures(entityType, payload, entity, factory, true);
-				entity.eSet(keyAttribute(entityType), key); // copyFeatures leaves the key alone
-				em.persist(entity);
-				em.getTransaction().commit();
-				return entity;
-			});
+		try (Tx tx = new Tx(factory)) {
+			EntityManager em = tx.em();
+			Class<?> javaType = entityType(factory, entityType).getJavaType();
+			if (em.find(javaType, key) != null) {
+				throw new WriteConflictException(
+						"an entity with this key already exists in " + entityType.getName());
+			}
+			EObject entity = newInstance(factory, entityType);
+			copyFeatures(entityType, payload, entity, factory, true);
+			entity.eSet(keyAttribute(entityType), key); // copyFeatures leaves the key alone
+			em.persist(entity);
+			tx.commit();
+			return entity;
 		}
 	}
 
@@ -362,24 +365,22 @@ public class JpaQueryService implements QueryService, WriteService {
 		EntityManagerFactory factory = requireFactory(entityType);
 		EAttribute id = keyAttribute(entityType);
 		Object key = EcoreUtil.createFromString(id.getEAttributeType(), unquote(rawKey));
-		try (EntityManager em = factory.createEntityManager()) {
-			return inTransaction(em, () -> {
-				Class<?> javaType = entityType(factory, entityType).getJavaType();
-				em.getTransaction().begin();
-				EObject existing = (EObject) em.find(javaType, key);
-				if (existing == null) { // OData upsert (13.1.1/29) — the URL key wins
-					EObject entity = newInstance(factory, entityType);
-					copyFeatures(entityType, payload, entity, factory, true);
-					entity.eSet(id, key);
-					em.persist(entity);
-					em.getTransaction().commit();
-					return new WriteResult(entity, true);
-				}
-				copyFeatures(entityType, payload, existing, factory, replace);
-				existing.eSet(id, key); // the key is immutable
-				em.getTransaction().commit();
-				return new WriteResult(existing, false);
-			});
+		try (Tx tx = new Tx(factory)) {
+			EntityManager em = tx.em();
+			Class<?> javaType = entityType(factory, entityType).getJavaType();
+			EObject existing = (EObject) em.find(javaType, key);
+			if (existing == null) { // OData upsert (13.1.1/29) — the URL key wins
+				EObject entity = newInstance(factory, entityType);
+				copyFeatures(entityType, payload, entity, factory, true);
+				entity.eSet(id, key);
+				em.persist(entity);
+				tx.commit();
+				return new WriteResult(entity, true);
+			}
+			copyFeatures(entityType, payload, existing, factory, replace);
+			existing.eSet(id, key); // the key is immutable
+			tx.commit();
+			return new WriteResult(existing, false);
 		}
 	}
 
@@ -388,19 +389,16 @@ public class JpaQueryService implements QueryService, WriteService {
 		EntityManagerFactory factory = requireFactory(entityType);
 		EAttribute id = keyAttribute(entityType);
 		Object key = EcoreUtil.createFromString(id.getEAttributeType(), unquote(rawKey));
-		try (EntityManager em = factory.createEntityManager()) {
-			return inTransaction(em, () -> {
-				Class<?> javaType = entityType(factory, entityType).getJavaType();
-				em.getTransaction().begin();
-				Object entity = em.find(javaType, key);
-				if (entity == null) {
-					em.getTransaction().rollback();
-					return false;
-				}
-				em.remove(entity);
-				em.getTransaction().commit();
-				return true;
-			});
+		try (Tx tx = new Tx(factory)) {
+			EntityManager em = tx.em();
+			Class<?> javaType = entityType(factory, entityType).getJavaType();
+			Object entity = em.find(javaType, key);
+			if (entity == null) {
+				return false; // Tx.close rolls back a private (empty) transaction
+			}
+			em.remove(entity);
+			tx.commit();
+			return true;
 		}
 	}
 
@@ -408,16 +406,14 @@ public class JpaQueryService implements QueryService, WriteService {
 	public EObject createRelated(EClass entityType, String rawKey, String navigation, EObject child) {
 		EntityManagerFactory factory = requireFactory(entityType);
 		EReference reference = requiredReference(entityType, navigation);
-		try (EntityManager em = factory.createEntityManager()) {
-			return inTransaction(em, () -> {
-				em.getTransaction().begin();
-				EObject owner = requiredManaged(em, factory, entityType, rawKey);
-				EObject instance = rebuild(child, factory);
-				em.persist(instance);
-				attach(owner, reference, instance);
-				em.getTransaction().commit();
-				return instance;
-			});
+		try (Tx tx = new Tx(factory)) {
+			EntityManager em = tx.em();
+			EObject owner = requiredManaged(em, factory, entityType, rawKey);
+			EObject instance = rebuild(child, factory);
+			em.persist(instance);
+			attach(owner, reference, instance);
+			tx.commit();
+			return instance;
 		}
 	}
 
@@ -425,18 +421,15 @@ public class JpaQueryService implements QueryService, WriteService {
 	public void link(EClass entityType, String rawKey, String navigation, String targetRawKey) {
 		EntityManagerFactory factory = requireFactory(entityType);
 		EReference reference = requiredReference(entityType, navigation);
-		try (EntityManager em = factory.createEntityManager()) {
-			inTransaction(em, () -> {
-				em.getTransaction().begin();
-				EObject owner = requiredManaged(em, factory, entityType, rawKey);
-				EObject target = findManaged(em, factory, reference.getEReferenceType(), targetRawKey);
-				if (target == null) {
-					em.getTransaction().rollback();
-					throw new IllegalArgumentException("the reference target does not exist");
-				}
-				attach(owner, reference, target);
-				em.getTransaction().commit();
-			});
+		try (Tx tx = new Tx(factory)) {
+			EntityManager em = tx.em();
+			EObject owner = requiredManaged(em, factory, entityType, rawKey);
+			EObject target = findManaged(em, factory, reference.getEReferenceType(), targetRawKey);
+			if (target == null) {
+				throw new IllegalArgumentException("the reference target does not exist");
+			}
+			attach(owner, reference, target);
+			tx.commit();
 		}
 	}
 
@@ -444,51 +437,123 @@ public class JpaQueryService implements QueryService, WriteService {
 	public boolean unlink(EClass entityType, String rawKey, String navigation, String targetRawKey) {
 		EntityManagerFactory factory = requireFactory(entityType);
 		EReference reference = requiredReference(entityType, navigation);
-		try (EntityManager em = factory.createEntityManager()) {
-			return inTransaction(em, () -> {
-				em.getTransaction().begin();
-				EObject owner = requiredManaged(em, factory, entityType, rawKey);
-				boolean removed;
-				if (reference.isMany()) {
-					String key = unquote(targetRawKey);
-					@SuppressWarnings("unchecked")
-					List<EObject> members = (List<EObject>) owner.eGet(reference);
-					removed = members.removeIf(member -> key != null
-							&& key.equals(String.valueOf(member.eGet(keyAttribute(member.eClass())))));
-				} else {
-					removed = owner.eGet(reference) != null;
-					if (removed) {
-						owner.eSet(reference, null);
+		try (Tx tx = new Tx(factory)) {
+			EntityManager em = tx.em();
+			EObject owner = requiredManaged(em, factory, entityType, rawKey);
+			boolean removed;
+			if (reference.isMany()) {
+				String key = unquote(targetRawKey);
+				@SuppressWarnings("unchecked")
+				List<EObject> members = (List<EObject>) owner.eGet(reference);
+				removed = members.removeIf(member -> key != null
+						&& key.equals(String.valueOf(member.eGet(keyAttribute(member.eClass())))));
+			} else {
+				removed = owner.eGet(reference) != null;
+				if (removed) {
+					owner.eSet(reference, null);
+				}
+			}
+			tx.commit();
+			return removed;
+		}
+	}
+
+	// --- transactions (thread-bound; atomic $batch change sets) ---
+
+	@Override
+	public boolean transactional() {
+		return true;
+	}
+
+	@Override
+	public void begin() {
+		Map<EntityManagerFactory, EntityManager> managers = new java.util.IdentityHashMap<>();
+		for (EntityManagerFactory factory : factories) {
+			EntityManager em = factory.createEntityManager();
+			em.getTransaction().begin();
+			managers.put(factory, em);
+		}
+		ambient.set(managers);
+	}
+
+	@Override
+	public void commit() {
+		finishAmbient(true);
+	}
+
+	@Override
+	public void rollback() {
+		finishAmbient(false);
+	}
+
+	private void finishAmbient(boolean commit) {
+		Map<EntityManagerFactory, EntityManager> managers = ambient.get();
+		if (managers == null) {
+			return;
+		}
+		ambient.remove();
+		RuntimeException failure = null;
+		for (EntityManager em : managers.values()) {
+			try {
+				if (em.getTransaction().isActive()) {
+					if (commit) {
+						em.getTransaction().commit();
+					} else {
+						em.getTransaction().rollback();
 					}
 				}
-				em.getTransaction().commit();
-				return removed;
-			});
+			} catch (RuntimeException e) {
+				failure = e; // remember, but still close every manager
+			} finally {
+				em.close();
+			}
+		}
+		if (failure != null) {
+			throw failure;
 		}
 	}
 
 	/**
-	 * Runs a transactional write body with an explicit rollback-on-failure safety net: any
-	 * exception between {@code begin()} and {@code commit()} rolls the transaction back HERE
-	 * rather than leaving it active and relying on {@link EntityManager#close()} to clean up. The
-	 * body owns begin()/commit() (and any expected-branch rollback); this covers the unexpected.
+	 * The unit of work for a single write: joins the thread's ambient batch transaction when one is
+	 * open (the batch owns begin/commit/close), otherwise opens a private transaction that this
+	 * object commits and closes. Used through try-with-resources so an escaping exception rolls a
+	 * private transaction back; an ambient one is left for the batch to roll back as a whole.
 	 */
-	private static <T> T inTransaction(EntityManager em, Supplier<T> body) {
-		try {
-			return body.get();
-		} catch (RuntimeException e) {
-			if (em.getTransaction().isActive()) {
-				em.getTransaction().rollback();
-			}
-			throw e;
-		}
-	}
+	private final class Tx implements AutoCloseable {
+		private final EntityManager em;
+		private final boolean managed;
 
-	private static void inTransaction(EntityManager em, Runnable body) {
-		inTransaction(em, () -> {
-			body.run();
-			return null;
-		});
+		Tx(EntityManagerFactory factory) {
+			Map<EntityManagerFactory, EntityManager> managers = ambient.get();
+			if (managers != null && managers.containsKey(factory)) {
+				this.em = managers.get(factory);
+				this.managed = true;
+			} else {
+				this.em = factory.createEntityManager();
+				this.em.getTransaction().begin();
+				this.managed = false;
+			}
+		}
+
+		EntityManager em() {
+			return em;
+		}
+
+		void commit() {
+			if (!managed) {
+				em.getTransaction().commit();
+			}
+		}
+
+		@Override
+		public void close() {
+			if (!managed) {
+				if (em.getTransaction().isActive()) {
+					em.getTransaction().rollback();
+				}
+				em.close();
+			}
+		}
 	}
 
 	@SuppressWarnings("unchecked")
@@ -512,8 +577,7 @@ public class JpaQueryService implements QueryService, WriteService {
 			EClass entityType, String rawKey) {
 		EObject entity = findManaged(em, factory, entityType, rawKey);
 		if (entity == null) {
-			em.getTransaction().rollback();
-			throw new IllegalArgumentException("entity not found");
+			throw new IllegalArgumentException("entity not found"); // Tx.close / batch handles rollback
 		}
 		return entity;
 	}

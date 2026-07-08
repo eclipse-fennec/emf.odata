@@ -108,14 +108,21 @@ erfolgreich → commit; ein Fehler → rollback und jedes nicht-fehlerhafte Mitg
 (all-or-nothing). Das In-Memory-Referenz-Backend implementiert es per Store-Snapshot (atomar, aber
 nicht voll isoliert gegen gleichzeitige Schreiber — ein echtes JPA-Write-Backend würde das liefern).
 Client: `ODataBatch.add(…, atomicityGroup)`. End-to-end-itest `batchAtomicityGroupRollback`.
+· ✅ **NEU 2026-07-08**: **JPA-Write-Backend transaktional**: `JpaQueryService` implementierte den
+`WriteService` schon (create/update/delete/link/unlink, je eigene EM-Transaktion); jetzt zusätzlich
+die thread-gebundenen Hooks — `begin()` öffnet je Factory eine EM mit aktiver Transaktion, jeder
+Write auf dem Thread tritt ihr bei (statt selbst zu committen), `commit()`/`rollback()` schließen
+alle ab. Damit sind `$batch`-`atomicityGroup`s auch gegen JPA atomar UND isoliert (echte
+DB-Transaktion). Tests `ambientTransactionRollback`/`ambientTransactionCommit` gegen H2.
 · ✅ **NEU 2026-07-08**: **`$compute`-Werte client-seitig typisiert lesen**: `EntitySetRequest.listComputed()`
 liefert `ComputedRow`s — die Entity typisiert als `EObject` (Modell-Properties) plus die berechneten
 Member; `ComputedRow.value(alias, Class)` coerct auf den gewünschten Java-Typ (Member, die keine
 Struktur-Property des Typs sind, gelten als berechnet). `listRaw()`/`Map` bleibt als generischer Weg.
-· ❌ Rest-SHOULDs: JPA-Write-Backend (derzeit nur In-Memory schreibt → JPA-`$batch`-Atomarität sobald
-es existiert) —
-**alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen Intermediate-SHOULDs (`$search`,
-`$compute`, `$filter`-in-`$expand`, Nav-Pfad-Query-Optionen) plus `$batch` jetzt ebenfalls**.
+**Alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen Intermediate-SHOULDs (`$search`,
+`$compute` inkl. Alias in `$filter`/`$orderby`/`$select` + typisiertes Client-Lesen,
+`$filter`-in-`$expand`, Nav-Pfad-Query-Optionen inkl. `$orderby`) plus `$batch` mit atomaren
+Change-Sets (In-Memory und JPA) jetzt ebenfalls. Offene Nicht-SHOULD-Punkte: `@odata.bind` /
+Non-Containment-Writes, CSDL-JSON-`$metadata` (Q9), asynchrone Requests.**
 
 ## Priorisierte Findings (Conformance-Fixes, alle klein bis mittel)
 

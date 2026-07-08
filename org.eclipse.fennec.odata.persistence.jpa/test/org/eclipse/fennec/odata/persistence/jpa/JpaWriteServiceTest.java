@@ -142,6 +142,35 @@ class JpaWriteServiceTest extends JpaWebshopTestBase {
 				"attributes are no navigations");
 	}
 
+	@Test
+	@DisplayName("ambient transaction: begin()/rollback() undoes a whole group of writes atomically")
+	void ambientTransactionRollback() {
+		assertTrue(service.transactional());
+		service.begin();
+		try {
+			service.create(productClass, plain("Product", "id", "tx1", "name", "First"));
+			// a second create reusing the key fails INSIDE the same ambient transaction
+			assertThrows(WriteConflictException.class,
+					() -> service.create(productClass, plain("Product", "id", "tx1", "name", "Dup")));
+		} finally {
+			service.rollback();
+		}
+		assertEquals(List.of(), names(query("id eq 'tx1'", null, 0, -1, false)),
+				"rollback undid the first create — nothing persisted");
+	}
+
+	@Test
+	@DisplayName("ambient transaction: begin()/commit() persists the whole group")
+	void ambientTransactionCommit() {
+		service.begin();
+		service.create(productClass, plain("Product", "id", "tx2", "name", "Alpha"));
+		service.create(productClass, plain("Product", "id", "tx3", "name", "Beta"));
+		service.commit();
+		assertEquals(List.of("Alpha", "Beta"),
+				names(query("id eq 'tx2' or id eq 'tx3'", "name asc", 0, -1, false)),
+				"committed writes are all visible");
+	}
+
 	// --- helpers ---
 
 	/** A PLAIN dynamic EMF instance (what the JSON codec produces) — not a store entity. */
