@@ -49,6 +49,7 @@ import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
+import org.eclipse.fennec.odata.query.OclEvaluator;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -592,9 +593,10 @@ class ODataServletTest {
 		assertEquals(200, v401.status());
 		assertEquals("4.01", v401.headers().get("OData-Version"), "otherwise the response is 4.01");
 
-		assertEquals(501, get("/Product", Map.of("$search", "milk")).status(),
-				"known-but-unsupported system option → 501");
-		assertEquals(501, get("/Product", Map.of("$compute", "price mul 2 as d")).status());
+		assertEquals(200, get("/Product", Map.of("$search", "milk")).status(),
+				"$search is implemented → 200 (13.1.2 SHOULD)");
+		assertEquals(501, get("/Product", Map.of("$compute", "price mul 2 as d")).status(),
+				"a still-unimplemented known option → 501");
 		assertEquals(400, get("/Product", Map.of("$frobnicate", "x")).status(),
 				"unknown $-option → 400");
 	}
@@ -669,6 +671,27 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("$search synthesizes a contains-predicate over string properties (no longer 501)")
+	void searchOption() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		Response found = get("/Product", Map.of("$search", "Milk"));
+		assertEquals(200, found.status(), found.body());
+
+		// the synthesized predicate actually implements search semantics
+		OclEvaluator evaluator = new OclEvaluator();
+		assertTrue(evaluator.matchesNullSafe(lastQuery.get().filter(),
+				product("p1", "Milk", "1.20", null)), "$search matches by a string property");
+		assertFalse(evaluator.matchesNullSafe(lastQuery.get().filter(),
+				product("p2", "Cheese", "2.00", null)), "a non-matching entity is excluded");
+
+		// $search AND $filter combine
+		Response combined = get("/Product", Map.of("$search", "Milk", "$filter", "price lt 3.00"));
+		assertEquals(200, combined.status(), combined.body());
+		assertEquals("and", ((OperationCallExp) lastQuery.get().filter()).getName(),
+				"$filter and $search combine with a conjunction");
+	}
+
+	@Test
 	@DisplayName("unbound action import: POST with a JSON parameter body, void → 204")
 	void unboundActionImport() throws Exception {
 		AtomicReference<String> touched = new AtomicReference<>();
@@ -737,8 +760,8 @@ class ODataServletTest {
 
 		assertEquals(200, get("/Product", Map.of("x-trace-id", "abc123")).status(),
 				"custom query options (no $, no option name) are ignored (11.2.12)");
-		assertEquals(501, get("/Product", Map.of("SEARCH", "milk")).status(),
-				"the whitelist normalizes too: SEARCH = $search → 501");
+		assertEquals(501, get("/Product", Map.of("COMPUTE", "price mul 2 as d")).status(),
+				"the whitelist normalizes too: COMPUTE = $compute → 501");
 	}
 
 	@Test

@@ -206,10 +206,11 @@ public class ODataServlet extends HttpServlet {
 
 	/** System query options this service implements. */
 	private static final Set<String> SUPPORTED_OPTIONS = Set.of(
-			"$filter", "$orderby", "$top", "$skip", "$count", "$select", "$expand", "$apply", "$format");
+			"$filter", "$orderby", "$top", "$skip", "$count", "$select", "$expand", "$apply", "$format",
+			"$search");
 	/** Spec-defined options we know but do not implement yet → 501 (conformance 13.1.1/7). */
 	private static final Set<String> KNOWN_UNSUPPORTED_OPTIONS = Set.of(
-			"$search", "$compute", "$skiptoken", "$deltatoken", "$id", "$index", "$schemaversion", "$levels");
+			"$compute", "$skiptoken", "$deltatoken", "$id", "$index", "$schemaversion", "$levels");
 
 	@Override
 	protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -1041,7 +1042,7 @@ public class ODataServlet extends HttpServlet {
 		int top = pageSize(request, response, limits.effectiveTop(option(request, "$top")));
 		// peek one row beyond the page: partial results MUST carry @odata.nextLink (13.1.1/3)
 		EntityQuery query = new EntityQuery(target.entityType(), castType,
-				parseChecked(option(request, "$filter"),
+				parseChecked(filterWithSearch(request, context),
 						filter -> aliases.isEmpty() ? parser.parseFilter(filter, context)
 								: parser.parseFilter(filter, context, aliases)),
 				orderBy == null ? List.of() : orderBy,
@@ -1907,6 +1908,28 @@ public class ODataServlet extends HttpServlet {
 			}
 		}
 		return top;
+	}
+
+	/**
+	 * The effective {@code $filter}, folding in {@code $search} (13.1.2 SHOULD): a free-text search
+	 * becomes {@code contains(prop,'term')} OR-ed over the type's string properties, AND-ed with any
+	 * {@code $filter}. It thus rides the existing typed-IR pushdown — no backend change, both backends.
+	 */
+	private String filterWithSearch(HttpServletRequest request, EClass context) {
+		String search = option(request, "$search");
+		String filter = option(request, "$filter");
+		if (search == null || search.isBlank()) {
+			return filter;
+		}
+		String literal = "'" + search.trim().replace("'", "''") + "'";
+		String searchExpr = context.getEAllAttributes().stream()
+				.filter(a -> !a.isMany() && a.getEAttributeType() != null
+						&& String.class.equals(a.getEAttributeType().getInstanceClass()))
+				.map(a -> "contains(" + a.getName() + "," + literal + ")")
+				.reduce((l, r) -> l + " or " + r)
+				.orElse("false"); // no string properties → matches nothing
+		return filter == null || filter.isBlank() ? searchExpr
+				: "(" + filter + ") and (" + searchExpr + ")";
 	}
 
 	private <T> T parseChecked(String expression, java.util.function.Function<String, T> parse) {
