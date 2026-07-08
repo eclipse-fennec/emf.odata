@@ -201,6 +201,31 @@ public final class ODataClient implements AutoCloseable {
 		return new EntitySetRequest(this, setName, entityType(setName));
 	}
 
+	/**
+	 * Invokes an unbound function import: {@code GET Name(p1=v1,…)}. Parameters are formatted as
+	 * OData literals (strings quoted). Returns the primitive {@code value} of the response.
+	 */
+	public Object function(String name, Map<String, ?> parameters) {
+		StringBuilder call = new StringBuilder(name).append('(');
+		boolean first = true;
+		for (Map.Entry<String, ?> parameter : parameters.entrySet()) {
+			if (!first) {
+				call.append(',');
+			}
+			first = false;
+			call.append(parameter.getKey()).append('=').append(functionLiteral(parameter.getValue()));
+		}
+		call.append(')');
+		return ODataJsonDecoder.value(fetch(call.toString(), "application/json"));
+	}
+
+	private static String functionLiteral(Object value) {
+		if (value instanceof CharSequence text) {
+			return "'" + text.toString().replace("'", "''") + "'";
+		}
+		return String.valueOf(value);
+	}
+
 	/** Status, body text and response headers of an HTTP exchange. */
 	record Response(int status, String body, HttpHeaders headers) {
 

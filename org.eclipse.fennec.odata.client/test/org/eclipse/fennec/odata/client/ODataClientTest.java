@@ -112,6 +112,8 @@ class ODataClientTest {
 					&& exchange.getRequestURI().getRawQuery() != null
 					&& exchange.getRequestURI().getRawQuery().contains("$apply")) {
 				answer = "{\"value\":[{\"category\":{\"name\":\"Dairy\"},\"Total\":5.70}]}";
+			} else if (path.contains("/doubleOf(")) {
+				answer = "{\"value\":42}"; // unbound function import result
 			} else if (path.endsWith("/name/$value")) {
 				answer = "Milk";
 				contentType = "text/plain;charset=UTF-8";
@@ -400,6 +402,16 @@ class ODataClientTest {
 				() -> client.entitySet("Product").get("'bad'"));
 		assertTrue(error.getMessage().toLowerCase().contains("json")
 				|| error.getMessage().toLowerCase().contains("undecodable"), error.getMessage());
+	}
+
+	@Test
+	@DisplayName("unbound function import call formats params and returns the value")
+	void functionImportCall() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		Object result = client.function("doubleOf", java.util.Map.of("n", 21));
+		assertEquals(42, ((Number) result).intValue());
+		assertTrue(lastRequest.get().getRawPath().endsWith("/doubleOf(n=21)"),
+				lastRequest.get().toString());
 	}
 
 	@Test

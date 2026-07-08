@@ -91,6 +91,15 @@ final class ODataJsonDecoder {
 		}
 	}
 
+	/** Extracts the {@code value} member of a function/primitive response as a plain Java value. */
+	static Object value(String json) {
+		JsonNode value = parse(json).get("value");
+		if (value == null) {
+			throw new ODataClientException("the response carries no 'value' member");
+		}
+		return MAPPER.convertValue(value, Object.class);
+	}
+
 	private static EObject decode(JsonNode node, EClass entityType,
 			MetadataService metadataService) {
 		if (!(node instanceof ObjectNode object)) {
