@@ -52,6 +52,7 @@ import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edmx.EdmxPackage;
 import org.open.oasis.docs.odata.ns.edmx.EdmxRoot;
 
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 /**
@@ -67,6 +68,9 @@ class ODataClientTest {
 	private HttpServer server;
 	private String serviceRoot;
 	private final AtomicReference<java.net.URI> lastRequest = new AtomicReference<>();
+	private final AtomicReference<String> lastWriteMethod = new AtomicReference<>();
+	private final AtomicReference<String> lastWriteBody = new AtomicReference<>();
+	private final AtomicReference<String> lastIfMatch = new AtomicReference<>();
 
 	@BeforeAll
 	void setUpStub() throws Exception {
@@ -75,6 +79,11 @@ class ODataClientTest {
 		server.createContext("/odata/", exchange -> {
 			lastRequest.set(exchange.getRequestURI());
 			String path = exchange.getRequestURI().getPath();
+			String method = exchange.getRequestMethod();
+			if (!"GET".equals(method)) {
+				handleWrite(exchange, method, path);
+				return;
+			}
 			String answer;
 			String contentType = "application/json;odata.metadata=minimal;charset=UTF-8";
 			int status = 200;
@@ -275,6 +284,89 @@ class ODataClientTest {
 		ODataClient second = ODataClient.connect(serviceRoot, injected);
 		assertEquals(1, second.metadata().size(), "the injected HttpClient is still usable after close()");
 		injected.close();
+	}
+
+	@Test
+	@DisplayName("create POSTs the encoded entity and decodes the 201 body")
+	void createPostsEntity() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject p = product.getEPackage().getEFactoryInstance().create(product);
+		p.eSet(product.getEStructuralFeature("id"), "n1");
+		p.eSet(product.getEStructuralFeature("name"), "Milk");
+
+		EObject created = client.entitySet("Product").create(p);
+		assertEquals("POST", lastWriteMethod.get());
+		assertTrue(lastWriteBody.get().contains("\"name\":\"Milk\""), lastWriteBody.get());
+		assertEquals("Milk", created.eGet(product.getEStructuralFeature("name")),
+				"the 201 body decodes back into an entity");
+	}
+
+	@Test
+	@DisplayName("update sends PATCH with If-Match and only the changed property (merge)")
+	void updatePatchesWithIfMatch() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject patch = product.getEPackage().getEFactoryInstance().create(product);
+		patch.eSet(product.getEStructuralFeature("name"), "Renamed");
+
+		client.entitySet("Product").update("'n1'", patch, "W/\"e1\"");
+		assertEquals("PATCH", lastWriteMethod.get());
+		assertEquals("W/\"e1\"", lastIfMatch.get(), "the If-Match ETag is sent");
+		assertTrue(lastWriteBody.get().contains("\"name\":\"Renamed\""), lastWriteBody.get());
+		assertFalse(lastWriteBody.get().contains("\"id\""), "unset properties are not sent: "
+				+ lastWriteBody.get());
+	}
+
+	@Test
+	@DisplayName("delete reports found (204) vs not-found (404)")
+	void deleteReportsExistence() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		assertTrue(client.entitySet("Product").delete("'n1'", null));
+		assertFalse(client.entitySet("Product").delete("'missing'", null));
+	}
+
+	@Test
+	@DisplayName("$ref set sends the @odata.id body to nav/$ref")
+	void setReferenceSendsRef() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		client.entitySet("Product").setReference("'n1'", "category", serviceRoot + "Category('c1')");
+		assertEquals("PUT", lastWriteMethod.get());
+		assertTrue(lastWriteBody.get().contains("@odata.id"), lastWriteBody.get());
+		assertTrue(lastRequest.get().getPath().endsWith("/category/$ref"),
+				lastRequest.get().toString());
+	}
+
+	private void handleWrite(HttpExchange exchange, String method, String path) throws IOException {
+		lastWriteMethod.set(method);
+		lastIfMatch.set(exchange.getRequestHeaders().getFirst("If-Match"));
+		lastWriteBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+		int status;
+		String answer = "";
+		if ("POST".equals(method) && path.endsWith("/Product")) {
+			status = 201;
+			exchange.getResponseHeaders().set("Location", serviceRoot + "Product('n1')");
+			exchange.getResponseHeaders().set("Content-Type", "application/json");
+			answer = lastWriteBody.get(); // echo the created entity so create() can decode it
+		} else if (path.endsWith("/$ref")) {
+			status = 204;
+		} else if ("DELETE".equals(method)) {
+			status = path.contains("('missing')") ? 404 : 204;
+			if (status == 404) {
+				exchange.getResponseHeaders().set("Content-Type", "application/json");
+				answer = "{\"error\":{\"code\":\"404\",\"message\":\"not found\"}}";
+			}
+		} else {
+			status = 204; // PATCH / PUT
+		}
+		byte[] body = answer.getBytes(StandardCharsets.UTF_8);
+		if (status == 204) {
+			exchange.sendResponseHeaders(204, -1);
+		} else {
+			exchange.sendResponseHeaders(status, body.length);
+			exchange.getResponseBody().write(body);
+		}
+		exchange.close();
 	}
 
 	// --- stub metadata through the REAL E2 write path ---

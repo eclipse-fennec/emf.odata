@@ -122,6 +122,104 @@ public final class EntitySetRequest {
 				client.metadataService());
 	}
 
+	// --- write path (mirrors the server's Updatable Service contract) ---
+
+	private static final String JSON = "application/json";
+
+	/**
+	 * POSTs a new entity to the set (deep insert: containment children in the graph ride along).
+	 * Returns the created entity decoded from the 201 response body.
+	 */
+	public EObject create(EObject entity) {
+		String body = ODataJsonEncoder.encode(entity, entityType, client.metadataService());
+		ODataClient.Response response = client.exchange("POST", setName, JSON, body, JSON, Map.of());
+		if (response.status() != 201) {
+			throw failure("POST " + setName, response);
+		}
+		return ODataJsonDecoder.entity(response.body(), entityType, client.metadataService());
+	}
+
+	/** PATCH (merge — only the set features are sent) an entity by key; If-Match optional. */
+	public void update(String keyLiteral, EObject patch, String ifMatch) {
+		write("PATCH", keyLiteral, patch, ifMatch);
+	}
+
+	/** PUT (replace) an entity by key; If-Match optional. */
+	public void replace(String keyLiteral, EObject entity, String ifMatch) {
+		write("PUT", keyLiteral, entity, ifMatch);
+	}
+
+	private void write(String method, String keyLiteral, EObject entity, String ifMatch) {
+		String path = entityPath(keyLiteral);
+		String body = ODataJsonEncoder.encode(entity, entityType, client.metadataService());
+		ODataClient.Response response = client.exchange(method, path, JSON, body, JSON, ifMatch(ifMatch));
+		if (response.status() != 204 && response.status() / 100 != 2) {
+			throw failure(method + " " + path, response);
+		}
+	}
+
+	/** DELETEs an entity by key; If-Match optional. Returns {@code false} when it did not exist. */
+	public boolean delete(String keyLiteral, String ifMatch) {
+		String path = entityPath(keyLiteral);
+		ODataClient.Response response = client.exchange("DELETE", path, JSON, null, null, ifMatch(ifMatch));
+		return switch (response.status()) {
+			case 204, 200 -> true;
+			case 404 -> false;
+			default -> throw failure("DELETE " + path, response);
+		};
+	}
+
+	/** Sets a single-valued navigation: {@code PUT Set(key)/nav/$ref} with the target's edit URL. */
+	public void setReference(String keyLiteral, String navigation, String targetEditUrl) {
+		reference("PUT", refPath(keyLiteral, navigation), targetEditUrl);
+	}
+
+	/** Adds to a collection-valued navigation: {@code POST Set(key)/nav/$ref}. */
+	public void addReference(String keyLiteral, String navigation, String targetEditUrl) {
+		reference("POST", refPath(keyLiteral, navigation), targetEditUrl);
+	}
+
+	/**
+	 * Removes a reference: {@code DELETE Set(key)/nav/$ref} for a single-valued navigation, or with
+	 * {@code $id=<targetEditUrl>} for a specific collection member (pass {@code null} to clear a
+	 * single-valued one).
+	 */
+	public void removeReference(String keyLiteral, String navigation, String targetEditUrl) {
+		String path = refPath(keyLiteral, navigation);
+		if (targetEditUrl != null) {
+			path = path + "?$id=" + encode(targetEditUrl);
+		}
+		ODataClient.Response response = client.exchange("DELETE", path, JSON, null, null, Map.of());
+		if (response.status() != 204 && response.status() / 100 != 2) {
+			throw failure("DELETE " + path, response);
+		}
+	}
+
+	private void reference(String method, String path, String targetEditUrl) {
+		String body = "{\"@odata.id\":\"" + targetEditUrl + "\"}";
+		ODataClient.Response response = client.exchange(method, path, JSON, body, JSON, Map.of());
+		if (response.status() != 204 && response.status() / 100 != 2) {
+			throw failure(method + " " + path, response);
+		}
+	}
+
+	private String entityPath(String keyLiteral) {
+		return setName + "(" + encodeKey(keyLiteral) + ")";
+	}
+
+	private String refPath(String keyLiteral, String navigation) {
+		return entityPath(keyLiteral) + "/" + navigation + "/$ref";
+	}
+
+	private static Map<String, String> ifMatch(String ifMatch) {
+		return ifMatch == null ? Map.of() : Map.of("If-Match", ifMatch);
+	}
+
+	private static ODataClientException failure(String what, ODataClient.Response response) {
+		return new ODataClientException(what + " answered " + response.status(),
+				response.status(), response.body());
+	}
+
 	private String queryString() {
 		return queryString(options);
 	}

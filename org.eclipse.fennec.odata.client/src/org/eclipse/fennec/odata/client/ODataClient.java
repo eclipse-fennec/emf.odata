@@ -16,11 +16,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EPackage;
@@ -177,8 +179,32 @@ public final class ODataClient implements AutoCloseable {
 		return new EntitySetRequest(this, setName, entityType(setName));
 	}
 
+	/** Status, body text and response headers of an HTTP exchange. */
+	record Response(int status, String body, HttpHeaders headers) {
+
+		/** The first value of a response header, or {@code null}. */
+		String header(String name) {
+			return headers.firstValue(name).orElse(null);
+		}
+	}
+
 	/** GET relative to the service root; non-2xx answers raise with status and error body. */
 	String fetch(String relative, String accept) {
+		Response response = exchange("GET", relative, accept, null, null, Map.of());
+		if (response.status() / 100 != 2) {
+			throw new ODataClientException("GET " + serviceRoot.resolve(relative) + " answered "
+					+ response.status(), response.status(), response.body());
+		}
+		return response.body();
+	}
+
+	/**
+	 * A raw HTTP exchange with any method; enforces same-origin and the response size cap but does
+	 * NOT throw on a non-2xx status — the caller interprets it (writes need 201/204/404/412). The
+	 * body may be {@code null} (e.g. {@code DELETE}).
+	 */
+	Response exchange(String method, String relative, String accept, String body,
+			String contentType, Map<String, String> extraHeaders) {
 		URI target = serviceRoot.resolve(relative);
 		// a server-supplied absolute link (e.g. @odata.nextLink) must not steer the client — with
 		// its Accept/version headers and any ambient credentials — to a different host (SSRF)
@@ -186,26 +212,28 @@ public final class ODataClient implements AutoCloseable {
 			throw new ODataClientException(
 					"refusing to follow a link to a different origin than the service root: " + target);
 		}
-		HttpRequest request = HttpRequest.newBuilder(target)
+		HttpRequest.Builder builder = HttpRequest.newBuilder(target)
 				.timeout(REQUEST_TIMEOUT)
 				.header("Accept", accept)
-				.header("OData-MaxVersion", "4.01")
-				.GET().build();
+				.header("OData-MaxVersion", "4.01");
+		if (contentType != null) {
+			builder.header("Content-Type", contentType);
+		}
+		extraHeaders.forEach(builder::header);
+		HttpRequest.BodyPublisher publisher = body == null ? HttpRequest.BodyPublishers.noBody()
+				: HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8);
+		builder.method(method, publisher);
 		HttpResponse<InputStream> response;
 		try {
-			response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+			response = http.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
 		} catch (IOException e) {
-			throw new ODataClientException("GET " + target + " failed", e);
+			throw new ODataClientException(method + " " + target + " failed", e);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
-			throw new ODataClientException("GET " + target + " interrupted", e);
+			throw new ODataClientException(method + " " + target + " interrupted", e);
 		}
-		String body = readBounded(response.body(), target); // streamed + capped, never unbounded
-		if (response.statusCode() / 100 != 2) {
-			throw new ODataClientException("GET " + target + " answered "
-					+ response.statusCode(), response.statusCode(), body);
-		}
-		return body;
+		return new Response(response.statusCode(), readBounded(response.body(), target),
+				response.headers());
 	}
 
 	/** Reads the response body streaming, rejecting anything beyond {@link #maxResponseBytes}. */
