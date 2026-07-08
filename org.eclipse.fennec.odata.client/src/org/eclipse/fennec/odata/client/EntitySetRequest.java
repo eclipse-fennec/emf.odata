@@ -121,6 +121,16 @@ public final class EntitySetRequest {
 	}
 
 	/**
+	 * Executes the request and returns the raw entity rows as maps — the accessor for
+	 * {@code $compute}: computed properties are not model features, so they cannot surface on the
+	 * typed {@link EObject}s of {@link #list()}; here each map carries the entity's properties
+	 * together with the computed aliases.
+	 */
+	public List<Map<String, Object>> listRaw() {
+		return ODataJsonDecoder.rows(client.fetch(setName + queryString(), "application/json"));
+	}
+
+	/**
 	 * Reads one entity by its raw key literal — string keys quoted OData-style
 	 * ({@code get("'p1'")}), numeric keys plain ({@code get("42")}).
 	 */

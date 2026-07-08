@@ -113,6 +113,10 @@ class ODataClientTest {
 					&& exchange.getRequestURI().getRawQuery() != null
 					&& exchange.getRequestURI().getRawQuery().contains("$apply")) {
 				answer = "{\"value\":[{\"category\":{\"name\":\"Dairy\"},\"Total\":5.70}]}";
+			} else if (path.endsWith("/Product")
+					&& exchange.getRequestURI().getRawQuery() != null
+					&& exchange.getRequestURI().getRawQuery().contains("$compute")) {
+				answer = "{\"value\":[{\"id\":\"p1\",\"name\":\"Milk\",\"doublePrice\":2.40}]}";
 			} else if (path.contains("/doubleOf(")) {
 				answer = "{\"value\":42}"; // unbound function import result
 			} else if (path.contains("/webshop.label(")) {
@@ -453,6 +457,18 @@ class ODataClientTest {
 
 		assertEquals("Milk", client.entitySet("Product").propertyValue("'p1'", "name"));
 		assertEquals(2, client.entitySet("Product").navigationCount("'p1'", "reviews"));
+	}
+
+	@Test
+	@DisplayName("$compute values are read via listRaw (computed props are not model features)")
+	void computeReadViaListRaw() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		java.util.List<java.util.Map<String, Object>> rows = client.entitySet("Product")
+				.compute("price mul 2 as doublePrice").listRaw();
+		assertEquals(1, rows.size());
+		assertEquals("Milk", rows.get(0).get("name"), "the entity's own properties are present");
+		assertEquals(2.40, ((Number) rows.get(0).get("doublePrice")).doubleValue(), 1e-9,
+				"the computed property is present");
 	}
 
 	@Test
