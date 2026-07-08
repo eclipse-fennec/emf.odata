@@ -142,6 +142,17 @@ class ClientSchemaRegistryTest {
 		assertFalse(registry.lookup(SCOPE).isEmpty(), "and left registered for the next call");
 	}
 
+	@Test
+	@DisplayName("client factory builds a data client for a registered endpoint via the resolver")
+	void clientFactoryBuildsFromResolver() {
+		EPackageSchemaRegistry registry = new EPackageSchemaRegistry();
+		registry.register(schema("h1"));
+		try (DefaultODataClientFactory factory = new DefaultODataClientFactory(registry)) {
+			ODataClient client = factory.forEndpoint(SCOPE);
+			assertNotNull(client.entityType("Product"), "the factory resolves the schema and wires a client");
+		}
+	}
+
 	/** Stands in for the HTTP $metadata reader — returns a preset schema, no network. */
 	private static final class FakeReader implements ODataSchemaReader {
 		private ODataSchema next;
