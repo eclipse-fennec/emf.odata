@@ -46,15 +46,19 @@ import org.osgi.service.component.annotations.Deactivate;
 @Component(service = ODataSchemaReader.class)
 public final class HttpODataSchemaReader implements ODataSchemaReader {
 
-	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
-	private static final long MAX_METADATA_BYTES = 16L * 1024 * 1024;
-
 	private final HttpClient http;
 	private final boolean ownsHttp;
+	private final ODataClientConfig config;
 
 	public HttpODataSchemaReader(HttpClient http) {
+		this(http, ODataClientConfig.DEFAULTS);
+	}
+
+	/** Reader with transport config — sends the same auth headers/version/timeout as the client. */
+	public HttpODataSchemaReader(HttpClient http, ODataClientConfig config) {
 		this.http = http;
 		this.ownsHttp = false;
+		this.config = config;
 	}
 
 	/** DS constructor: owns a connect-timed {@link HttpClient} released on deactivation. */
@@ -62,6 +66,7 @@ public final class HttpODataSchemaReader implements ODataSchemaReader {
 	public HttpODataSchemaReader() {
 		this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 		this.ownsHttp = true;
+		this.config = ODataClientConfig.DEFAULTS;
 	}
 
 	@Deactivate
@@ -75,10 +80,11 @@ public final class HttpODataSchemaReader implements ODataSchemaReader {
 	public Optional<ODataSchema> read(SchemaScope scope, Conditional conditional) {
 		URI target = URI.create(scope.serviceRoot() + "/$metadata");
 		HttpRequest.Builder builder = HttpRequest.newBuilder(target)
-				.timeout(REQUEST_TIMEOUT)
+				.timeout(config.requestTimeout())
 				.header("Accept", "application/xml")
-				.header("OData-MaxVersion", "4.01")
+				.header("OData-MaxVersion", config.odataMaxVersion())
 				.GET();
+		config.headers().forEach(builder::header); // auth / custom headers for a protected endpoint
 		conditional.etag().ifPresent(tag -> builder.header("If-None-Match", tag));
 		conditional.lastModified().ifPresent(since -> builder.header("If-Modified-Since", since));
 
@@ -125,13 +131,13 @@ public final class HttpODataSchemaReader implements ODataSchemaReader {
 		}
 	}
 
-	private static String readBounded(InputStream stream, URI target) {
-		int cap = (int) Math.min(MAX_METADATA_BYTES, Integer.MAX_VALUE - 1L);
+	private String readBounded(InputStream stream, URI target) {
+		int cap = (int) Math.min(config.maxResponseBytes(), Integer.MAX_VALUE - 1L);
 		try (InputStream in = stream) {
 			byte[] bytes = in.readNBytes(cap + 1);
 			if (bytes.length > cap) {
 				throw new ODataClientException("the $metadata from " + target
-						+ " exceeds the client limit of " + MAX_METADATA_BYTES + " bytes");
+						+ " exceeds the client limit of " + config.maxResponseBytes() + " bytes");
 			}
 			return new String(bytes, StandardCharsets.UTF_8);
 		} catch (IOException e) {

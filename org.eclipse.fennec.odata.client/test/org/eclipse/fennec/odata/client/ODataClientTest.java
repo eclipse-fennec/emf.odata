@@ -71,6 +71,9 @@ class ODataClientTest {
 	private final AtomicReference<String> lastWriteMethod = new AtomicReference<>();
 	private final AtomicReference<String> lastWriteBody = new AtomicReference<>();
 	private final AtomicReference<String> lastIfMatch = new AtomicReference<>();
+	private final AtomicReference<String> lastAuth = new AtomicReference<>();
+	private final AtomicReference<String> lastMaxVersion = new AtomicReference<>();
+	private final AtomicReference<String> lastCsrf = new AtomicReference<>();
 
 	@BeforeAll
 	void setUpStub() throws Exception {
@@ -78,6 +81,18 @@ class ODataClientTest {
 		server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
 		server.createContext("/odata/", exchange -> {
 			lastRequest.set(exchange.getRequestURI());
+			lastAuth.set(exchange.getRequestHeaders().getFirst("Authorization"));
+			lastMaxVersion.set(exchange.getRequestHeaders().getFirst("OData-MaxVersion"));
+			if ("Fetch".equalsIgnoreCase(exchange.getRequestHeaders().getFirst("X-CSRF-Token"))) {
+				exchange.getResponseHeaders().set("X-CSRF-Token", "tok-xyz");
+				try {
+					exchange.sendResponseHeaders(200, -1);
+				} catch (java.io.IOException ignored) {
+					// handled by the client as a failed exchange
+				}
+				exchange.close();
+				return;
+			}
 			String path = exchange.getRequestURI().getPath();
 			String method = exchange.getRequestMethod();
 			if (!"GET".equals(method)) {
@@ -337,9 +352,35 @@ class ODataClientTest {
 				lastRequest.get().toString());
 	}
 
+	@Test
+	@DisplayName("configured auth header and OData-MaxVersion are sent on every request (incl. $metadata)")
+	void configuredHeadersAreSent() {
+		ODataClientConfig config = ODataClientConfig.DEFAULTS.withBearerToken("tok123").withMaxVersion("4.0");
+		ODataClient client = ODataClient.connect(serviceRoot, config);
+		assertEquals("Bearer tok123", lastAuth.get(), "the $metadata fetch already carries the token");
+		assertEquals("4.0", lastMaxVersion.get());
+
+		client.entitySet("Product").list();
+		assertEquals("Bearer tok123", lastAuth.get(), "and so does a data request");
+	}
+
+	@Test
+	@DisplayName("CSRF: the client fetches a token, then sends it on the write (SAP handshake)")
+	void csrfHandshake() {
+		ODataClient client = ODataClient.connect(serviceRoot, ODataClientConfig.DEFAULTS.withCsrf());
+		EClass product = client.entityType("Product");
+		EObject p = product.getEPackage().getEFactoryInstance().create(product);
+		p.eSet(product.getEStructuralFeature("id"), "n1");
+		p.eSet(product.getEStructuralFeature("name"), "Milk");
+
+		client.entitySet("Product").create(p);
+		assertEquals("tok-xyz", lastCsrf.get(), "the write carries the fetched X-CSRF-Token");
+	}
+
 	private void handleWrite(HttpExchange exchange, String method, String path) throws IOException {
 		lastWriteMethod.set(method);
 		lastIfMatch.set(exchange.getRequestHeaders().getFirst("If-Match"));
+		lastCsrf.set(exchange.getRequestHeaders().getFirst("X-CSRF-Token"));
 		lastWriteBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
 		int status;
 		String answer = "";

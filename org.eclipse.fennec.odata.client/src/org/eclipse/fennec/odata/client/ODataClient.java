@@ -14,6 +14,7 @@ package org.eclipse.fennec.odata.client;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.CookieManager;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
@@ -21,6 +22,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -49,29 +51,32 @@ import org.eclipse.fennec.odata.schema.api.SchemaScope;
  */
 public final class ODataClient implements AutoCloseable {
 
-	/** Per-request timeout so a hung/slow service cannot block the calling thread indefinitely. */
-	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
-	private static final long DEFAULT_MAX_RESPONSE_BYTES = 16L * 1024 * 1024;
-
 	private final HttpClient http;
 	private final boolean ownsHttp;
 	private final URI serviceRoot;
 	private final List<EPackage> packages;
 	private final MetadataService metadataService;
+	private final ODataClientConfig config;
 
 	/**
 	 * Inbound-size cap: a foreign service without server-driven paging (or a hostile one) must not
-	 * OOM the client by streaming an unbounded body. Package-private and mutable so tests can lower
-	 * it; adjust before issuing the request whose response you want bounded.
+	 * OOM the client by streaming an unbounded body. Seeded from {@link ODataClientConfig}; kept
+	 * mutable (package-private) so tests can lower it before a specific request.
 	 */
-	long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
+	long maxResponseBytes;
+
+	/** Cached CSRF token (SAP handshake); {@code null} until fetched, cleared on a 403 Required. */
+	private final java.util.concurrent.atomic.AtomicReference<String> csrfToken =
+			new java.util.concurrent.atomic.AtomicReference<>();
 
 	private ODataClient(HttpClient http, boolean ownsHttp, URI serviceRoot, List<EPackage> packages,
-			MetadataWhiteboard whiteboard) {
+			MetadataWhiteboard whiteboard, ODataClientConfig config) {
 		this.http = http;
 		this.ownsHttp = ownsHttp;
 		this.serviceRoot = serviceRoot;
 		this.packages = List.copyOf(packages);
+		this.config = config;
+		this.maxResponseBytes = config.maxResponseBytes();
 		// the codec profile lookup runs against a MetadataService — decoupled like the
 		// server side: callers (OSGi wiring, tests) may inject their own whiteboard; the
 		// default is an ISOLATED plain-Java instance so the remote service's packages never
@@ -85,12 +90,22 @@ public final class ODataClient implements AutoCloseable {
 	public static ODataClient connect(String serviceRoot) {
 		// the HttpClient is created here, so this client OWNS it and closes it in close();
 		// a connect timeout bounds establishing the connection (the request timeout bounds the rest)
-		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-		return connect(serviceRoot, http, null, true);
+		// cookies enabled so a CSRF session cookie survives between the token fetch and the write
+		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+				.cookieHandler(new CookieManager()).build();
+		return connect(serviceRoot, http, null, true, ODataClientConfig.DEFAULTS);
+	}
+
+	/** {@link #connect(String)} with transport config (auth headers, version, timeout, size cap). */
+	public static ODataClient connect(String serviceRoot, ODataClientConfig config) {
+		// cookies enabled so a CSRF session cookie survives between the token fetch and the write
+		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+				.cookieHandler(new CookieManager()).build();
+		return connect(serviceRoot, http, null, true, config);
 	}
 
 	public static ODataClient connect(String serviceRoot, HttpClient http) {
-		return connect(serviceRoot, http, null);
+		return connect(serviceRoot, http, null, false, ODataClientConfig.DEFAULTS);
 	}
 
 	/**
@@ -100,18 +115,19 @@ public final class ODataClient implements AutoCloseable {
 	 */
 	public static ODataClient connect(String serviceRoot, HttpClient http,
 			MetadataWhiteboard whiteboard) {
-		return connect(serviceRoot, http, whiteboard, false);
+		return connect(serviceRoot, http, whiteboard, false, ODataClientConfig.DEFAULTS);
 	}
 
 	private static ODataClient connect(String serviceRoot, HttpClient http,
-			MetadataWhiteboard whiteboard, boolean ownsHttp) {
+			MetadataWhiteboard whiteboard, boolean ownsHttp, ODataClientConfig config) {
 		// convenience/standalone path == the opt-in "lazy" policy (ADR-0007): read the schema now
-		// (via the default reader) and build the data client from it, no external registry needed
+		// (via the default reader, same transport config) and build the data client from it
 		SchemaScope scope = SchemaScope.of(serviceRoot);
-		ODataSchema schema = new HttpODataSchemaReader(http).read(scope, ODataSchemaReader.Conditional.NONE)
+		ODataSchema schema = new HttpODataSchemaReader(http, config)
+				.read(scope, ODataSchemaReader.Conditional.NONE)
 				.orElseThrow(() -> new ODataClientException(
 						"no $metadata available for " + scope.serviceRoot()));
-		return new ODataClient(http, ownsHttp, dataRoot(scope), schema.packages(), whiteboard);
+		return new ODataClient(http, ownsHttp, dataRoot(scope), schema.packages(), whiteboard, config);
 	}
 
 	/**
@@ -121,9 +137,15 @@ public final class ODataClient implements AutoCloseable {
 	 */
 	public static ODataClient forEndpoint(SchemaScope scope, ODataSchemaResolver resolver,
 			HttpClient http) {
+		return forEndpoint(scope, resolver, http, ODataClientConfig.DEFAULTS);
+	}
+
+	/** {@link #forEndpoint(SchemaScope, ODataSchemaResolver, HttpClient)} with transport config. */
+	public static ODataClient forEndpoint(SchemaScope scope, ODataSchemaResolver resolver,
+			HttpClient http, ODataClientConfig config) {
 		ODataSchema schema = resolver.lookup(scope).orElseThrow(() -> new ODataClientException(
 				"endpoint not registered: " + scope.serviceRoot() + " — register its $metadata first"));
-		return new ODataClient(http, false, dataRoot(scope), schema.packages(), null);
+		return new ODataClient(http, false, dataRoot(scope), schema.packages(), null, config);
 	}
 
 	/**
@@ -133,7 +155,7 @@ public final class ODataClient implements AutoCloseable {
 	public static ODataClient forEndpoint(SchemaScope scope, ODataSchemaManager manager,
 			HttpClient http) {
 		return new ODataClient(http, false, dataRoot(scope), manager.ensureRegistered(scope).packages(),
-				null);
+				null, ODataClientConfig.DEFAULTS);
 	}
 
 	/** The data client resolves relative segments against the root, so it keeps the trailing slash. */
@@ -199,11 +221,48 @@ public final class ODataClient implements AutoCloseable {
 	}
 
 	/**
+	 * Package-private entry for reads and writes. Reads go straight through; writes additionally run
+	 * the CSRF handshake when {@link ODataClientConfig#csrf()} is on.
+	 */
+	Response exchange(String method, String relative, String accept, String body,
+			String contentType, Map<String, String> extraHeaders) {
+		if (!config.csrf() || "GET".equals(method) || "HEAD".equals(method)) {
+			return rawExchange(method, relative, accept, body, contentType, extraHeaders);
+		}
+		Map<String, String> headers = new LinkedHashMap<>(extraHeaders);
+		headers.put("X-CSRF-Token", ensureCsrfToken());
+		Response response = rawExchange(method, relative, accept, body, contentType, headers);
+		// token expired/invalid — SAP answers 403 with X-CSRF-Token: Required; refetch and retry once
+		if (response.status() == 403 && "required".equalsIgnoreCase(response.header("X-CSRF-Token"))) {
+			csrfToken.set(null);
+			headers.put("X-CSRF-Token", ensureCsrfToken());
+			response = rawExchange(method, relative, accept, body, contentType, headers);
+		}
+		return response;
+	}
+
+	/** Fetches and caches the CSRF token: a GET to the service root with {@code X-CSRF-Token: Fetch}. */
+	private String ensureCsrfToken() {
+		String token = csrfToken.get();
+		if (token != null) {
+			return token;
+		}
+		Response response = rawExchange("GET", "", "application/json", null, null,
+				Map.of("X-CSRF-Token", "Fetch"));
+		token = response.header("X-CSRF-Token");
+		if (token == null || token.isBlank()) {
+			throw new ODataClientException("the service returned no X-CSRF-Token on fetch");
+		}
+		csrfToken.set(token);
+		return token;
+	}
+
+	/**
 	 * A raw HTTP exchange with any method; enforces same-origin and the response size cap but does
 	 * NOT throw on a non-2xx status — the caller interprets it (writes need 201/204/404/412). The
 	 * body may be {@code null} (e.g. {@code DELETE}).
 	 */
-	Response exchange(String method, String relative, String accept, String body,
+	private Response rawExchange(String method, String relative, String accept, String body,
 			String contentType, Map<String, String> extraHeaders) {
 		URI target = serviceRoot.resolve(relative);
 		// a server-supplied absolute link (e.g. @odata.nextLink) must not steer the client — with
@@ -213,13 +272,14 @@ public final class ODataClient implements AutoCloseable {
 					"refusing to follow a link to a different origin than the service root: " + target);
 		}
 		HttpRequest.Builder builder = HttpRequest.newBuilder(target)
-				.timeout(REQUEST_TIMEOUT)
+				.timeout(config.requestTimeout())
 				.header("Accept", accept)
-				.header("OData-MaxVersion", "4.01");
+				.header("OData-MaxVersion", config.odataMaxVersion());
 		if (contentType != null) {
 			builder.header("Content-Type", contentType);
 		}
-		extraHeaders.forEach(builder::header);
+		config.headers().forEach(builder::header); // default headers (auth, custom)
+		extraHeaders.forEach(builder::header); // a per-call header (If-Match) wins
 		HttpRequest.BodyPublisher publisher = body == null ? HttpRequest.BodyPublishers.noBody()
 				: HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8);
 		builder.method(method, publisher);
