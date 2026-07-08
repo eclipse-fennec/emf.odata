@@ -48,6 +48,7 @@ import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
+import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -596,6 +597,32 @@ class ODataServletTest {
 		assertEquals(501, get("/Product", Map.of("$compute", "price mul 2 as d")).status());
 		assertEquals(400, get("/Product", Map.of("$frobnicate", "x")).status(),
 				"unknown $-option → 400");
+	}
+
+	@Test
+	@DisplayName("unbound function import: resolved+dispatched to a handler; 501 without one; 404 unknown")
+	void unboundFunctionImport() throws Exception {
+		// resolved (the model declares it) but no handler yet → 501
+		assertEquals(501, get("/doubleOf(n=21)", Map.of()).status());
+
+		servlet.addOperationHandler(new ODataOperationHandler() {
+			@Override
+			public boolean handles(String qualifiedOperationName) {
+				return qualifiedOperationName.endsWith(".doubleOf");
+			}
+
+			@Override
+			public Object invoke(org.eclipse.emf.ecore.EOperation operation, EObject boundInstance,
+					Map<String, Object> parameters) {
+				return ((Number) parameters.get("n")).intValue() * 2;
+			}
+		});
+
+		Response ok = get("/doubleOf(n=21)", Map.of());
+		assertEquals(200, ok.status(), ok.body());
+		assertTrue(ok.body().contains("\"value\":42"), ok.body());
+
+		assertEquals(404, get("/nosuchfunc(n=1)", Map.of()).status(), "unknown function import → 404");
 	}
 
 	@Test

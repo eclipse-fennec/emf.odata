@@ -31,7 +31,12 @@ import java.security.NoSuchAlgorithmException;
 
 import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.emf.common.util.URI;
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EClassifier;
+import org.eclipse.emf.ecore.EDataType;
+import org.eclipse.emf.ecore.EOperation;
+import org.eclipse.emf.ecore.EParameter;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EAttribute;
@@ -53,7 +58,9 @@ import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.model.metadata.api.MetadataService;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
+import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.eclipse.fennec.odata.csdl.OdataResolver;
+import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.codec.resource.CodecResource;
@@ -140,6 +147,7 @@ public class ODataServlet extends HttpServlet {
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	private final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	private final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
+	private final List<ODataOperationHandler> operationHandlers = new CopyOnWriteArrayList<>();
 	private final CachingODataQueryParser parser = new CachingODataQueryParser();
 	private final OclEvaluator expandFilterEvaluator = new OclEvaluator();
 	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
@@ -180,6 +188,15 @@ public class ODataServlet extends HttpServlet {
 
 	void removeWriteService(WriteService writeService) {
 		writeServices.remove(writeService);
+	}
+
+	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void addOperationHandler(ODataOperationHandler handler) {
+		operationHandlers.add(handler);
+	}
+
+	void removeOperationHandler(ODataOperationHandler handler) {
+		operationHandlers.remove(handler);
 	}
 
 	@Reference
@@ -1077,6 +1094,10 @@ public class ODataServlet extends HttpServlet {
 	/** Dispatches a parsed resource path: set, set/$count, keyed entity, navigation walk. */
 	private void resource(String rawPath, HttpServletRequest request, HttpServletResponse response)
 			throws IOException {
+		if (isFunctionCall(rawPath)) {
+			functionImport(rawPath, request, response); // GET FuncName(p=…) — the resource parser
+			return;                                      // deliberately does not model function segments
+		}
 		ResourcePath path;
 		try {
 			path = resourceParser.parse(rawPath);
@@ -1133,6 +1154,116 @@ public class ODataServlet extends HttpServlet {
 				List.of(), 0, 0, true));
 		response.setContentType("text/plain;charset=UTF-8");
 		response.getWriter().write(String.valueOf(result.totalCount()));
+	}
+
+	// --- function/action invocation (unbound function imports, GET) ---
+
+	/** A single-segment path {@code Name()} / {@code Name(p=…)} — a function/action import call. */
+	private static boolean isFunctionCall(String rawPath) {
+		if (rawPath.indexOf('/') >= 0 || !rawPath.endsWith(")")) {
+			return false;
+		}
+		int paren = rawPath.indexOf('(');
+		if (paren <= 0) {
+			return false;
+		}
+		String inside = rawPath.substring(paren + 1, rawPath.length() - 1);
+		// distinguish from an entity key Set('x')/Set(1): a function has named params (or none)
+		return inside.isBlank() || inside.matches("\\s*[A-Za-z_]\\w*\\s*=.*");
+	}
+
+	/** Invokes an unbound function import: resolve the operation, coerce params, dispatch, serialize. */
+	private void functionImport(String rawPath, HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		int paren = rawPath.indexOf('(');
+		String name = rawPath.substring(0, paren);
+		String parameterList = rawPath.substring(paren + 1, rawPath.length() - 1);
+		UnboundOperation resolved = resolveUnboundFunction(name);
+		if (resolved == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "no function import '" + name + "'");
+			return;
+		}
+		Map<String, Object> parameters = functionParameters(parameterList, resolved.operation());
+		ODataOperationHandler handler = operationHandlers.stream()
+				.filter(h -> h.handles(resolved.qualifiedName())).findFirst().orElse(null);
+		if (handler == null) {
+			error(response, 501, "no handler for the operation");
+			return;
+		}
+		Object result = handler.invoke(resolved.operation(), null, parameters);
+		writeFunctionResult(result, response);
+	}
+
+	/** An unbound operation plus its namespace-qualified name (the handler dispatch key). */
+	private record UnboundOperation(EOperation operation, String qualifiedName) {
+	}
+
+	/** Finds an unbound ({@code @OData.Bound=false}) operation with the given name across the models. */
+	private UnboundOperation resolveUnboundFunction(String name) {
+		for (EPackage pkg : packages) {
+			ODataPackageProfile profile = profiles.computeIfAbsent(pkg,
+					p -> new OdataResolver().resolve(p));
+			for (EClassifier classifier : pkg.getEClassifiers()) {
+				if (classifier instanceof EClass eClass) {
+					for (EOperation operation : eClass.getEAllOperations()) {
+						if (operation.getName().equals(name) && isUnbound(operation)) {
+							return new UnboundOperation(operation, profile.getNamespace() + "." + name);
+						}
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	private static boolean isUnbound(EOperation operation) {
+		EAnnotation annotation = operation.getEAnnotation(ODataAnnotationConstants.SOURCE);
+		return annotation != null
+				&& "false".equals(annotation.getDetails().get(ODataAnnotationConstants.BOUND));
+	}
+
+	private static Map<String, Object> functionParameters(String parameterList, EOperation operation) {
+		Map<String, Object> parameters = new LinkedHashMap<>();
+		if (parameterList.isBlank()) {
+			return parameters;
+		}
+		for (String part : parameterList.split(",")) {
+			int equals = part.indexOf('=');
+			if (equals < 0) {
+				throw new ODataQueryParseException("function parameter must be name=value: " + part);
+			}
+			String parameterName = part.substring(0, equals).trim();
+			String raw = part.substring(equals + 1).trim();
+			EParameter parameter = operation.getEParameters().stream()
+					.filter(p -> p.getName().equals(parameterName)).findFirst()
+					.orElseThrow(() -> new ODataQueryParseException(
+							"unknown parameter '" + parameterName + "'"));
+			parameters.put(parameterName, coerceParameter(raw, parameter));
+		}
+		return parameters;
+	}
+
+	private static Object coerceParameter(String raw, EParameter parameter) {
+		String literal = raw.length() >= 2 && raw.startsWith("'") && raw.endsWith("'")
+				? raw.substring(1, raw.length() - 1).replace("''", "'")
+				: raw;
+		if (parameter.getEType() instanceof EDataType dataType) {
+			return EcoreUtil.createFromString(dataType, literal);
+		}
+		return literal;
+	}
+
+	/** Serializes a function result. Primitive/void for now; entity/collection follow (→ 501). */
+	private void writeFunctionResult(Object result, HttpServletResponse response) throws IOException {
+		if (result == null) {
+			response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+			return;
+		}
+		if (result instanceof EObject || result instanceof java.util.Collection) {
+			throw new UnsupportedOperationException("entity/collection function results");
+		}
+		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		response.getWriter().write("{\"value\":" + JSON.writeValueAsString(result) + "}");
 	}
 
 	/**
