@@ -108,6 +108,10 @@ class ODataClientTest {
 			} else if (path.endsWith("/Product/$count")) {
 				answer = "5";
 				contentType = "text/plain;charset=UTF-8";
+			} else if (path.endsWith("/Product")
+					&& exchange.getRequestURI().getRawQuery() != null
+					&& exchange.getRequestURI().getRawQuery().contains("$apply")) {
+				answer = "{\"value\":[{\"category\":{\"name\":\"Dairy\"},\"Total\":5.70}]}";
 			} else if (path.endsWith("/Product('p1')")) {
 				answer = """
 						{"@odata.context":"/odata/$metadata#Product/$entity","id":"p1",\
@@ -362,6 +366,33 @@ class ODataClientTest {
 
 		client.entitySet("Product").list();
 		assertEquals("Bearer tok123", lastAuth.get(), "and so does a data request");
+	}
+
+	@Test
+	@DisplayName("$apply aggregation decodes into generic grouped rows")
+	void applyReturnsRows() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		java.util.List<java.util.Map<String, Object>> rows = client.entitySet("Product")
+				.apply("groupby((category/name),aggregate(price with sum as Total))");
+		assertEquals(1, rows.size());
+		assertTrue(lastRequest.get().toString().contains("$apply"), lastRequest.get().toString());
+		@SuppressWarnings("unchecked")
+		java.util.Map<String, Object> category = (java.util.Map<String, Object>) rows.get(0).get("category");
+		assertEquals("Dairy", category.get("name"));
+	}
+
+	@Test
+	@DisplayName("$search / $compute / $format / parameter aliases assemble into the query")
+	void extraQueryOptionsAssemble() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		client.entitySet("Product")
+				.search("milk").compute("price mul 2 as dbl").format("json")
+				.parameterAlias("p", "3.00").filter("price lt @p").list();
+		String query = lastRequest.get().getRawQuery();
+		assertTrue(query.contains("$search=milk"), query);
+		assertTrue(query.contains("$compute=price%20mul%202%20as%20dbl"), query);
+		assertTrue(query.contains("$format=json"), query);
+		assertTrue(query.contains("@p=3.00"), query);
 	}
 
 	@Test

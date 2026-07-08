@@ -79,6 +79,40 @@ public final class EntitySetRequest {
 		return this;
 	}
 
+	/** {@code $search} — free-text search (server SHOULD support it). */
+	public EntitySetRequest search(String expression) {
+		options.put("$search", expression);
+		return this;
+	}
+
+	/** {@code $compute} — server-computed properties, e.g. {@code price mul 1.19 as gross}. */
+	public EntitySetRequest compute(String expression) {
+		options.put("$compute", expression);
+		return this;
+	}
+
+	/** {@code $format}, e.g. {@code json} or {@code xml}. */
+	public EntitySetRequest format(String format) {
+		options.put("$format", format);
+		return this;
+	}
+
+	/** A 4.01 parameter alias {@code @name=value} referenced from {@code $filter}/{@code $orderby}. */
+	public EntitySetRequest parameterAlias(String name, String value) {
+		options.put(name.startsWith("@") ? name : "@" + name, value);
+		return this;
+	}
+
+	/**
+	 * {@code $apply} aggregation, e.g.
+	 * {@code groupby((category/name),aggregate(price with sum as Total))}. The result rows are
+	 * grouping keys + aggregate aliases (not entities), returned as generic maps.
+	 */
+	public List<Map<String, Object>> apply(String applyExpression) {
+		options.put("$apply", applyExpression);
+		return ODataJsonDecoder.rows(client.fetch(setName + queryString(), "application/json"));
+	}
+
 	/** Executes the request and decodes one page. */
 	public ODataPage list() {
 		return ODataJsonDecoder.page(client.fetch(setName + queryString(), "application/json"),

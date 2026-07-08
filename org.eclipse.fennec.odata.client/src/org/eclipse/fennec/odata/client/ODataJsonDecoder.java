@@ -62,6 +62,25 @@ final class ODataJsonDecoder {
 		return decode(parse(json), entityType, metadataService);
 	}
 
+	/**
+	 * Decodes a {@code $apply} response into generic rows: aggregation results are grouping keys +
+	 * aggregate aliases (possibly nested), NOT entities, so they surface as plain maps.
+	 */
+	static List<Map<String, Object>> rows(String json) {
+		JsonNode root = parse(json);
+		JsonNode value = root.get("value");
+		if (value == null || !value.isArray()) {
+			throw new ODataClientException("the $apply response carries no 'value' array");
+		}
+		List<Map<String, Object>> rows = new ArrayList<>();
+		for (JsonNode element : value) {
+			@SuppressWarnings("unchecked")
+			Map<String, Object> row = MAPPER.convertValue(element, Map.class);
+			rows.add(row);
+		}
+		return rows;
+	}
+
 	private static JsonNode parse(String json) {
 		try {
 			return MAPPER.readTree(json);
