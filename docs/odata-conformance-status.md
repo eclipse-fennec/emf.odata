@@ -82,10 +82,11 @@ wiederverwendet, pro Entity im Servlet via `OclEvaluator` ausgewertet und in die
 · ✅ **NEU 2026-07-08**: **Functions & Actions** (Advanced): unbound+bound Functions (GET,
 primitiv/Entity/Collection), unbound Actions (POST) via `ODataOperationHandler`-SPI; Client
 `function`/`boundFunction`/`action`
-· ✅ **NEU 2026-07-08**: **Query-Optionen auf Navigationspfaden**: `$filter`/`$top`/`$skip`/`$count`
-auf einer Navigations-Collection (`Set(key)/nav?$filter=…`), `/$count` zählt die **gefilterte**
-Collection; nicht implementierte Optionen (`$orderby`, `$expand`, …) auf Nav-Pfaden weiterhin 501;
-Client threadet die Query-Option-Builder über `navigateCollection`
+· ✅ **NEU 2026-07-08**: **Query-Optionen auf Navigationspfaden**: `$filter`/`$orderby`/`$top`/`$skip`/
+`$count` auf einer Navigations-Collection (`Set(key)/nav?$filter=…&$orderby=…`), `/$count` zählt die
+**gefilterte** Collection, `$orderby` sortiert in-memory (multi-key, null-first); nicht implementierte
+Optionen (`$select`, `$expand`, …) auf Nav-Pfaden weiterhin 501; Client threadet die
+Query-Option-Builder über `navigateCollection`
 · ✅ **NEU 2026-07-08**: **`$batch` (OData-v4.01-JSON-Batch-Format)**: `POST <root>/$batch` mit
 `{"requests":[…]}`; jede Sub-Request wird über eine synthetische Request/Response durch dieselbe
 `service()`-Pipeline dispatcht (Query-Optionen, Writes, Functions verhalten sich wie top-level);
@@ -93,8 +94,8 @@ Client threadet die Query-Option-Builder über `navigateCollection`
 `multipart/mixed` → `415`; Client-Builder `ODataClient.batch()` (`read`/`create`/`update`/`delete`/
 `add`, `Result.asEntity`/`asPage`). ⚠️ **Lücke**: `atomicityGroup` wird geparst, aber es gibt kein
 Cross-Request-Rollback (WriteService committet pro Aufruf) → Change-Sets best-effort, nicht atomar.
-· ❌ Rest-SHOULDs: `$compute`-Alias referenziert in `$filter`/`$select`/`$orderby`, `$orderby` auf
-Navigationspfaden, `$compute`-Werte client-seitig typisiert lesen, atomare `$batch`-Change-Sets —
+· ❌ Rest-SHOULDs: `$compute`-Alias referenziert in `$filter`/`$select`/`$orderby`, `$compute`-Werte
+client-seitig typisiert lesen, atomare `$batch`-Change-Sets —
 **alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen Intermediate-SHOULDs (`$search`,
 `$compute`, `$filter`-in-`$expand`, Nav-Pfad-Query-Optionen) plus `$batch` jetzt ebenfalls**.
 

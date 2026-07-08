@@ -501,13 +501,14 @@ class ODataClientTest {
 	}
 
 	@Test
-	@DisplayName("query options thread onto a navigation-collection request ($filter/$top)")
+	@DisplayName("query options thread onto a navigation-collection request ($filter/$orderby/$top)")
 	void navigationPathQueryOptions() {
 		ODataClient client = ODataClient.connect(serviceRoot);
-		client.entitySet("Product").filter("stars ge 4").top(1)
+		client.entitySet("Product").filter("stars ge 4").orderBy("stars desc").top(1)
 				.navigateCollection("'p1'", "reviews");
 		String query = lastRequest.get().getRawQuery();
 		assertTrue(query != null && query.contains("$filter=stars%20ge%204"), String.valueOf(query));
+		assertTrue(query.contains("$orderby=stars%20desc"), String.valueOf(query));
 		assertTrue(query.contains("$top=1"), String.valueOf(query));
 		assertTrue(lastRequest.get().getRawPath().endsWith("/Product('p1')/reviews"),
 				lastRequest.get().toString());

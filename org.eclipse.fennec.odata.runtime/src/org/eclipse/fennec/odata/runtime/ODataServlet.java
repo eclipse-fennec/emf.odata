@@ -20,6 +20,7 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -1986,10 +1987,11 @@ public class ODataServlet extends HttpServlet {
 	 */
 	private void walk(ResourcePath path, EObject root, HttpServletRequest request,
 			HttpServletResponse response) throws IOException {
-		// on a navigation path we apply $filter/$top/$skip/$count to a terminal collection (13.1.2
-		// SHOULD); other options ($orderby/$select/$expand/$apply/$search/$compute) stay 501 here
+		// on a navigation path we apply $filter/$orderby/$top/$skip/$count to a terminal collection
+		// (13.1.2 SHOULD); other options ($select/$expand/$apply/$search/$compute) stay 501 here
 		for (String option : SUPPORTED_OPTIONS) {
-			boolean handledOnNav = Set.of("$format", "$filter", "$top", "$skip", "$count").contains(option);
+			boolean handledOnNav = Set.of("$format", "$filter", "$orderby", "$top", "$skip", "$count")
+					.contains(option);
 			if (!handledOnNav && option(request, option) != null) {
 				error(response, 501, "this query option is not implemented on navigation paths");
 				return;
@@ -2080,8 +2082,8 @@ public class ODataServlet extends HttpServlet {
 				}
 			}
 		}
-		if (current instanceof List<?> collection) { // terminal nav collection: $filter/$skip/$top
-			current = pageCollection(filterCollection(collection, request), request);
+		if (current instanceof List<?> collection) { // terminal nav collection: $filter/$orderby/$skip/$top
+			current = pageCollection(orderCollection(filterCollection(collection, request), request), request);
 		}
 		writeWalkedValue(path, current, request, response);
 	}
@@ -2102,6 +2104,51 @@ public class ODataServlet extends HttpServlet {
 			}
 		}
 		return filtered;
+	}
+
+	/** Applies {@code $orderby} to a walked entity collection (in-memory; multi-key, null-safe). */
+	private List<?> orderCollection(List<?> collection, HttpServletRequest request) {
+		String orderby = option(request, "$orderby");
+		if (orderby == null || orderby.isBlank() || collection.isEmpty()
+				|| !(collection.get(0) instanceof EObject sample)) {
+			return collection;
+		}
+		limits.checkExpression(orderby);
+		List<OrderBySegment> segments = parser.parseOrderBy(orderby, sample.eClass());
+		Comparator<Object> comparator = null;
+		for (OrderBySegment segment : segments) {
+			Comparator<Object> byKey = (a, b) -> compareValues(
+					expandFilterEvaluator.evaluate(segment.expression(), a),
+					expandFilterEvaluator.evaluate(segment.expression(), b));
+			if (!segment.ascending()) {
+				byKey = byKey.reversed();
+			}
+			comparator = comparator == null ? byKey : comparator.thenComparing(byKey);
+		}
+		List<Object> sorted = new ArrayList<>(collection);
+		sorted.sort(comparator);
+		return sorted;
+	}
+
+	/** OData ordering of two evaluated sort keys: null sorts before any value (ascending). */
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private static int compareValues(Object x, Object y) {
+		if (x == null && y == null) {
+			return 0;
+		}
+		if (x == null) {
+			return -1;
+		}
+		if (y == null) {
+			return 1;
+		}
+		if (x instanceof Enumerator ex && y instanceof Enumerator ey) {
+			return ex.getLiteral().compareTo(ey.getLiteral());
+		}
+		if (x instanceof Comparable && x.getClass().isInstance(y)) {
+			return ((Comparable) x).compareTo(y);
+		}
+		return String.valueOf(x).compareTo(String.valueOf(y));
 	}
 
 	/** Applies {@code $skip}/{@code $top} to a walked collection. */

@@ -740,8 +740,13 @@ class ODataServletTest {
 		assertEquals("1", get("/Product('p1')/reviews/$count", Map.of("$filter", "stars ge 4"))
 				.body().trim(), "$count is of the FILTERED collection");
 
-		assertEquals(501, get("/Product('p1')/reviews", Map.of("$orderby", "stars")).status(),
-				"$orderby on a navigation path is not implemented yet");
+		Response ordered = get("/Product('p1')/reviews", Map.of("$orderby", "stars desc"));
+		assertEquals(200, ordered.status(), ordered.body());
+		assertTrue(ordered.body().indexOf("great") < ordered.body().indexOf("poor"),
+				"$orderby stars desc puts the 5-star review first: " + ordered.body());
+
+		assertEquals(501, get("/Product('p1')/reviews", Map.of("$select", "stars")).status(),
+				"$select on a navigation path is not implemented yet");
 	}
 
 	@Test
@@ -1316,7 +1321,7 @@ class ODataServletTest {
 
 		assertEquals(404, get("/Product('p1')/nosuch", Map.of()).status(), "unknown segment");
 		assertEquals(501, get("/Product('p1')/category/$ref", Map.of()).status(), "$ref later");
-		assertEquals(501, get("/Product('p1')/category", Map.of("$orderby", "name")).status(),
+		assertEquals(501, get("/Product('p1')/category", Map.of("$select", "name")).status(),
 				"unimplemented query options on navigation paths → 501");
 		assertEquals(404, get("/NoSet('x')/name", Map.of()).status());
 	}
