@@ -6,6 +6,7 @@ Bundle-Version: 1.0.0
 
 -buildpath: \
 	org.osgi.service.condition;version=latest,\
+	org.eclipse.fennec.odata.schema.api;version=project,\
 	org.eclipse.fennec.odata.csdl;version=project,\
 	org.eclipse.fennec.odata.codec.json;version=project,\
 	org.eclipse.fennec.codec.api;version=latest,\

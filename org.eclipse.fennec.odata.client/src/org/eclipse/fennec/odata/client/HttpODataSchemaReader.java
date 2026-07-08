@@ -1,0 +1,118 @@
+/*
+ * Copyright (c) 2026 Contributors to the Eclipse Foundation.
+ *
+ * This program and the accompanying materials are made
+ * available under the terms of the Eclipse Public License 2.0
+ * which is available at https://www.eclipse.org/legal/epl-2.0/
+ *
+ * SPDX-License-Identifier: EPL-2.0
+ *
+ * Contributors:
+ *   Data In Motion Consulting - initial implementation
+ */
+package org.eclipse.fennec.odata.client;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Optional;
+
+import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.fennec.odata.schema.api.ODataSchema;
+import org.eclipse.fennec.odata.schema.api.ODataSchemaReader;
+import org.eclipse.fennec.odata.schema.api.SchemaScope;
+
+/**
+ * Default {@link ODataSchemaReader}: fetches an endpoint's {@code $metadata} over HTTP and converts
+ * the CSDL to Ecore ({@link CsdlMetadataReader} + the E2 converter), side-effect-free (ADR-0007).
+ * The content hash of the raw CSDL is the authoritative version; ETag/Last-Modified are captured
+ * for a later conditional {@code GET} so an unchanged document is not re-downloaded.
+ */
+public final class HttpODataSchemaReader implements ODataSchemaReader {
+
+	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
+	private static final long MAX_METADATA_BYTES = 16L * 1024 * 1024;
+
+	private final HttpClient http;
+
+	public HttpODataSchemaReader(HttpClient http) {
+		this.http = http;
+	}
+
+	@Override
+	public Optional<ODataSchema> read(SchemaScope scope, Conditional conditional) {
+		URI target = URI.create(scope.serviceRoot() + "/$metadata");
+		HttpRequest.Builder builder = HttpRequest.newBuilder(target)
+				.timeout(REQUEST_TIMEOUT)
+				.header("Accept", "application/xml")
+				.header("OData-MaxVersion", "4.01")
+				.GET();
+		conditional.etag().ifPresent(tag -> builder.header("If-None-Match", tag));
+		conditional.lastModified().ifPresent(since -> builder.header("If-Modified-Since", since));
+
+		HttpResponse<InputStream> response;
+		try {
+			response = http.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
+		} catch (IOException e) {
+			throw new ODataClientException("GET " + target + " failed", e);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new ODataClientException("GET " + target + " interrupted", e);
+		}
+		if (response.statusCode() == 304) {
+			return Optional.empty(); // unchanged — the caller keeps the registered schema
+		}
+		String csdl = readBounded(response.body(), target);
+		if (response.statusCode() / 100 != 2) {
+			throw new ODataClientException("GET " + target + " answered "
+					+ response.statusCode(), response.statusCode(), csdl);
+		}
+		Optional<String> etag = response.headers().firstValue("ETag");
+		Optional<String> lastModified = response.headers().firstValue("Last-Modified");
+		return Optional.of(build(scope, csdl, etag, lastModified));
+	}
+
+	@Override
+	public ODataSchema read(SchemaScope scope, String csdl) {
+		return build(scope, csdl, Optional.empty(), Optional.empty());
+	}
+
+	private static ODataSchema build(SchemaScope scope, String csdl,
+			Optional<String> etag, Optional<String> lastModified) {
+		List<EPackage> packages = CsdlMetadataReader.read(csdl);
+		return new ODataSchema(scope, packages, sha256(csdl), etag, lastModified);
+	}
+
+	private static String sha256(String csdl) {
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256")
+					.digest(csdl.getBytes(StandardCharsets.UTF_8));
+			return HexFormat.of().formatHex(digest);
+		} catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException("SHA-256 unavailable", e);
+		}
+	}
+
+	private static String readBounded(InputStream stream, URI target) {
+		int cap = (int) Math.min(MAX_METADATA_BYTES, Integer.MAX_VALUE - 1L);
+		try (InputStream in = stream) {
+			byte[] bytes = in.readNBytes(cap + 1);
+			if (bytes.length > cap) {
+				throw new ODataClientException("the $metadata from " + target
+						+ " exceeds the client limit of " + MAX_METADATA_BYTES + " bytes");
+			}
+			return new String(bytes, StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			throw new ODataClientException("reading $metadata from " + target + " failed", e);
+		}
+	}
+}

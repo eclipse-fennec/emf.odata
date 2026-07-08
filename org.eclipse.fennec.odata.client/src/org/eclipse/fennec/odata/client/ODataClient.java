@@ -27,6 +27,10 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.codec.util.MetadataServiceFactory;
 import org.eclipse.fennec.model.metadata.api.MetadataService;
 import org.eclipse.fennec.model.metadata.api.MetadataWhiteboard;
+import org.eclipse.fennec.odata.schema.api.ODataSchema;
+import org.eclipse.fennec.odata.schema.api.ODataSchemaReader;
+import org.eclipse.fennec.odata.schema.api.ODataSchemaResolver;
+import org.eclipse.fennec.odata.schema.api.SchemaScope;
 
 /**
  * OData v4 client foundation (E8): connects to a service root, reads {@code $metadata} into
@@ -99,11 +103,40 @@ public final class ODataClient implements AutoCloseable {
 
 	private static ODataClient connect(String serviceRoot, HttpClient http,
 			MetadataWhiteboard whiteboard, boolean ownsHttp) {
-		URI root = URI.create(serviceRoot.endsWith("/") ? serviceRoot : serviceRoot + "/");
-		// the throwaway bootstrap client never owns the HttpClient — only the returned one does
-		ODataClient boot = new ODataClient(http, false, root, List.of(), whiteboard);
-		String csdl = boot.fetch("$metadata", "application/xml");
-		return new ODataClient(http, ownsHttp, root, CsdlMetadataReader.read(csdl), whiteboard);
+		// convenience/standalone path == the opt-in "lazy" policy (ADR-0007): read the schema now
+		// (via the default reader) and build the data client from it, no external registry needed
+		SchemaScope scope = SchemaScope.of(serviceRoot);
+		ODataSchema schema = new HttpODataSchemaReader(http).read(scope, ODataSchemaReader.Conditional.NONE)
+				.orElseThrow(() -> new ODataClientException(
+						"no $metadata available for " + scope.serviceRoot()));
+		return new ODataClient(http, ownsHttp, dataRoot(scope), schema.packages(), whiteboard);
+	}
+
+	/**
+	 * Builds a DATA client for an ALREADY-registered endpoint (ADR-0007): the schema is looked up in
+	 * the registry — no {@code $metadata} fetch happens on this path. A missing scope is a hard error
+	 * (the endpoint must be registered first); the caller owns the {@link HttpClient}.
+	 */
+	public static ODataClient forEndpoint(SchemaScope scope, ODataSchemaResolver resolver,
+			HttpClient http) {
+		ODataSchema schema = resolver.lookup(scope).orElseThrow(() -> new ODataClientException(
+				"endpoint not registered: " + scope.serviceRoot() + " — register its $metadata first"));
+		return new ODataClient(http, false, dataRoot(scope), schema.packages(), null);
+	}
+
+	/**
+	 * As {@link #forEndpoint(SchemaScope, ODataSchemaResolver, HttpClient)} but registers the schema
+	 * on first use — the opt-in lazy policy for standalone callers.
+	 */
+	public static ODataClient forEndpoint(SchemaScope scope, ODataSchemaManager manager,
+			HttpClient http) {
+		return new ODataClient(http, false, dataRoot(scope), manager.ensureRegistered(scope).packages(),
+				null);
+	}
+
+	/** The data client resolves relative segments against the root, so it keeps the trailing slash. */
+	private static URI dataRoot(SchemaScope scope) {
+		return URI.create(scope.serviceRoot() + "/");
 	}
 
 	/**
