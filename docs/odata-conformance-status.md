@@ -81,7 +81,9 @@ wiederverwendet, pro Entity im Servlet via `OclEvaluator` ausgewertet und in die
 (`$expand=reviews($filter=…)`, Test `filterInExpand`; die frühere ❌ war veraltet)
 · ✅ **NEU 2026-07-08**: **Functions & Actions** (Advanced): unbound+bound Functions (GET,
 primitiv/Entity/Collection), unbound Actions (POST) via `ODataOperationHandler`-SPI; Client
-`function`/`boundFunction`/`action`
+`function`/`boundFunction`/`action` **plus typisierte Varianten** `functionAsEntity`/
+`functionAsCollection`/`actionAsEntity`/`actionAsCollection`/`boundFunctionAsEntity`/
+`boundFunctionAsCollection` (Entity → `EObject`, Collection → `ODataPage` über den E3-Codec)
 · ✅ **NEU 2026-07-08**: **Query-Optionen auf Navigationspfaden**: `$filter`/`$orderby`/`$top`/`$skip`/
 `$count` auf einer Navigations-Collection (`Set(key)/nav?$filter=…&$orderby=…`), `/$count` zählt die
 **gefilterte** Collection, `$orderby` sortiert in-memory (multi-key, null-first); nicht implementierte

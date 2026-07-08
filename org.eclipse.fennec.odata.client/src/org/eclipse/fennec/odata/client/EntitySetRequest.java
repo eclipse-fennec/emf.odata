@@ -180,6 +180,27 @@ public final class EntitySetRequest {
 	 * function name (e.g. {@code My.Shop.label}).
 	 */
 	public Object boundFunction(String keyLiteral, String qualifiedName, Map<String, ?> parameters) {
+		return ODataJsonDecoder.value(
+				client.fetch(boundFunctionCall(keyLiteral, qualifiedName, parameters), "application/json"));
+	}
+
+	/** As {@link #boundFunction}, but decodes an entity-typed result into an {@link EObject}. */
+	public EObject boundFunctionAsEntity(String keyLiteral, String qualifiedName,
+			Map<String, ?> parameters, EClass resultType) {
+		return ODataJsonDecoder.entity(
+				client.fetch(boundFunctionCall(keyLiteral, qualifiedName, parameters), "application/json"),
+				resultType, client.metadataService());
+	}
+
+	/** As {@link #boundFunction}, but decodes an entity-collection result into an {@link ODataPage}. */
+	public ODataPage boundFunctionAsCollection(String keyLiteral, String qualifiedName,
+			Map<String, ?> parameters, EClass resultType) {
+		return ODataJsonDecoder.page(
+				client.fetch(boundFunctionCall(keyLiteral, qualifiedName, parameters), "application/json"),
+				resultType, client.metadataService());
+	}
+
+	private String boundFunctionCall(String keyLiteral, String qualifiedName, Map<String, ?> parameters) {
 		StringBuilder call = new StringBuilder(entityPath(keyLiteral)).append('/')
 				.append(qualifiedName).append('(');
 		boolean first = true;
@@ -190,8 +211,7 @@ public final class EntitySetRequest {
 			first = false;
 			call.append(parameter.getKey()).append('=').append(literal(parameter.getValue()));
 		}
-		call.append(')');
-		return ODataJsonDecoder.value(client.fetch(call.toString(), "application/json"));
+		return call.append(')').toString();
 	}
 
 	private static String literal(Object value) {

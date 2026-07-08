@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.codec.util.MetadataServiceFactory;
 import org.eclipse.fennec.model.metadata.api.MetadataService;
@@ -214,6 +215,22 @@ public final class ODataClient implements AutoCloseable {
 	 * OData literals (strings quoted). Returns the primitive {@code value} of the response.
 	 */
 	public Object function(String name, Map<String, ?> parameters) {
+		return ODataJsonDecoder.value(fetch(functionCall(name, parameters), "application/json"));
+	}
+
+	/** As {@link #function}, but decodes an entity-typed result into an {@link EObject}. */
+	public EObject functionAsEntity(String name, Map<String, ?> parameters, EClass resultType) {
+		return ODataJsonDecoder.entity(fetch(functionCall(name, parameters), "application/json"),
+				resultType, metadataService);
+	}
+
+	/** As {@link #function}, but decodes an entity-collection result into an {@link ODataPage}. */
+	public ODataPage functionAsCollection(String name, Map<String, ?> parameters, EClass resultType) {
+		return ODataJsonDecoder.page(fetch(functionCall(name, parameters), "application/json"),
+				resultType, metadataService);
+	}
+
+	private static String functionCall(String name, Map<String, ?> parameters) {
 		StringBuilder call = new StringBuilder(name).append('(');
 		boolean first = true;
 		for (Map.Entry<String, ?> parameter : parameters.entrySet()) {
@@ -223,8 +240,7 @@ public final class ODataClient implements AutoCloseable {
 			first = false;
 			call.append(parameter.getKey()).append('=').append(functionLiteral(parameter.getValue()));
 		}
-		call.append(')');
-		return ODataJsonDecoder.value(fetch(call.toString(), "application/json"));
+		return call.append(')').toString();
 	}
 
 	private static String functionLiteral(Object value) {
@@ -239,6 +255,26 @@ public final class ODataClient implements AutoCloseable {
 	 * Returns the response {@code value} (or {@code null} for a 204 / bodiless action).
 	 */
 	public Object action(String name, Map<String, ?> parameters) {
+		String body = actionResult(name, parameters);
+		return body == null || body.isBlank() ? null : ODataJsonDecoder.value(body);
+	}
+
+	/** As {@link #action}, but decodes an entity-typed result into an {@link EObject}. */
+	public EObject actionAsEntity(String name, Map<String, ?> parameters, EClass resultType) {
+		String body = actionResult(name, parameters);
+		return body == null || body.isBlank() ? null
+				: ODataJsonDecoder.entity(body, resultType, metadataService);
+	}
+
+	/** As {@link #action}, but decodes an entity-collection result into an {@link ODataPage}. */
+	public ODataPage actionAsCollection(String name, Map<String, ?> parameters, EClass resultType) {
+		String body = actionResult(name, parameters);
+		return body == null || body.isBlank() ? null
+				: ODataJsonDecoder.page(body, resultType, metadataService);
+	}
+
+	/** POSTs an action import and returns its raw response body ({@code null} for a 204). */
+	private String actionResult(String name, Map<String, ?> parameters) {
 		String body = ODataJsonDecoder.toJson(parameters);
 		Response response = exchange("POST", name, "application/json", body, "application/json", Map.of());
 		if (response.status() == 204) {
@@ -248,7 +284,7 @@ public final class ODataClient implements AutoCloseable {
 			throw new ODataClientException("POST " + serviceRoot.resolve(name) + " answered "
 					+ response.status(), response.status(), response.body());
 		}
-		return response.body().isBlank() ? null : ODataJsonDecoder.value(response.body());
+		return response.body();
 	}
 
 	/** Status, body text and response headers of an HTTP exchange. */

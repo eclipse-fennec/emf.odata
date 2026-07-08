@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.resource.Resource;
@@ -122,6 +123,13 @@ class ODataClientTest {
 					&& exchange.getRequestURI().getRawQuery() != null
 					&& exchange.getRequestURI().getRawQuery().contains("$compute")) {
 				answer = "{\"value\":[{\"id\":\"p1\",\"name\":\"Milk\",\"doublePrice\":2.40}]}";
+			} else if (path.contains("/featured(") || path.contains(".twin(")) {
+				answer = "{\"@odata.context\":\"/odata/$metadata#Product/$entity\",\"id\":\"p1\","
+						+ "\"name\":\"Milk\",\"price\":\"1.20\",\"rating\":3,\"active\":true}"; // entity-typed result
+			} else if (path.contains("/topProducts(")) {
+				answer = "{\"@odata.context\":\"/odata/$metadata#Product\",\"value\":[" // collection-typed result
+						+ "{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"1.20\",\"rating\":3,\"active\":true},"
+						+ "{\"id\":\"p2\",\"name\":\"Cheese\",\"price\":\"4.50\",\"rating\":5,\"active\":true}]}";
 			} else if (path.contains("/doubleOf(")) {
 				answer = "{\"value\":42}"; // unbound function import result
 			} else if (path.contains("/webshop.label(")) {
@@ -462,6 +470,26 @@ class ODataClientTest {
 
 		assertEquals("Milk", client.entitySet("Product").propertyValue("'p1'", "name"));
 		assertEquals(2, client.entitySet("Product").navigationCount("'p1'", "reviews"));
+	}
+
+	@Test
+	@DisplayName("functions/actions with entity or collection results decode typed (not just primitive value)")
+	void typedOperationResults() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EStructuralFeature name = product.getEStructuralFeature("name");
+
+		EObject one = client.functionAsEntity("featured", java.util.Map.of(), product);
+		assertEquals("Milk", one.eGet(name), "unbound function → single entity");
+
+		ODataPage many = client.functionAsCollection("topProducts", java.util.Map.of(), product);
+		assertEquals(2, many.entities().size(), "unbound function → entity collection");
+
+		EObject bound = client.entitySet("Product")
+				.boundFunctionAsEntity("'p1'", "webshop.twin", java.util.Map.of(), product);
+		assertEquals("Milk", bound.eGet(name), "bound function → single entity");
+		assertTrue(lastRequest.get().getRawPath().endsWith("/webshop.twin()"),
+				lastRequest.get().toString());
 	}
 
 	@Test
