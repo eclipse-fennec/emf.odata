@@ -81,6 +81,38 @@ final class ODataJsonDecoder {
 		return rows;
 	}
 
+	/**
+	 * Decodes a {@code $compute} read into typed rows: each row's members are split into the entity's
+	 * own model properties (decoded into a typed {@link EObject}) and the dynamic computed members
+	 * (any member the entity type has no structural feature for), which stay as coercible raw values.
+	 */
+	static List<ComputedRow> computedRows(String json, EClass entityType,
+			MetadataService metadataService) {
+		JsonNode root = parse(json);
+		JsonNode value = root.get("value");
+		if (value == null || !value.isArray()) {
+			throw new ODataClientException("the collection response carries no 'value' array");
+		}
+		List<ComputedRow> rows = new ArrayList<>();
+		for (JsonNode element : value) {
+			if (!(element instanceof ObjectNode object)) {
+				throw new ODataClientException("expected a JSON entity object");
+			}
+			stripControlInformation(object);
+			ObjectNode entityNode = MAPPER.createObjectNode();
+			Map<String, Object> computed = new java.util.LinkedHashMap<>();
+			object.propertyStream().forEach(member -> {
+				if (entityType.getEStructuralFeature(member.getKey()) != null) {
+					entityNode.set(member.getKey(), member.getValue());
+				} else {
+					computed.put(member.getKey(), MAPPER.convertValue(member.getValue(), Object.class));
+				}
+			});
+			rows.add(new ComputedRow(decode(entityNode, entityType, metadataService), computed));
+		}
+		return rows;
+	}
+
 	private static JsonNode parse(String json) {
 		try {
 			return MAPPER.readTree(json);

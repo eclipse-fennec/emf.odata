@@ -131,6 +131,17 @@ public final class EntitySetRequest {
 	}
 
 	/**
+	 * Executes the request and returns typed {@code $compute} rows: each pairs the entity decoded
+	 * into a typed {@link EObject} (its model properties) with the computed members, which
+	 * {@link ComputedRow#value(String, Class)} coerces to a requested Java type. Preferred over
+	 * {@link #listRaw()} when the entity itself is wanted typed alongside the computed values.
+	 */
+	public List<ComputedRow> listComputed() {
+		return ODataJsonDecoder.computedRows(client.fetch(setName + queryString(), "application/json"),
+				entityType, client.metadataService());
+	}
+
+	/**
 	 * Reads one entity by its raw key literal — string keys quoted OData-style
 	 * ({@code get("'p1'")}), numeric keys plain ({@code get("42")}).
 	 */

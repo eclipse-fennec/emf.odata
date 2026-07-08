@@ -108,8 +108,12 @@ erfolgreich → commit; ein Fehler → rollback und jedes nicht-fehlerhafte Mitg
 (all-or-nothing). Das In-Memory-Referenz-Backend implementiert es per Store-Snapshot (atomar, aber
 nicht voll isoliert gegen gleichzeitige Schreiber — ein echtes JPA-Write-Backend würde das liefern).
 Client: `ODataBatch.add(…, atomicityGroup)`. End-to-end-itest `batchAtomicityGroupRollback`.
-· ❌ Rest-SHOULDs: `$compute`-Werte client-seitig typisiert lesen (nur `listRaw`/`Map`), JPA-Write-
-Backend (derzeit nur In-Memory schreibt → JPA-`$batch`-Atomarität sobald es existiert) —
+· ✅ **NEU 2026-07-08**: **`$compute`-Werte client-seitig typisiert lesen**: `EntitySetRequest.listComputed()`
+liefert `ComputedRow`s — die Entity typisiert als `EObject` (Modell-Properties) plus die berechneten
+Member; `ComputedRow.value(alias, Class)` coerct auf den gewünschten Java-Typ (Member, die keine
+Struktur-Property des Typs sind, gelten als berechnet). `listRaw()`/`Map` bleibt als generischer Weg.
+· ❌ Rest-SHOULDs: JPA-Write-Backend (derzeit nur In-Memory schreibt → JPA-`$batch`-Atomarität sobald
+es existiert) —
 **alle MUSTs für 4.0 UND 4.01 Intermediate erfüllt; die zentralen Intermediate-SHOULDs (`$search`,
 `$compute`, `$filter`-in-`$expand`, Nav-Pfad-Query-Optionen) plus `$batch` jetzt ebenfalls**.
 

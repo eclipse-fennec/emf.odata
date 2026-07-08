@@ -566,6 +566,25 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("$compute read via listComputed: typed entity + coercible computed values")
+	void computeReadViaListComputed() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		java.util.List<ComputedRow> rows = client.entitySet("Product")
+				.compute("price mul 2 as doublePrice").listComputed();
+		assertEquals(1, rows.size());
+
+		ComputedRow row = rows.get(0);
+		assertEquals("Milk", row.entity().eGet(product.getEStructuralFeature("name")),
+				"the entity's own properties decode onto a typed EObject");
+		assertTrue(row.has("doublePrice"), "the computed member is separated out");
+		assertEquals(0, row.value("doublePrice", java.math.BigDecimal.class)
+				.compareTo(new java.math.BigDecimal("2.40")),
+				"the computed value coerces to the requested type");
+		assertEquals(2.40, row.value("doublePrice", Double.class), 1e-9);
+	}
+
+	@Test
 	@DisplayName("$apply aggregation decodes into generic grouped rows")
 	void applyReturnsRows() {
 		ODataClient client = ODataClient.connect(serviceRoot);
