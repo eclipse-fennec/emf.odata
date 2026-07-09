@@ -12,7 +12,10 @@
  */
 package org.eclipse.fennec.odata.query;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * A parsed OData resource path (ADR-0005, [OData-URL]/[OData-ABNF] {@code resourcePath}
@@ -21,13 +24,25 @@ import java.util.List;
  * syntactic — resolution against the model is the caller's job.
  *
  * @param entitySet the first path segment (entity-set name)
- * @param key       raw key literal (still quoted for strings), or null
+ * @param key       raw key literal (still quoted for strings), or the raw text of a compound
+ *                  predicate ({@code OrderID=1,ProductID=2}), or null
+ * @param namedKeys the named key components of a compound predicate (ABNF {@code compoundKey},
+ *                  also the named single-key form {@code Set(id='x')}), values still quoted;
+ *                  empty for a positional key
  * @param segments  the remaining segments in order (may be empty)
  */
-public record ResourcePath(String entitySet, String key, List<Segment> segments) {
+public record ResourcePath(String entitySet, String key, Map<String, String> namedKeys,
+		List<Segment> segments) {
 
 	public ResourcePath {
 		segments = segments == null ? List.of() : List.copyOf(segments);
+		namedKeys = namedKeys == null ? Map.of()
+				: Collections.unmodifiableMap(new LinkedHashMap<>(namedKeys));
+	}
+
+	/** Positional-key compatibility form — named keys empty. */
+	public ResourcePath(String entitySet, String key, List<Segment> segments) {
+		this(entitySet, key, Map.of(), segments);
 	}
 
 	/** One path segment after the entity set. */

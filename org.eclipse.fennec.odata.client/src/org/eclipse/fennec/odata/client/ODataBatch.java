@@ -13,8 +13,11 @@
 package org.eclipse.fennec.odata.client;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
@@ -40,9 +43,22 @@ public final class ODataBatch {
 	private final ODataClient client;
 	private final ArrayNode requests = MAPPER.createArrayNode();
 	private int sequence = 0;
+	private boolean multipart;
 
 	ODataBatch(ODataClient client) {
 		this.client = client;
+	}
+
+	/**
+	 * Switches this batch to the {@code multipart/mixed} representation — the only batch format
+	 * 4.0 services (the SAP world, TripPin) accept; the JSON format is 4.01. Reads become
+	 * individual parts; each write (or contiguous same-{@code atomicityGroup} run) becomes a
+	 * change set with {@code Content-ID} correlation. {@code dependsOn} has no multipart
+	 * equivalent and is ignored.
+	 */
+	public ODataBatch multipart() {
+		this.multipart = true;
+		return this;
 	}
 
 	/** GET a resource relative to the service root (e.g. {@code "Product"}, {@code "Product('p1')"}). */
@@ -109,6 +125,9 @@ public final class ODataBatch {
 
 	/** Sends the accumulated sub-requests and decodes the {@code responses} envelope. */
 	public List<Result> execute() {
+		if (multipart) {
+			return executeMultipart();
+		}
 		ObjectNode envelope = MAPPER.createObjectNode();
 		envelope.set("requests", requests);
 		String body = MAPPER.writeValueAsString(envelope);
@@ -139,6 +158,156 @@ public final class ODataBatch {
 	private JsonNode encode(EObject entity) {
 		String json = ODataJsonEncoder.encode(entity, entity.eClass(), client.metadataService());
 		return MAPPER.readTree(json);
+	}
+
+	// --- multipart/mixed representation ([OData-Protocol] 11.7, the 4.0 batch format) ---
+
+	private List<Result> executeMultipart() {
+		String boundary = "batch_fennec_" + Integer.toHexString(System.identityHashCode(this));
+		StringBuilder body = new StringBuilder();
+		String openGroup = null;
+		int changeset = 0;
+		for (JsonNode request : requests) {
+			String method = request.path("method").asString("GET");
+			String group = request.path("atomicityGroup").asString("");
+			if ("GET".equals(method)) {
+				closeChangeset(body, openGroup, boundary, changeset);
+				openGroup = null;
+				body.append("--").append(boundary).append("\r\n")
+						.append("Content-Type: application/http\r\n")
+						.append("Content-Transfer-Encoding: binary\r\n\r\n")
+						.append("GET ").append(absolute(request)).append(" HTTP/1.1\r\n")
+						.append("Accept: application/json\r\n\r\n\r\n");
+				continue;
+			}
+			// a write: contiguous same-group requests share one change set, otherwise one each
+			String effectiveGroup = group.isEmpty() ? "cs-" + request.path("id").asString("") : group;
+			if (!effectiveGroup.equals(openGroup)) {
+				closeChangeset(body, openGroup, boundary, changeset);
+				changeset++;
+				body.append("--").append(boundary).append("\r\n")
+						.append("Content-Type: multipart/mixed; boundary=")
+						.append(changesetBoundary(boundary, changeset)).append("\r\n\r\n");
+				openGroup = effectiveGroup;
+			}
+			body.append("--").append(changesetBoundary(boundary, changeset)).append("\r\n")
+					.append("Content-Type: application/http\r\n")
+					.append("Content-Transfer-Encoding: binary\r\n")
+					.append("Content-ID: ").append(request.path("id").asString("")).append("\r\n\r\n")
+					.append(method).append(' ').append(absolute(request)).append(" HTTP/1.1\r\n")
+					.append("Accept: application/json\r\n");
+			JsonNode payload = request.get("body");
+			if (payload != null && !payload.isNull()) {
+				body.append("Content-Type: application/json\r\n\r\n")
+						.append(payload.toString()).append("\r\n");
+			} else {
+				body.append("\r\n");
+			}
+		}
+		closeChangeset(body, openGroup, boundary, changeset);
+		body.append("--").append(boundary).append("--\r\n");
+
+		ODataClient.Response response = client.exchange("POST", "$batch", "multipart/mixed",
+				body.toString(), "multipart/mixed; boundary=" + boundary, Map.of());
+		if (response.status() / 100 != 2) {
+			throw new ODataClientException("$batch answered " + response.status(),
+					response.status(), response.body());
+		}
+		String responseBoundary = boundaryOf(response.header("Content-Type"));
+		if (responseBoundary == null) {
+			throw new ODataClientException("the $batch response is not multipart/mixed");
+		}
+		List<Result> results = new ArrayList<>();
+		parseParts(response.body(), responseBoundary, results);
+		return results;
+	}
+
+	private static void closeChangeset(StringBuilder body, String openGroup, String boundary,
+			int changeset) {
+		if (openGroup != null) {
+			body.append("--").append(changesetBoundary(boundary, changeset)).append("--\r\n");
+		}
+	}
+
+	private static String changesetBoundary(String batchBoundary, int index) {
+		return batchBoundary.replace("batch_", "changeset_") + "_" + index;
+	}
+
+	/** Batch part request lines carry absolute URLs — the safest form across 4.0 servers. */
+	private String absolute(JsonNode request) {
+		return client.rootUri().resolve(request.path("url").asString("")).toString();
+	}
+
+	private static String boundaryOf(String contentType) {
+		if (contentType == null) {
+			return null;
+		}
+		for (String parameter : contentType.split(";")) {
+			String trimmed = parameter.trim();
+			if (trimmed.regionMatches(true, 0, "boundary=", 0, 9)) {
+				String value = trimmed.substring(9).trim();
+				return value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2
+						? value.substring(1, value.length() - 1) : value;
+			}
+		}
+		return null;
+	}
+
+	/** Splits a multipart body and collects the application/http parts (recursing into change sets). */
+	private void parseParts(String body, String boundary, List<Result> results) {
+		String[] parts = body.split("\\r?\\n?--" + Pattern.quote(boundary));
+		for (String part : parts) {
+			if (part.isBlank() || part.startsWith("--")) {
+				continue; // preamble or the closing marker
+			}
+			int headerEnd = part.indexOf("\r\n\r\n");
+			if (headerEnd < 0) {
+				headerEnd = part.indexOf("\n\n");
+			}
+			if (headerEnd < 0) {
+				continue;
+			}
+			String partHeaders = part.substring(0, headerEnd);
+			String partBody = part.substring(headerEnd).stripLeading();
+			String nested = boundaryOf(partHeaders.replace("\r\n", ";").replace("\n", ";"));
+			if (partHeaders.toLowerCase(Locale.ROOT).contains("multipart/mixed")
+					&& nested != null) {
+				parseParts(partBody, nested, results); // a change set: recurse into its parts
+				continue;
+			}
+			results.add(httpPart(partHeaders, partBody));
+		}
+	}
+
+	/** Parses one {@code application/http} part: status line, headers (Content-ID), then the body. */
+	private Result httpPart(String partHeaders, String content) {
+		String id = null;
+		for (String line : partHeaders.split("\\r?\\n")) {
+			if (line.regionMatches(true, 0, "Content-ID:", 0, 11)) {
+				id = line.substring(11).trim();
+			}
+		}
+		String[] lines = content.split("\\r?\\n", -1);
+		int status = 0;
+		int index = 0;
+		for (; index < lines.length; index++) {
+			String line = lines[index].trim();
+			if (line.startsWith("HTTP/")) {
+				String[] words = line.split("\\s+");
+				status = words.length > 1 ? Integer.parseInt(words[1]) : 0;
+				index++;
+				break;
+			}
+		}
+		while (index < lines.length && !lines[index].isBlank()) {
+			if (lines[index].regionMatches(true, 0, "Content-ID:", 0, 11)) {
+				id = lines[index].substring(11).trim();
+			}
+			index++; // response headers of the inner HTTP message
+		}
+		String responseBody = index >= lines.length ? ""
+				: String.join("\n", Arrays.asList(lines).subList(index + 1, lines.length)).trim();
+		return new Result(id, status, responseBody.isEmpty() ? null : responseBody, client);
 	}
 
 	/** One sub-response of a {@code $batch}: its correlation id, HTTP status and raw JSON body. */

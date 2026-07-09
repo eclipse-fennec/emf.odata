@@ -13,7 +13,10 @@
 package org.eclipse.fennec.odata.query;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.CharStreams;
@@ -39,8 +42,7 @@ import org.eclipse.fennec.odata.query.antlr.ODataFilterParser;
  *
  * <p>Purely syntactic and stateless; malformed paths and paths exceeding
  * {@value #MAX_SEGMENTS} segments raise {@link ODataQueryParseException} (→ 400/404 at the
- * protocol layer). v1 gaps (documented, syntax rejects them): multi-part/named key
- * predicates, function-call segments, {@code $all}/{@code $crossjoin}/{@code $entity} forms.
+ * protocol layer). v1 gaps (documented, syntax rejects them): function-call segments, {@code $all}/{@code $crossjoin}/{@code $entity} forms.
  */
 public class ODataResourceParser {
 
@@ -107,11 +109,46 @@ public class ODataResourceParser {
 				default -> throw new ODataQueryParseException("unsupported path segment");
 			});
 		}
-		return new ResourcePath(resource.IDENT().getText(), keyText(resource.keyPredicate()), segments);
+		ODataFilterParser.KeyPredicateContext key = resource.keyPredicate();
+		return new ResourcePath(resource.IDENT().getText(), keyText(key), namedKeys(key), segments);
 	}
 
+	/**
+	 * The raw text of a key predicate: the positional literal, or for a compound predicate the
+	 * text between the parentheses ({@code OrderID=1,ProductID=2}) — non-null either way, so
+	 * "has a key" routing checks stay uniform. Segment predicates only accept the positional
+	 * form (compound keys address the entity set).
+	 */
 	private static String keyText(ODataFilterParser.KeyPredicateContext key) {
-		return key == null ? null : key.keyLiteral().getText();
+		if (key == null) {
+			return null;
+		}
+		if (key.keyLiteral() != null) {
+			return key.keyLiteral().getText();
+		}
+		if (!(key.getParent() instanceof ODataFilterParser.ResourceContext)) {
+			throw new ODataQueryParseException(
+					"compound key predicates are only supported on the entity set");
+		}
+		return key.namedKeyValue().stream()
+				.map(pair -> pair.IDENT().getText() + "=" + pair.keyLiteral().getText())
+				.collect(Collectors.joining(","));
+	}
+
+	/** The named components of a compound key predicate, in declaration order; empty otherwise. */
+	private static Map<String, String> namedKeys(
+			ODataFilterParser.KeyPredicateContext key) {
+		if (key == null || key.keyLiteral() != null) {
+			return Map.of();
+		}
+		Map<String, String> named = new LinkedHashMap<>();
+		for (ODataFilterParser.NamedKeyValueContext pair : key.namedKeyValue()) {
+			if (named.put(pair.IDENT().getText(), pair.keyLiteral().getText()) != null) {
+				throw new ODataQueryParseException(
+						"duplicate key component '" + pair.IDENT().getText() + "'");
+			}
+		}
+		return named;
 	}
 
 	private static final BaseErrorListener THROWING = new BaseErrorListener() {

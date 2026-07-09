@@ -216,6 +216,11 @@ public final class ODataClient implements AutoCloseable {
 		}
 	}
 
+	/** The service root the data client resolves against (batch parts need absolute URLs). */
+	URI rootUri() {
+		return serviceRoot;
+	}
+
 	/** The client's codec metadata wiring — every schema package is registered. */
 	MetadataService metadataService() {
 		return metadataService;
@@ -521,7 +526,10 @@ public final class ODataClient implements AutoCloseable {
 				throw new ODataClientException("the response from " + target
 						+ " exceeds the client limit of " + maxResponseBytes + " bytes");
 			}
-			return new String(bytes, StandardCharsets.UTF_8);
+			String text = new String(bytes, StandardCharsets.UTF_8);
+			// some services (RESTier's /$count) prefix responses with a UTF-8 BOM — strip it, or
+			// number parsing and strict JSON parsing choke on U+FEFF
+			return !text.isEmpty() && text.charAt(0) == '\uFEFF' ? text.substring(1) : text;
 		} catch (IOException e) {
 			throw new ODataClientException("reading the response from " + target + " failed", e);
 		}

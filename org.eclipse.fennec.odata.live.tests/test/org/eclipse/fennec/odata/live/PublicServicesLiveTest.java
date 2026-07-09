@@ -22,6 +22,9 @@ import java.util.Map;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.fennec.odata.client.MediaContent;
+import java.util.List;
+
+import org.eclipse.fennec.odata.client.ODataBatch;
 import org.eclipse.fennec.odata.client.ODataClient;
 import org.eclipse.fennec.odata.client.ODataPage;
 import org.junit.jupiter.api.DisplayName;
@@ -140,6 +143,50 @@ class PublicServicesLiveTest {
 				ODataPage next = client.entitySet("Orders").nextPage(orders);
 				assertFalse(next.entities().isEmpty(), "the $skiptoken page decodes");
 			}
+
+			// composite keys ([OData-URL] compoundKey): Order_Details has a two-part key
+			EClass detail = client.entityType("Order_Details");
+			EObject line = client.entitySet("Order_Details")
+					.get(Map.of("OrderID", 10248, "ProductID", 11));
+			assertNotNull(line.eGet(detail.getEStructuralFeature("Quantity")),
+					"the composite-keyed entity decodes");
+		}
+	}
+
+	@Test
+	@DisplayName("TripPin RESTier: a second server stack answers the same client")
+	void tripPinRestier() {
+		LiveServices.assumeReachable(LiveServices.TRIPPIN_RESTIER);
+		try (ODataClient client = ODataClient.connect(LiveServices.TRIPPIN_RESTIER)) {
+			EClass person = client.entityType("People");
+			assertEquals("Person", person.getName());
+
+			ODataPage page = client.entitySet("People")
+					.filter("startswith(UserName,'r')").orderBy("UserName").top(2).list();
+			assertFalse(page.entities().isEmpty());
+
+			Object userName = page.entities().get(0)
+					.eGet(person.getEStructuralFeature("UserName"));
+			EObject one = client.entitySet("People").expand("Trips").get("'" + userName + "'");
+			assertEquals(userName, one.eGet(person.getEStructuralFeature("UserName")));
+		}
+	}
+
+	@Test
+	@DisplayName("TripPin: multipart $batch (the 4.0 format) round-trips reads")
+	void tripPinMultipartBatch() {
+		LiveServices.assumeReachable(LiveServices.TRIPPIN);
+		try (ODataClient client = ODataClient.connect(LiveServices.TRIPPIN)) {
+			EClass person = client.entityType("People");
+			List<ODataBatch.Result> results = client.batch().multipart()
+					.read("People('russellwhyte')")
+					.read("People?$top=2")
+					.execute();
+			assertEquals(2, results.size(), "one result per part");
+			assertTrue(results.get(0).isSuccess() && results.get(1).isSuccess());
+			assertEquals("russellwhyte", results.get(0).asEntity(person)
+					.eGet(person.getEStructuralFeature("UserName")));
+			assertEquals(2, results.get(1).asPage(person).entities().size());
 		}
 	}
 }

@@ -51,7 +51,7 @@ Spec documents (OASIS OData **v4.01**):
 
 | Segment | Spec requires | Support | Reference |
 |---|---|---|---|
-| `Set` / `Set(key)` (incl. composite) | Address sets and entities | ✅ | URL Conv. §4.3 |
+| `Set` / `Set(key)` (incl. composite/named keys `(k1=v1,k2=v2)`) | Address sets and entities | ✅ (reads; composite-key writes → 501) | URL Conv. §4.3 |
 | Navigation paths `Set(key)/nav[/…]`, keyed nav | — | ✅ | URL Conv. §4.4 |
 | `/$value` (primitive + enum) | Raw value | ✅ | URL Conv. §4.6 |
 | `/$count` on sets and navigations | — | ✅ | URL Conv. §4.8 |
@@ -122,7 +122,8 @@ Spec documents (OASIS OData **v4.01**):
 | Server-driven paging `@odata.nextLink` | ✅ | Protocol §11.2.5.7 |
 | `#Ns.Type` discriminator for derived types | ✅ | JSON Format §4.5.8 |
 | `Edm.Int64 > 2^53` `IEEE754Compatible` string form | ❌ | JSON Format §4.3 |
-| `$batch` (JSON) | ✅ (server + client) | Protocol §11.7 |
+| `$batch` JSON (4.01) | ✅ (server + client) | Protocol §11.7 |
+| `$batch` multipart/mixed (4.0, SAP world) | ✅ (client `.multipart()`; server JSON-only) | Protocol §11.7 |
 | Asynchronous requests, `$delta` / change tracking | ❌ | Protocol §11.6, §11.3 |
 
 ## Client (E8)
@@ -134,7 +135,7 @@ Spec documents (OASIS OData **v4.01**):
 | Write: create (deep insert) / update / replace / delete / `$ref` / `@odata.bind` | ✅ | — |
 | Unbound function/action imports, bound functions, **bound actions** | ✅ | — |
 | `Prefer: return=minimal/representation` (`preferReturn`) | ✅ | Protocol §8.2.8.7 |
-| `$batch` (dependsOn, atomicityGroup) | ✅ | Protocol §11.7 |
+| `$batch` JSON (dependsOn, atomicityGroup) + multipart/mixed (change sets, Content-ID) | ✅ | Protocol §11.7 |
 | Schema registry (fetch/persist/lookup decoupled, conditional GET) | ✅ | ADR-0007 |
 | CSRF (SAP) handshake, SSRF guard, XXE-hardened metadata, size cap | ✅ | — |
 | Container singletons (`singleton(name)` → `GET /Me`) | ✅ | URL Conv. §4.3 |

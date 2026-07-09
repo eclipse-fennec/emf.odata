@@ -29,6 +29,8 @@ final class LiveServices {
 
 	/** OASIS/Microsoft reference service, read-write via per-session roots (302 → session URL). */
 	static final String TRIPPIN = "https://services.odata.org/V4/TripPinServiceRW/";
+	/** TripPin on RESTier — a SECOND server stack (modern ASP.NET-based) over the same model. */
+	static final String TRIPPIN_RESTIER = "https://services.odata.org/TripPinRESTierService/";
 	/** The compact OData demo service (read-only). */
 	static final String ODATA_DEMO = "https://services.odata.org/V4/OData/OData.svc/";
 	/** The classic Northwind model (read-only, server-driven paging via $skiptoken). */

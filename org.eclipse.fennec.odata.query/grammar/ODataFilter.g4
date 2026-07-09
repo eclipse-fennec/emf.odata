@@ -31,7 +31,10 @@ orderbyItem : expr direction=(ASC | DESC)? ;
 // with terminal $count/$value/$ref segments and derived-type casts (/Ns.Type, [OData-URL]
 // 4.11); key literals reuse the expression tokens
 resource : IDENT keyPredicate? (SLASH resourceSegment)* EOF ;
-keyPredicate : LPAREN keyLiteral RPAREN ;
+// simple positional key OR named key-value pairs (ABNF compoundKey — composite keys and the
+// named single-key form Set(id='x') both use it)
+keyPredicate : LPAREN ( keyLiteral | namedKeyValue (COMMA namedKeyValue)* ) RPAREN ;
+namedKeyValue : IDENT EQUALS keyLiteral ;
 keyLiteral : STRING | INT | DECIMAL | GUID | DATETIMEOFFSET | DATE | TIMEOFDAY ;
 resourceSegment : castName keyPredicate?  # CastSegment
                 | IDENT keyPredicate?     # PropertySegment
@@ -150,6 +153,7 @@ AS   : 'as' ;
 LPAREN : '(' ;
 RPAREN : ')' ;
 COMMA  : ',' ;
+EQUALS : '=' ;
 SLASH  : '/' ;
 COLON  : ':' ;
 DOT    : '.' ;

@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
@@ -76,8 +77,12 @@ final class ODataJsonEncoder {
 
 	private static String codecEncode(EObject entity, EClass entityType,
 			MetadataService metadataService) {
-		ODataJsonResourceImpl resource = new ODataJsonResourceImpl(
-				URI.createURI("client-write.odatajson"), metadataService);
+		// write payloads are MINIMAL metadata: the entity type follows from the request URL, and a
+		// non-qualified @odata.type discriminator makes foreign servers (TripPin) reject the write
+		// ("a type named 'Person' could not be resolved") — [OData-JSON] 4.5.3: if present it must
+		// be the qualified name, so the safe interop form is to omit it
+		ODataJsonResourceImpl resource = ODataJsonResourceImpl.minimalMetadata(
+				URI.createURI("client-write.odatajson"), metadataService, Set.of());
 		// copy so the caller's object is not attached to (moved into) this throwaway resource;
 		// EcoreUtil.copy preserves the set/unset state, i.e. the minimal-payload semantics
 		resource.getContents().add(EcoreUtil.copy(entity));

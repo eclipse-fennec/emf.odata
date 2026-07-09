@@ -1,4 +1,4 @@
-// Generated from /opt/git/fennec-odata/fennec-odata/org.eclipse.fennec.odata.query/grammar/ODataFilter.g4 by ANTLR 4.13.2
+// Generated from grammar/ODataFilter.g4 by ANTLR 4.13.2
 package org.eclipse.fennec.odata.query.antlr;
 import org.antlr.v4.runtime.tree.ParseTreeVisitor;
 
@@ -40,6 +40,12 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 * @return the visitor result
 	 */
 	T visitKeyPredicate(ODataFilterParser.KeyPredicateContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#namedKeyValue}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitNamedKeyValue(ODataFilterParser.NamedKeyValueContext ctx);
 	/**
 	 * Visit a parse tree produced by {@link ODataFilterParser#keyLiteral}.
 	 * @param ctx the parse tree

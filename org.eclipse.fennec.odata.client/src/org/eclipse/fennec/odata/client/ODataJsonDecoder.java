@@ -53,9 +53,13 @@ final class ODataJsonDecoder {
 		for (JsonNode element : value) {
 			entities.add(decode(element, entityType, metadataService));
 		}
-		long count = root.has("@odata.count") ? root.get("@odata.count").asLong() : -1;
-		String nextLink = root.has("@odata.nextLink") ? root.get("@odata.nextLink").asString() : null;
-		return new ODataPage(entities, count, nextLink);
+		// 4.01 servers may omit the "odata." prefix on control information ([OData-JSON] 4.01
+		// §4.1) — RESTier does when the client sends OData-MaxVersion: 4.01
+		JsonNode count = root.has("@odata.count") ? root.get("@odata.count") : root.get("@count");
+		JsonNode next = root.has("@odata.nextLink") ? root.get("@odata.nextLink") : root.get("@nextLink");
+		long totalCount = count == null ? -1 : count.asLong(-1);
+		String nextLink = next == null ? null : next.asString();
+		return new ODataPage(entities, totalCount, nextLink);
 	}
 
 	static EObject entity(String json, EClass entityType, MetadataService metadataService) {
@@ -113,6 +117,15 @@ final class ODataJsonDecoder {
 		return rows;
 	}
 
+	private static boolean isControlInformation(String memberName) {
+		int at = memberName.indexOf('@');
+		if (at < 0) {
+			return false;
+		}
+		String suffix = memberName.substring(at + 1);
+		return suffix.startsWith("odata.") || !suffix.contains(".");
+	}
+
 	private static JsonNode parse(String json) {
 		try {
 			return MAPPER.readTree(json);
@@ -168,12 +181,16 @@ final class ODataJsonDecoder {
 		return entity;
 	}
 
-	/** Removes {@code @odata.*} members (also property-scoped ones) recursively. */
+	/**
+	 * Removes control information (also property-scoped) recursively: {@code @odata.*} members and
+	 * the 4.01 prefix-free form ({@code @count}, {@code name@type}, …) — a suffix WITHOUT a dot is
+	 * control information, {@code @Ns.Term} instance annotations (always qualified) survive.
+	 */
 	private static void stripControlInformation(JsonNode node) {
 		if (node instanceof ObjectNode object) {
 			List<String> control = new ArrayList<>();
 			object.propertyStream().map(Map.Entry::getKey)
-					.filter(name -> name.contains("@odata.")).forEach(control::add);
+					.filter(ODataJsonDecoder::isControlInformation).forEach(control::add);
 			control.forEach(object::remove);
 			object.propertyStream().forEach(entry -> stripControlInformation(entry.getValue()));
 		} else if (node != null && node.isArray()) {

@@ -1,4 +1,4 @@
-// Generated from /opt/git/fennec-odata/fennec-odata/org.eclipse.fennec.odata.query/grammar/ODataFilter.g4 by ANTLR 4.13.2
+// Generated from grammar/ODataFilter.g4 by ANTLR 4.13.2
 package org.eclipse.fennec.odata.query.antlr;
 import org.antlr.v4.runtime.tree.AbstractParseTreeVisitor;
 
@@ -10,6 +10,7 @@ import org.antlr.v4.runtime.tree.AbstractParseTreeVisitor;
  * @param <T> The return type of the visit operation. Use {@link Void} for
  * operations with no return type.
  */
+@SuppressWarnings("CheckReturnValue")
 public class ODataFilterBaseVisitor<T> extends AbstractParseTreeVisitor<T> implements ODataFilterVisitor<T> {
 	/**
 	 * {@inheritDoc}
@@ -46,6 +47,13 @@ public class ODataFilterBaseVisitor<T> extends AbstractParseTreeVisitor<T> imple
 	 * {@link #visitChildren} on {@code ctx}.</p>
 	 */
 	@Override public T visitKeyPredicate(ODataFilterParser.KeyPredicateContext ctx) { return visitChildren(ctx); }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation returns the result of calling
+	 * {@link #visitChildren} on {@code ctx}.</p>
+	 */
+	@Override public T visitNamedKeyValue(ODataFilterParser.NamedKeyValueContext ctx) { return visitChildren(ctx); }
 	/**
 	 * {@inheritDoc}
 	 *

@@ -74,18 +74,17 @@ class AbnfAcceptanceTest {
 			Pattern.compile("%[0-9A-Fa-f]{2}"),                      // percent-encoding = URL layer (URI parser)
 			Pattern.compile("/(?!any\\(|all\\()[A-Za-z_]\\w*\\("));  // bound/composed functions in paths (not lambdas)
 
-	/** v1 resource-path subset gaps (ADR-0005 backlog): functions, multi-part keys, ... */
+	/** v1 resource-path subset gaps (ADR-0005 backlog): functions, key aliases, ... —
+	 * named/multi-part key predicates parse since the compound-key grammar landed. */
 	private static final List<Pattern> UNSUPPORTED_PATHS = List.of(
 			Pattern.compile("\\.[\\w.]*\\("),          // qualified function/action calls (casts parse)
-			Pattern.compile("\\(\\s*\\w+\\s*="),       // named/multi-part key predicates (ID=1)
-			Pattern.compile("\\([^)]*,"),              // multi-part keys / function parameters
 			Pattern.compile("@"),                      // key aliases
 			Pattern.compile("\\$(all|crossjoin|entity|metadata|batch|root|filter|each|query)"),
 			Pattern.compile("'[^']*/"),                // slash inside string key (URL-decoding layer)
 			Pattern.compile("%[0-9A-Fa-f]{2}"),        // percent-encoding = URL-decoding layer
 			Pattern.compile("/-?\\d"),                 // Key-as-Segment / ordered-collection index
 			Pattern.compile("/[^/()]*'"),              // Key-as-Segment with string key
-			Pattern.compile("=|\\{"));                 // parameter assignments / JSON in path
+			Pattern.compile("\\{"));                   // JSON in path
 
 	@TestFactory
 	List<DynamicTest> oasisAbnfResourcePathCases() throws Exception {

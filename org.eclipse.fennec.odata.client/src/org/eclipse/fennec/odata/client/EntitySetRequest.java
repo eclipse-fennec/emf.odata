@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
@@ -189,6 +190,20 @@ public final class EntitySetRequest {
 	public EObject get(String keyLiteral) {
 		return ODataJsonDecoder.entity(client.fetch(
 				collectionPath() + "(" + encodeKey(keyLiteral) + ")" + queryString(), "application/json"),
+				decodeType(), client.metadataService());
+	}
+
+	/**
+	 * Reads one entity by a compound key predicate ([OData-URL] compoundKey) — composite keys
+	 * ({@code Order_Details(OrderID=10248,ProductID=11)}) and the named single-key form. Values
+	 * are formatted as OData literals (strings quoted).
+	 */
+	public EObject get(Map<String, ?> namedKey) {
+		String predicate = namedKey.entrySet().stream()
+				.map(component -> component.getKey() + "=" + encodeKey(literal(component.getValue())))
+				.collect(Collectors.joining(","));
+		return ODataJsonDecoder.entity(client.fetch(
+				collectionPath() + "(" + predicate + ")" + queryString(), "application/json"),
 				decodeType(), client.metadataService());
 	}
 

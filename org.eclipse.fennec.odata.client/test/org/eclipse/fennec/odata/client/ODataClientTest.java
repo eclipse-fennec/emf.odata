@@ -102,8 +102,10 @@ class ODataClientTest {
 				answer = csdlJson;
 				contentType = "application/json;charset=UTF-8";
 			} else if (path.endsWith("/Product")) {
-				answer = "{\"value\":[{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"1.20\","
-						+ "\"rating\":3,\"active\":true}]}";
+				// 4.01 prefix-free control information ([OData-JSON] 4.01 §4.1, RESTier-style)
+				answer = "{\"@context\":\"$metadata#Product\",\"@count\":5,"
+						+ "\"value\":[{\"@etag\":\"W/x\",\"id\":\"p1\",\"name\":\"Milk\","
+						+ "\"price\":\"1.20\",\"rating\":3,\"active\":true}]}";
 				contentType = "application/json;odata.metadata=minimal;charset=UTF-8";
 			} else {
 				answer = "{\"error\":{\"code\":\"404\",\"message\":\"unknown\"}}";
@@ -232,6 +234,8 @@ class ODataClientTest {
 						+ "\"rating\":4,\"active\":true,\"discount\":20}"; // keyed derived-type cast
 			} else if (path.endsWith("/Product('bad')")) {
 				answer = "this is not json"; // a 200 with an undecodable body
+			} else if (path.endsWith("/Product(id='p1')")) {
+				answer = "{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"1.20\",\"rating\":3,\"active\":true}";
 			} else if (path.endsWith("/Product('p1')")) {
 				answer = """
 						{"@odata.context":"/odata/$metadata#Product/$entity","id":"p1",\
@@ -579,6 +583,8 @@ class ODataClientTest {
 			assertEquals(1, page.entities().size());
 			assertEquals("Milk", page.entities().get(0)
 					.eGet(product.getEStructuralFeature("name")));
+			assertEquals(5, page.totalCount(),
+					"prefix-free @count ([OData-JSON] 4.01 §4.1) fills the envelope");
 		}
 	}
 
@@ -611,6 +617,17 @@ class ODataClientTest {
 		assertEquals("Milk", me.eGet(product.getEStructuralFeature("name")));
 
 		assertThrows(ODataClientException.class, () -> client.singleton("Nope"), "unknown singleton");
+	}
+
+	@Test
+	@DisplayName("get(Map) addresses a compound key predicate ([OData-URL] compoundKey)")
+	void compoundKeyGet() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject one = client.entitySet("Product").get(Map.of("id", "p1"));
+		assertTrue(lastRequest.get().getRawPath().endsWith("/Product(id='p1')"),
+				"named key components with quoted string values: " + lastRequest.get());
+		assertEquals("Milk", one.eGet(product.getEStructuralFeature("name")));
 	}
 
 	@Test
@@ -845,6 +862,35 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("multipart $batch (4.0 format): parts + changeset assemble; the response parses")
+	void multipartBatch() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject patch = product.getEPackage().getEFactoryInstance().create(product);
+		patch.eSet(product.getEStructuralFeature("name"), "Renamed");
+
+		List<ODataBatch.Result> results = client.batch().multipart()
+				.read("Product('p1')")
+				.update("Product('p1')", patch)
+				.execute();
+
+		String sent = lastBatchBody.get();
+		assertTrue(sent.contains("GET " + serviceRoot + "Product('p1') HTTP/1.1"),
+				"parts carry absolute request lines: " + sent);
+		assertTrue(sent.contains("Content-Type: multipart/mixed; boundary=changeset_"),
+				"the write travels in a change set: " + sent);
+		assertTrue(sent.contains("Content-ID: 1"), sent);
+		assertTrue(sent.contains("PATCH " + serviceRoot + "Product('p1') HTTP/1.1"), sent);
+
+		assertEquals(2, results.size());
+		assertEquals(200, results.get(0).status());
+		assertEquals("Milk", results.get(0).asEntity(product)
+				.eGet(product.getEStructuralFeature("name")));
+		assertEquals(204, results.get(1).status());
+		assertEquals("1", results.get(1).id(), "Content-ID correlates the change-set response");
+	}
+
+	@Test
 	@DisplayName("Prefer return=: minimal create returns null; representation update decodes the body")
 	void preferReturn() {
 		ODataClient client = ODataClient.connect(serviceRoot);
@@ -915,6 +961,26 @@ class ODataClientTest {
 	private void handleBatch(HttpExchange exchange) throws IOException {
 		String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
 		lastBatchBody.set(body);
+		String requestType = exchange.getRequestHeaders().getFirst("Content-Type");
+		if (requestType != null && requestType.startsWith("multipart/mixed")) {
+			String answer = "--bresp\r\n"
+					+ "Content-Type: application/http\r\n\r\n"
+					+ "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n"
+					+ "{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"1.20\",\"rating\":3,\"active\":true}\r\n"
+					+ "--bresp\r\n"
+					+ "Content-Type: multipart/mixed; boundary=cresp\r\n\r\n"
+					+ "--cresp\r\n"
+					+ "Content-Type: application/http\r\nContent-ID: 1\r\n\r\n"
+					+ "HTTP/1.1 204 No Content\r\n\r\n\r\n"
+					+ "--cresp--\r\n"
+					+ "--bresp--\r\n";
+			byte[] bytes = answer.getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Content-Type", "multipart/mixed; boundary=bresp");
+			exchange.sendResponseHeaders(200, bytes.length);
+			exchange.getResponseBody().write(bytes);
+			exchange.close();
+			return;
+		}
 		String answer = """
 				{"responses":[\
 				{"id":"0","status":200,"body":{"id":"p1","name":"Milk","price":"1.20","rating":3,"active":true}},\

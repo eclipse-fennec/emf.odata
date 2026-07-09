@@ -899,6 +899,12 @@ public class ODataServlet extends HttpServlet {
 			boundAction(path, action.qualifiedName(), request, response);
 			return;
 		}
+		// the Write SPI addresses entities by a single raw key — composite-key writes would
+		// silently mis-address, so they are refused honestly until the SPI grows named keys
+		if (!path.namedKeys().isEmpty()) {
+			error(response, 501, "writes on composite-key entities are not supported");
+			return;
+		}
 		// PUT Set(key)/$value on a media entity replaces the binary stream — routed to the
 		// MediaService SPI before the WriteService (and its JSON-only content-type guard).
 		if ("PUT".equals(request.getMethod()) && path.key() != null && path.segments().size() == 1
@@ -1840,7 +1846,10 @@ public class ODataServlet extends HttpServlet {
 	/** Dispatches a parsed resource path: set, set/$count, keyed entity, navigation walk. */
 	private void resource(String rawPath, HttpServletRequest request, HttpServletResponse response)
 			throws IOException {
-		if (isFunctionCall(rawPath)) {
+		// a set name with named args is a COMPOUND KEY predicate (Set(id='x'), [OData-URL]),
+		// not a function call — only a non-set name routes to the function imports
+		if (isFunctionCall(rawPath)
+				&& resolveEntityType(rawPath.substring(0, rawPath.indexOf('('))) == null) {
 			functionImport(rawPath, request, response); // GET FuncName(p=…) — the resource parser
 			return;                                      // deliberately does not model function segments
 		}
@@ -1887,7 +1896,7 @@ public class ODataServlet extends HttpServlet {
 			mediaRead(target.entityType(), path.key(), response);
 			return;
 		}
-		EObject entity = fetchByKey(target, path.key(),
+		EObject entity = fetchByKey(target, path.key(), path.namedKeys(),
 				path.segments().isEmpty() ? expandOption(request, target.entityType()).keySet()
 						: walkPrefetch(target.entityType(), path.segments()),
 				response);
@@ -2027,7 +2036,7 @@ public class ODataServlet extends HttpServlet {
 		if (target == null) {
 			return;
 		}
-		EObject entity = fetchByKey(target, path.key(), Set.of(), response);
+		EObject entity = fetchByKey(target, path.key(), path.namedKeys(), Set.of(), response);
 		if (entity == null) {
 			return; // error already written
 		}
@@ -2061,7 +2070,7 @@ public class ODataServlet extends HttpServlet {
 		if (target == null) {
 			return;
 		}
-		EObject entity = fetchByKey(target, path.key(), Set.of(), response);
+		EObject entity = fetchByKey(target, path.key(), path.namedKeys(), Set.of(), response);
 		if (entity == null) {
 			return; // error already written
 		}
@@ -2366,19 +2375,67 @@ public class ODataServlet extends HttpServlet {
 	/** Loads one entity by raw key literal; writes the error response when absent/keyless. */
 	private EObject fetchByKey(Target target, String rawKey, Set<String> expand,
 			HttpServletResponse response) throws IOException {
-		EAttribute keyAttribute = target.entityType().getEAllAttributes().stream()
-				.filter(EAttribute::isID).findFirst().orElse(null);
-		if (keyAttribute == null) {
-			error(response, HttpServletResponse.SC_BAD_REQUEST, "entity set has no key");
-			return null;
+		return fetchByKey(target, rawKey, Map.of(), expand, response);
+	}
+
+	/**
+	 * Fetches one entity by its key predicate: positional ({@code rawKey} against the single ID
+	 * attribute) or compound ({@code namedKeys}, [OData-URL] compoundKey — composite keys and the
+	 * named single-key form). The predicate is BUILT as a typed AST, never expression-parsed.
+	 */
+	private EObject fetchByKey(Target target, String rawKey, Map<String, String> namedKeys,
+			Set<String> expand, HttpServletResponse response) throws IOException {
+		OclExpression predicate;
+		if (namedKeys.isEmpty()) {
+			EAttribute keyAttribute = target.entityType().getEAllAttributes().stream()
+					.filter(EAttribute::isID).findFirst().orElse(null);
+			if (keyAttribute == null) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST, "entity set has no key");
+				return null;
+			}
+			predicate = keyEquals(keyAttribute, rawKey);
+		} else {
+			predicate = compositeKeyEquals(target.entityType(), namedKeys);
 		}
 		QueryResult result = target.queryService().execute(new EntityQuery(target.entityType(),
-				null, keyEquals(keyAttribute, rawKey), List.of(), 0, 1, false, expand));
+				null, predicate, List.of(), 0, 1, false, expand));
 		if (result.entities().isEmpty()) {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
 			return null;
 		}
 		return result.entities().get(0);
+	}
+
+	/**
+	 * A compound key predicate as a typed AND-of-equalities AST. Every named component must be a
+	 * key property and ALL key properties must be named ([OData-URL] compoundKey) — violations
+	 * raise {@link IllegalArgumentException} (→ 400).
+	 */
+	private static OclExpression compositeKeyEquals(EClass entityType, Map<String, String> namedKeys) {
+		List<EAttribute> keyAttributes = entityType.getEAllAttributes().stream()
+				.filter(EAttribute::isID).toList();
+		if (namedKeys.size() != keyAttributes.size()) {
+			throw new IllegalArgumentException("the key predicate must name all "
+					+ keyAttributes.size() + " key properties of " + entityType.getName());
+		}
+		OclExpression combined = null;
+		for (Map.Entry<String, String> component : namedKeys.entrySet()) {
+			EAttribute attribute = keyAttributes.stream()
+					.filter(a -> a.getName().equals(component.getKey())).findFirst()
+					.orElseThrow(() -> new IllegalArgumentException("'"
+							+ ODataJson.sanitize(component.getKey()) + "' is not a key property"));
+			OclExpression term = keyEquals(attribute, component.getValue());
+			if (combined == null) {
+				combined = term;
+			} else {
+				OperationCallExp and = OclFactory.eINSTANCE.createOperationCallExp();
+				and.setName("and");
+				and.setOwnedSource(combined);
+				and.getOwnedArguments().add(term);
+				combined = and;
+			}
+		}
+		return combined;
 	}
 
 	/**

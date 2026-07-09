@@ -59,6 +59,15 @@ final class DemoData {
 		return created;
 	}
 
+	/**
+	 * The deterministic value an attribute of the {@code index}-th demo instance carries — the
+	 * oracle for value-fidelity checks (serialize → decode must reproduce it exactly).
+	 */
+	static Object valueFor(EAttribute attribute, EClass entityType, int index) {
+		return attribute.isID() ? keyValue(attribute, entityType, index)
+				: syntheticValue(attribute, index);
+	}
+
 	private static EAttribute keyAttribute(EClass entityType) {
 		return entityType.getEAllAttributes().stream()
 				.filter(EAttribute::isID).findFirst().orElse(null);

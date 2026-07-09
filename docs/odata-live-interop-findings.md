@@ -17,6 +17,22 @@ now guarded by an OFFLINE unit test, so conformance no longer depends on the liv
 | 6 | OData demo `$metadata` unparseable: `Value 'Variable' is not legal` (`Scale`, then `SRID`) | **[OData-CSDL-XML] §7.2.4/§7.2.6**: Scale/SRID are "a number or one of the symbolic values `floating` or `variable`" (+ "clients SHOULD accept values in a case-insensitive manner") | **Ours**: the XSD-generated EDM model only accepts integers — we failed on spec-legal values | Symbolic `Scale`/`SRID` values are stripped before parsing (lossy facets for the Ecore mapping anyway) | client `foreignMetadataQuirks` (`Scale="Variable"`, `SRID="Variable"`) |
 | 7 | OData demo `$metadata` unparseable: `Feature 'ConcurrencyMode' not found` (an OData **V3** relic) | **[OData-Protocol] §6.2**: "clients and services MUST be prepared to handle or safely ignore any content not specifically defined in the version of the payload" | Service serves legacy content — but the spec obliges **us** to tolerate it | `$metadata` load records unknown features instead of failing (`OPTION_RECORD_UNKNOWN_FEATURE`) | client `foreignMetadataQuirks` (`ConcurrencyMode="Fixed"`) |
 
+## Round 2 (broadened suite: RESTier stack, live writes, multipart batch, composite keys)
+
+| # | Finding (live symptom) | Spec clause | Root cause | Fix | Offline guard |
+|---|---|---|---|---|---|
+| 8 | Northwind `Order_Details(OrderID=…,ProductID=…)` not addressable | **[OData-URL/ABNF]** `compoundKey` — named key components; composite keys | **Ours**: grammar only knew the positional single-literal predicate (ironically the CSDL converter round-trips composite keys) | Grammar `(k1=v1,k2=v2)` + `ResourcePath.namedKeys`; servlet builds a typed AND-of-equalities (all key properties must be named, non-key components → 400; composite-key writes → honest 501); client `get(Map)`; ABNF compound-key skips activated | runtime `compoundKeys`, client `compoundKeyGet`, live Northwind probe |
+| 9 | TripPin rejects our `$batch` (415: only `multipart/mixed`) | **[OData-Protocol] §11.7**: 4.0 batches are multipart; JSON is 4.01 | **Ours**: client only spoke the JSON batch format — unusable against the whole 4.0/SAP world | `ODataBatch.multipart()`: parts for reads, change sets with `Content-ID` for writes, nested multipart response parsing | client `multipartBatch` + live TripPin batch |
+| 10 | Write to TripPin → 500 "a type named 'Person' could not be resolved" | **[OData-JSON] §4.5.3**: `@odata.type`, if present, must be the QUALIFIED name | **Ours**: write payloads carried the full-metadata profile with a non-qualified type discriminator | Write payloads use the MINIMAL profile (the type follows from the request URL) | client write tests (payload asserts) + live write cycle |
+| 11 | RESTier + `OData-MaxVersion: 4.01` → `@odata.count` "missing" | **[OData-JSON] 4.01 §4.1**: control information MAY omit the `odata.` prefix (`@count`, `@context`) | **Ours**: decoder only read the `@odata.*` form | Decoder accepts both; control-info stripping treats a dot-free `@suffix` as control, `@Ns.Term` annotations survive | client `csdlJsonMetadata` (prefix-free `@count` stub) |
+| 12 | RESTier `/$count` answer unparseable: `\uFEFF20` | (HTTP/encoding hygiene — not OData) | Service prefixes responses with a UTF-8 BOM | The client strips a leading BOM centrally in the bounded reader | covered by live `totalCount` probes |
+| 13 | "Unknown key" behaviour differs per stack: TripPin **204**, WCF **400** (type-mismatched literal), spec **404** | [OData-Protocol] §9.2.1 | Live services disagree — no parity possible | The probe is mirror-only: OUR server must answer the spec-conformant 404 | mirror `unknown key` assertion |
+
+Also proven live in round 2: the full WRITE cycle (create → read → patch with If-Match → delete)
+against a foreign 4.0 server, a SECOND server stack (TripPin RESTier), multipart `$batch`
+round-trips, and per-attribute VALUE fidelity on the mirror (deterministic demo data must
+survive serialize → decode exactly, for whatever Edm types the foreign schema uses).
+
 ## The maximal round trip (phase 2)
 
 `MirrorRoundTripTest` closes the loop for each service: the live schema — read through our

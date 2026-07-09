@@ -814,6 +814,33 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("compound key predicates ([OData-URL] compoundKey): composite AND, named single, validation")
+	void compoundKeys() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		// make the fixture composite-keyed for this test (pkg reloads per test)
+		((org.eclipse.emf.ecore.EAttribute) productClass.getEStructuralFeature("name")).setID(true);
+
+		Response composite = get("/Product(id='p1',name='Milk')", Map.of());
+		assertEquals(200, composite.status(), composite.body());
+		assertEquals("and", ((OperationCallExp) lastQuery.get().filter()).getName(),
+				"a composite key becomes an AND of typed equalities");
+
+		assertEquals(400, get("/Product(id='p1')", Map.of()).status(),
+				"a compound predicate must name ALL key properties");
+		assertEquals(400, get("/Product(id='p1',rating=3)", Map.of()).status(),
+				"non-key components are rejected");
+		assertEquals(501, callWrite("PATCH", "/Product(id='p1',name='Milk')",
+				"{\"rating\":5}", "application/json").status(),
+				"composite-key writes are refused honestly (single-raw-key Write SPI)");
+
+		// the named SINGLE-key form Set(id='x') is spec-legal too
+		((org.eclipse.emf.ecore.EAttribute) productClass.getEStructuralFeature("name")).setID(false);
+		Response namedSingle = get("/Product(id='p1')", Map.of());
+		assertEquals(200, namedSingle.status(), namedSingle.body());
+		assertEquals("=", ((OperationCallExp) lastQuery.get().filter()).getName());
+	}
+
+	@Test
 	@DisplayName("renamed entity sets ([OData-CSDL] 13.2): served, listed and emitted under the set name")
 	void renamedEntitySets() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));
