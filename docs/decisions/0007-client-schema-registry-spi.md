@@ -84,6 +84,11 @@ Service-Ranking/Target — ohne Client-Änderung.
 
 ## Status der Umsetzung
 
-Schritt 1: SPI-Bundle-Skelett `org.eclipse.fennec.odata.schema.api` (Interfaces/Records,
-kompilierbar, ohne Logik) — angelegt mit dieser ADR. Reader-/Registrar-/Manager-Impls und der
-`ODataClient`-Split folgen als eigene Schritte.
+**Vollständig umgesetzt** (Stand 2026-07-09): SPI-Bundle `org.eclipse.fennec.odata.schema.api`
+(Reader/Registrar/Resolver/`ODataSchema`/`SchemaScope`), Impls im Client-Bundle
+(`HttpODataSchemaReader` mit Conditional-GET + SHA-256-Hash, `EPackageSchemaRegistry` mit
+negativem Ranking, `ODataSchemaManager`, `ODataSchemaRefresher`, `DefaultODataClientFactory`),
+`ODataClient`-Split (`connect` = lazy Convenience, `forEndpoint(scope, resolver, http)` =
+registry-entkoppelter Datenpfad). Getestet in `ClientSchemaRegistryTest` + e2e-itest. Offen
+bleiben nur die beiden hier bereits ausgegliederten Pakete: die Atlas-Impl (downstream) und
+die SAP-Auth-Schicht (der generische CSRF-Handshake ist im Client vorhanden).

@@ -309,6 +309,38 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 		}
 	}
 
+	@Override
+	public WriteResult update(EClass entityType, Map<String, String> namedKeys,
+			EObject payload, boolean replace) {
+		String key = keyOf(entityType, namedKeys);
+		EAttribute id = requiredKeyAttribute(entityType);
+		Map<String, EObject> entities = classStore(entityType);
+		synchronized (entities) {
+			EObject existing = entities.get(key);
+			if (existing == null) { // upsert: URL key components win over payload values
+				namedKeys.forEach((name, raw) -> {
+					if (entityType.getEStructuralFeature(name) instanceof EAttribute attribute) {
+						payload.eSet(attribute, EcoreUtil.createFromString(
+								attribute.getEAttributeType(), unquote(raw)));
+					}
+				});
+				entities.put(key, payload);
+				return new WriteResult(payload, true);
+			}
+			apply(entityType, payload, existing, replace, id);
+			return new WriteResult(existing, false);
+		}
+	}
+
+	@Override
+	public boolean delete(EClass entityType, Map<String, String> namedKeys) {
+		String key = keyOf(entityType, namedKeys);
+		Map<String, EObject> entities = classStore(entityType);
+		synchronized (entities) {
+			return entities.remove(key) != null;
+		}
+	}
+
 	// --- media side (HasStream entities, [OData-Protocol] 11.2.4/11.4.7) ---
 
 	@Override
@@ -342,13 +374,43 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 	}
 
 	private String keyOf(EClass entityType, EObject entity) {
-		EAttribute id = requiredKeyAttribute(entityType);
-		Object value = entity.eGet(id);
-		if (value == null || !entity.eIsSet(id)) {
-			throw new IllegalArgumentException(
-					"the key property '" + id.getName() + "' is required");
+		requiredKeyAttribute(entityType); // clear client error for keyless types
+		StringBuilder joined = new StringBuilder();
+		for (EAttribute id : entityType.getEAllAttributes()) {
+			if (!id.isID()) {
+				continue;
+			}
+			Object value = entity.eGet(id);
+			if (value == null || !entity.eIsSet(id)) {
+				throw new IllegalArgumentException(
+						"the key property '" + id.getName() + "' is required");
+			}
+			if (joined.length() > 0) {
+				joined.append('\u0000'); // composite store key: all id values, attribute order
+			}
+			joined.append(value);
 		}
-		return String.valueOf(value);
+		return joined.toString();
+	}
+
+	/** The store key for a compound key predicate — id-attribute order, values unquoted. */
+	private String keyOf(EClass entityType, Map<String, String> namedKeys) {
+		StringBuilder joined = new StringBuilder();
+		for (EAttribute id : entityType.getEAllAttributes()) {
+			if (!id.isID()) {
+				continue;
+			}
+			String raw = namedKeys.get(id.getName());
+			if (raw == null) {
+				throw new IllegalArgumentException(
+						"the key predicate must name '" + id.getName() + "'");
+			}
+			if (joined.length() > 0) {
+				joined.append('\u0000');
+			}
+			joined.append(unquote(raw));
+		}
+		return joined.toString();
 	}
 
 	private static EAttribute keyAttribute(EClass entityType) {

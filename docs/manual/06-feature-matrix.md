@@ -51,7 +51,7 @@ Spec documents (OASIS OData **v4.01**):
 
 | Segment | Spec requires | Support | Reference |
 |---|---|---|---|
-| `Set` / `Set(key)` (incl. composite/named keys `(k1=v1,k2=v2)`) | Address sets and entities | ✅ (reads; composite-key writes → 501) | URL Conv. §4.3 |
+| `Set` / `Set(key)` (incl. composite/named keys `(k1=v1,k2=v2)`) | Address sets and entities | ✅ (reads AND entity-level writes; below-entity composite writes → 501). Key literal type mismatches → 400 | URL Conv. §4.3 |
 | Navigation paths `Set(key)/nav[/…]`, keyed nav | — | ✅ | URL Conv. §4.4 |
 | `/$value` (primitive + enum) | Raw value | ✅ | URL Conv. §4.6 |
 | `/$count` on sets and navigations | — | ✅ | URL Conv. §4.8 |
@@ -123,8 +123,9 @@ Spec documents (OASIS OData **v4.01**):
 | `#Ns.Type` discriminator for derived types | ✅ | JSON Format §4.5.8 |
 | `Edm.Int64 > 2^53` `IEEE754Compatible` string form | ❌ | JSON Format §4.3 |
 | `$batch` JSON (4.01) | ✅ (server + client) | Protocol §11.7 |
-| `$batch` multipart/mixed (4.0, SAP world) | ✅ (client `.multipart()`; server JSON-only) | Protocol §11.7 |
+| `$batch` multipart/mixed (4.0, SAP world) | ✅ (server accepts + answers multipart; client `.multipart()`) | Protocol §11.7 |
 | Asynchronous requests, `$delta` / change tracking | ❌ | Protocol §11.6, §11.3 |
+| CORS for browser clients (XOData & co.) | ✅ opt-in (`odata.cors.origin`: `*` or allowlist; preflight, expose headers) | (not OData — HTTP) |
 
 ## Client (E8)
 

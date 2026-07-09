@@ -180,9 +180,17 @@ public class ODataServlet extends HttpServlet {
 	private volatile MetadataService metadataService;
 	private volatile RequestLimits limits = RequestLimits.DEFAULTS;
 
+	/**
+	 * CORS origin(s) served to browser clients (e.g. the XOData explorer): {@code "*"} or a
+	 * space-separated allowlist; EMPTY (the default) disables CORS entirely.
+	 */
+	private volatile String corsOrigin = "";
+
 	@Activate
 	void activate(Map<String, Object> configuration) {
 		limits = RequestLimits.fromConfiguration(configuration);
+		Object origin = configuration.get("odata.cors.origin");
+		corsOrigin = origin == null ? "" : String.valueOf(origin).trim();
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
@@ -346,6 +354,9 @@ public class ODataServlet extends HttpServlet {
 	protected void service(HttpServletRequest request, HttpServletResponse response)
 			throws jakarta.servlet.ServletException, IOException {
 		String pathInfo = request.getPathInfo() == null ? "/" : request.getPathInfo();
+		if (applyCors(request, response)) {
+			return; // a CORS preflight was answered
+		}
 		// carry the requested metadata level request-scoped (save/restore keeps $batch sub-requests,
 		// which re-enter this method, from clobbering the outer request's level)
 		String previousLevel = METADATA_LEVEL.get();
@@ -373,6 +384,36 @@ public class ODataServlet extends HttpServlet {
 		}
 	}
 
+	/**
+	 * Applies CORS headers when configured ({@code odata.cors.origin}) so browser-based clients
+	 * (XOData & co.) can call the service; answers OPTIONS preflights. Returns {@code true} when
+	 * the request WAS a handled preflight. Disabled (no headers at all) by default.
+	 */
+	private boolean applyCors(HttpServletRequest request, HttpServletResponse response) {
+		if (corsOrigin.isEmpty()) {
+			return false;
+		}
+		String origin = request.getHeader("Origin");
+		String allowed = "*".equals(corsOrigin) ? "*"
+				: origin != null && List.of(corsOrigin.split("\\s+")).contains(origin) ? origin : null;
+		if (allowed == null) {
+			return false; // no CORS headers for a non-allowlisted origin — the browser blocks it
+		}
+		response.setHeader("Access-Control-Allow-Origin", allowed);
+		response.setHeader("Access-Control-Expose-Headers",
+				"OData-Version, OData-EntityId, ETag, Location, Preference-Applied");
+		if ("OPTIONS".equals(request.getMethod())) {
+			response.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
+			response.setHeader("Access-Control-Allow-Headers",
+					"Content-Type, Accept, If-Match, OData-Version, OData-MaxVersion, Prefer,"
+							+ " Authorization, X-CSRF-Token");
+			response.setHeader("Access-Control-Max-Age", "3600");
+			response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+			return true;
+		}
+		return false;
+	}
+
 	// --- $batch (OData v4.01 JSON batch format, OASIS Part 1 §11.7 + JSON batch spec) ---
 
 	/**
@@ -397,8 +438,11 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		String contentType = request.getContentType();
-		if (contentType == null || !contentType.toLowerCase(Locale.ROOT).contains("application/json")) {
-			error(response, 415, "only the OData JSON batch format is supported");
+		boolean multipart = contentType != null
+				&& contentType.toLowerCase(Locale.ROOT).contains("multipart/mixed");
+		if (contentType == null || (!multipart
+				&& !contentType.toLowerCase(Locale.ROOT).contains("application/json"))) {
+			error(response, 415, "only the OData JSON and multipart/mixed batch formats are supported");
 			return;
 		}
 
@@ -407,17 +451,35 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "batch body too large");
 			return;
 		}
-		JsonNode root;
-		try {
-			root = JSON.readTree(new String(body, StandardCharsets.UTF_8));
-		} catch (Exception e) {
-			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed batch body");
-			return;
-		}
-		JsonNode requests = root.get("requests");
-		if (requests == null || !requests.isArray()) {
-			error(response, HttpServletResponse.SC_BAD_REQUEST, "batch body must carry a \"requests\" array");
-			return;
+		JsonNode requests;
+		if (multipart) {
+			// the 4.0 wire form: translate parts/change sets into the SAME request shape the JSON
+			// loop processes (change set N -> atomicityGroup "csN", Content-ID -> id)
+			String boundary = multipartBoundary(contentType);
+			if (boundary == null) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST, "multipart batch without boundary");
+				return;
+			}
+			try {
+				requests = parseMultipartBatch(new String(body, StandardCharsets.UTF_8), boundary);
+			} catch (IllegalArgumentException e) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed multipart batch");
+				return;
+			}
+		} else {
+			JsonNode root;
+			try {
+				root = JSON.readTree(new String(body, StandardCharsets.UTF_8));
+			} catch (Exception e) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed batch body");
+				return;
+			}
+			requests = root.get("requests");
+			if (requests == null || !requests.isArray()) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST,
+						"batch body must carry a \"requests\" array");
+				return;
+			}
 		}
 
 		ArrayNode responses = JSON.createArrayNode();
@@ -447,11 +509,161 @@ public class ODataServlet extends HttpServlet {
 		}
 		finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
 
+		if (multipart) {
+			writeMultipartBatchResponse(requests, responses, response);
+			return;
+		}
 		response.setStatus(HttpServletResponse.SC_OK);
 		response.setContentType("application/json;charset=UTF-8");
 		ObjectNode envelope = JSON.createObjectNode();
 		envelope.set("responses", responses);
 		response.getWriter().write(JSON.writeValueAsString(envelope));
+	}
+
+	/** The boundary parameter of a multipart content type, unquoted; null when absent. */
+	private static String multipartBoundary(String contentType) {
+		for (String parameter : contentType.split(";")) {
+			String trimmed = parameter.trim();
+			if (trimmed.regionMatches(true, 0, "boundary=", 0, 9)) {
+				String value = trimmed.substring(9).trim();
+				return value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2
+						? value.substring(1, value.length() - 1) : value;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Parses a multipart/mixed {@code $batch} body ([OData-Protocol] 11.7, the 4.0 wire form) into
+	 * the request shape of the JSON loop: every {@code application/http} part becomes one request
+	 * node (change-set members share an {@code atomicityGroup}, {@code Content-ID} → id); relative
+	 * and absolute request URLs both reduce to service-root-relative form.
+	 */
+	private ArrayNode parseMultipartBatch(String body, String boundary) {
+		ArrayNode requests = JSON.createArrayNode();
+		int changeset = 0;
+		int generated = 0;
+		for (String part : body.split("\\r?\\n?--" + java.util.regex.Pattern.quote(boundary))) {
+			if (part.isBlank() || part.startsWith("--")) {
+				continue;
+			}
+			int headerEnd = headerEnd(part);
+			if (headerEnd < 0) {
+				continue;
+			}
+			String partHeaders = part.substring(0, headerEnd);
+			String partBody = part.substring(headerEnd).stripLeading();
+			String nested = multipartBoundary(partHeaders.replace("\r\n", ";").replace("\n", ";"));
+			if (partHeaders.toLowerCase(Locale.ROOT).contains("multipart/mixed") && nested != null) {
+				changeset++;
+				String group = "cs" + changeset;
+				for (String member : partBody.split("\\r?\\n?--" + java.util.regex.Pattern.quote(nested))) {
+					if (member.isBlank() || member.startsWith("--")) {
+						continue;
+					}
+					int memberHeaderEnd = headerEnd(member);
+					if (memberHeaderEnd < 0) {
+						continue;
+					}
+					requests.add(httpPartRequest(member.substring(0, memberHeaderEnd),
+							member.substring(memberHeaderEnd).stripLeading(), group, "g" + generated++));
+				}
+				continue;
+			}
+			requests.add(httpPartRequest(partHeaders, partBody, null, "g" + generated++));
+		}
+		return requests;
+	}
+
+	private static int headerEnd(String part) {
+		int end = part.indexOf("\r\n\r\n");
+		return end >= 0 ? end : part.indexOf("\n\n");
+	}
+
+	/** One {@code application/http} part → a request node (method, relative url, id, body). */
+	private ObjectNode httpPartRequest(String partHeaders, String content, String group,
+			String fallbackId) {
+		ObjectNode node = JSON.createObjectNode();
+		String id = null;
+		for (String line : partHeaders.split("\\r?\\n")) {
+			if (line.regionMatches(true, 0, "Content-ID:", 0, 11)) {
+				id = line.substring(11).trim();
+			}
+		}
+		String[] lines = content.split("\\r?\\n", -1);
+		int index = 0;
+		String method = "GET";
+		String url = "";
+		for (; index < lines.length; index++) {
+			String line = lines[index].trim();
+			int space = line.indexOf(' ');
+			if (space > 0 && line.endsWith("HTTP/1.1")) {
+				method = line.substring(0, space);
+				url = line.substring(space + 1, line.length() - "HTTP/1.1".length()).trim();
+				index++;
+				break;
+			}
+		}
+		while (index < lines.length && !lines[index].isBlank()) {
+			if (lines[index].regionMatches(true, 0, "Content-ID:", 0, 11)) {
+				id = lines[index].substring(11).trim();
+			}
+			index++; // inner request headers (Accept, Content-Type, …)
+		}
+		String requestBody = index >= lines.length ? ""
+				: String.join("\n", java.util.Arrays.asList(lines)
+						.subList(Math.min(index + 1, lines.length), lines.length)).trim();
+		if (url.startsWith("http://") || url.startsWith("https://")) {
+			// absolute-form request lines: reduce to service-root-relative (keep the query!)
+			java.net.URI absolute = java.net.URI.create(url);
+			String path = absolute.getRawPath() == null ? "" : absolute.getRawPath();
+			int secondSlash = path.indexOf('/', 1); // "/odata/People" → "People"
+			url = (secondSlash >= 0 ? path.substring(secondSlash + 1) : path)
+					+ (absolute.getRawQuery() != null ? "?" + absolute.getRawQuery() : "");
+		}
+		node.put("id", id != null ? id : fallbackId);
+		node.put("method", method);
+		node.put("url", url);
+		if (group != null) {
+			node.put("atomicityGroup", group);
+		}
+		if (!requestBody.isEmpty()) {
+			try {
+				node.set("body", JSON.readTree(requestBody));
+			} catch (Exception e) {
+				throw new IllegalArgumentException("unparseable part body", e);
+			}
+		}
+		return node;
+	}
+
+	/** Serialises the batch results as multipart/mixed — flat parts with Content-ID correlation. */
+	private void writeMultipartBatchResponse(JsonNode requests, ArrayNode responses,
+			HttpServletResponse response) throws IOException {
+		String boundary = "batchresponse_" + Integer.toHexString(System.identityHashCode(responses));
+		StringBuilder body = new StringBuilder();
+		for (JsonNode result : responses) {
+			body.append("--").append(boundary).append("\r\n")
+					.append("Content-Type: application/http\r\n")
+					.append("Content-Transfer-Encoding: binary\r\n");
+			String id = result.path("id").asString(null);
+			if (id != null && !id.startsWith("g")) { // generated ids are not echoed
+				body.append("Content-ID: ").append(id).append("\r\n");
+			}
+			int status = result.path("status").asInt(200);
+			body.append("\r\nHTTP/1.1 ").append(status).append(' ').append("Response").append("\r\n");
+			JsonNode resultBody = result.get("body");
+			if (resultBody != null && !resultBody.isNull()) {
+				body.append("Content-Type: application/json\r\n\r\n")
+						.append(resultBody.toString()).append("\r\n");
+			} else {
+				body.append("\r\n");
+			}
+		}
+		body.append("--").append(boundary).append("--\r\n");
+		response.setStatus(HttpServletResponse.SC_OK);
+		response.setContentType("multipart/mixed; boundary=" + boundary);
+		response.getWriter().write(body.toString());
 	}
 
 	/**
@@ -899,10 +1111,10 @@ public class ODataServlet extends HttpServlet {
 			boundAction(path, action.qualifiedName(), request, response);
 			return;
 		}
-		// the Write SPI addresses entities by a single raw key — composite-key writes would
-		// silently mis-address, so they are refused honestly until the SPI grows named keys
-		if (!path.namedKeys().isEmpty()) {
-			error(response, 501, "writes on composite-key entities are not supported");
+		// entity-level compound-key writes go through the named-key SPI overloads; below the
+		// entity ($ref/nav/media) the SPI is single-raw-key — refused honestly
+		if (!path.namedKeys().isEmpty() && !path.segments().isEmpty()) {
+			error(response, 501, "writes below a composite-key entity are not supported");
 			return;
 		}
 		// PUT Set(key)/$value on a media entity replaces the binary stream — routed to the
@@ -949,15 +1161,18 @@ public class ODataServlet extends HttpServlet {
 							request.getMethod() + " addresses one entity by key");
 					return;
 				}
-				if (!preconditionHolds(entityType, path.key(), request, response)) {
+				if (!preconditionHolds(entityType, path, request, response)) {
 					return; // 428/412 already written
 				}
 				WritePayload payload = readPayload(request, response, entityType);
 				if (payload == null) {
 					return; // error already written
 				}
-				WriteService.WriteResult result = writeService.update(entityType, path.key(),
-						payload.entity(), "PUT".equals(request.getMethod()));
+				WriteService.WriteResult result = path.namedKeys().isEmpty()
+						? writeService.update(entityType, path.key(),
+								payload.entity(), "PUT".equals(request.getMethod()))
+						: writeService.update(entityType, path.namedKeys(),
+								payload.entity(), "PUT".equals(request.getMethod()));
 				if (!payload.bindings().isEmpty()) {
 					applyBindings(writeService, entityType, path.key(), payload.bindings());
 				}
@@ -973,10 +1188,11 @@ public class ODataServlet extends HttpServlet {
 							"DELETE addresses one entity by key");
 					return;
 				}
-				if (!preconditionHolds(entityType, path.key(), request, response)) {
+				if (!preconditionHolds(entityType, path, request, response)) {
 					return; // 428/412 already written
 				}
-				if (writeService.delete(entityType, path.key())) {
+				if (path.namedKeys().isEmpty() ? writeService.delete(entityType, path.key())
+						: writeService.delete(entityType, path.namedKeys())) {
 					response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 				} else {
 					error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
@@ -1236,9 +1452,25 @@ public class ODataServlet extends HttpServlet {
 	 * mismatch → 412. Upserts of absent entities pass. Without a read backend the check is
 	 * skipped (no ETag was ever served).
 	 */
+	/** {@link #preconditionHolds(EClass, String, HttpServletRequest, HttpServletResponse)} for a parsed path (compound-key aware). */
+	private boolean preconditionHolds(EClass entityType, ResourcePath path,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		if (path.namedKeys().isEmpty()) {
+			return preconditionHolds(entityType, path.key(), request, response);
+		}
+		return preconditionHolds(entityType,
+				currentEntity(entityType, compositeKeyEquals(entityType, path.namedKeys())),
+				request, response);
+	}
+
 	private boolean preconditionHolds(EClass entityType, String rawKey,
 			HttpServletRequest request, HttpServletResponse response) throws IOException {
-		EObject current = currentEntity(entityType, rawKey);
+		return preconditionHolds(entityType, currentEntity(entityType, rawKey), request, response);
+	}
+
+	/** The If-Match core over an already-loaded current state (null = upsert, no precondition). */
+	private boolean preconditionHolds(EClass entityType, EObject current,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
 		if (current == null) {
 			return true; // nothing exists — upsert path, no precondition to check
 		}
@@ -1272,11 +1504,17 @@ public class ODataServlet extends HttpServlet {
 
 	/** The current entity by key, or null when absent or no read backend serves the type. */
 	private EObject currentEntity(EClass entityType, String rawKey) {
-		QueryService queryService = queryServices.stream()
-				.filter(s -> s.supports(entityType)).findFirst().orElse(null);
 		EAttribute keyAttribute = entityType.getEAllAttributes().stream()
 				.filter(EAttribute::isID).findFirst().orElse(null);
-		if (queryService == null || keyAttribute == null) {
+		return keyAttribute == null ? null
+				: currentEntity(entityType, keyEquals(keyAttribute, rawKey));
+	}
+
+	/** {@link #currentEntity(EClass, String)} over an already-built key predicate AST. */
+	private EObject currentEntity(EClass entityType, OclExpression keyPredicate) {
+		QueryService queryService = queryServices.stream()
+				.filter(s -> s.supports(entityType)).findFirst().orElse(null);
+		if (queryService == null) {
 			return null; // no read backend serves this type — no ETag was ever issued, skip the check
 		}
 		// A backend FAILURE must NOT be silently degraded to "entity absent": that would skip the
@@ -1284,7 +1522,7 @@ public class ODataServlet extends HttpServlet {
 		// exactly when the backend is flaky. Let it propagate (→ logged 500); only a genuinely
 		// empty result means "not found".
 		QueryResult result = queryService.execute(new EntityQuery(entityType, null,
-				keyEquals(keyAttribute, rawKey), List.of(), 0, 1, false));
+				keyPredicate, List.of(), 0, 1, false));
 		return result.entities().isEmpty() ? null : result.entities().get(0);
 	}
 
@@ -2720,8 +2958,31 @@ public class ODataServlet extends HttpServlet {
 	}
 
 
-	/** The key as a typed equality AST ({@code id = <literal>}) — never expression-parsed. */
+	/** Wrapper/primitive number types a plain-number key literal may address. */
+	private static final Set<Class<?>> NUMERIC_KEY_TYPES = Set.of(
+			Integer.class, int.class, Long.class, long.class, Short.class, short.class,
+			Byte.class, byte.class, java.math.BigInteger.class, java.math.BigDecimal.class);
+
+	/**
+	 * The key as a typed equality AST ({@code id = <literal>}) — never expression-parsed. A key
+	 * literal whose FORM contradicts the key property's type (quoted string against a numeric key,
+	 * plain number against a string key) is a malformed request → {@link IllegalArgumentException}
+	 * (400), not a silent empty match (404) — the WCF stacks answer 400 here too.
+	 */
 	private static OperationCallExp keyEquals(EAttribute keyAttribute, String rawKey) {
+		Class<?> instanceClass = keyAttribute.getEAttributeType() == null ? null
+				: keyAttribute.getEAttributeType().getInstanceClass();
+		boolean quoted = rawKey.length() >= 2 && rawKey.startsWith("'") && rawKey.endsWith("'");
+		if (instanceClass != null) {
+			if (quoted && NUMERIC_KEY_TYPES.contains(instanceClass)) {
+				throw new IllegalArgumentException("the key literal must be numeric for '"
+						+ keyAttribute.getName() + "'");
+			}
+			if (!quoted && rawKey.matches("-?\\d+") && instanceClass == String.class) {
+				throw new IllegalArgumentException("the key literal must be a quoted string for '"
+						+ keyAttribute.getName() + "'");
+			}
+		}
 		OperationCallExp keyFilter = OclFactory.eINSTANCE.createOperationCallExp();
 		keyFilter.setName("=");
 		PropertyCallExp keyProperty = OclFactory.eINSTANCE.createPropertyCallExp();

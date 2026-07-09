@@ -90,13 +90,18 @@ final class DemoData {
 				}
 			}
 		}
-		return instance.eIsSet(keyAttribute(entityType)) ? instance : null;
+		boolean allKeysSet = entityType.getEAllAttributes().stream()
+				.filter(EAttribute::isID).allMatch(instance::eIsSet);
+		return allKeysSet ? instance : null; // skip types whose (composite) key cannot be generated
 	}
 
 	private static Object keyValue(EAttribute key, EClass entityType, int index) {
 		Class<?> type = key.getEAttributeType().getInstanceClass();
 		if (type == String.class) {
 			return entityType.getName().toLowerCase() + "-" + index;
+		}
+		if (type == Boolean.class || type == boolean.class) {
+			return index % 2 == 0; // exotic view types (Northwind) carry boolean key parts
 		}
 		return numeric(type, index);
 	}

@@ -440,6 +440,23 @@ public final class EntitySetRequest {
 		return write("PUT", keyLiteral, entity, ifMatch, bindings);
 	}
 
+	/** {@link #update(String, EObject, String)} addressed by a compound key predicate. */
+	public EObject updateByKeys(Map<String, ?> namedKey, EObject patch, String ifMatch) {
+		return write("PATCH", compoundPredicate(namedKey), patch, ifMatch, Map.of());
+	}
+
+	/** {@link #delete(String, String)} addressed by a compound key predicate. */
+	public boolean deleteByKeys(Map<String, ?> namedKey, String ifMatch) {
+		return delete(compoundPredicate(namedKey), ifMatch);
+	}
+
+	/** The raw compound predicate {@code k1=lit1,k2=lit2} — used INSIDE entityPath's parentheses. */
+	private String compoundPredicate(Map<String, ?> namedKey) {
+		return namedKey.entrySet().stream()
+				.map(component -> component.getKey() + "=" + literal(component.getValue()))
+				.collect(Collectors.joining(","));
+	}
+
 	private EObject write(String method, String keyLiteral, EObject entity, String ifMatch,
 			Map<String, ?> bindings) {
 		String path = entityPath(keyLiteral);

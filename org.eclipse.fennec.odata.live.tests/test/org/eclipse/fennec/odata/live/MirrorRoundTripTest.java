@@ -91,10 +91,15 @@ class MirrorRoundTripTest {
 					valueFidelity(mirror, setName);
 					// unknown-key behaviour differs BETWEEN live stacks (TripPin 204, WCF 400 on a
 					// type-mismatched literal, 404 elsewhere) — no parity possible; the MIRROR must
-					// answer the spec-conformant 404
+					// answer the spec-conformant 404 for a TYPE-CORRECT unknown key
+					EClass mirrorType = mirror.entityType(setName);
+					EAttribute mirrorKey = mirrorType.getEAllAttributes().stream()
+							.filter(EAttribute::isID).findFirst().orElseThrow();
+					String unknownLiteral = mirrorKey.getEAttributeType().getInstanceClass() == String.class
+							? "'fennec-unknown'" : "-987654";
 					ODataClientException unknown = org.junit.jupiter.api.Assertions.assertThrows(
 							ODataClientException.class,
-							() -> mirror.entitySet(setName).get("'fennec-unknown'"));
+							() -> mirror.entitySet(setName).get(unknownLiteral));
 					assertEquals(404, unknown.status(), "the mirror answers 404 for an unknown key");
 				}
 			}

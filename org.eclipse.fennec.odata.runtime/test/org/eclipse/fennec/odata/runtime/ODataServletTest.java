@@ -174,6 +174,20 @@ class ODataServletTest {
 			}
 
 			@Override
+			public WriteResult update(EClass entityType, Map<String, String> namedKeys,
+					EObject payload, boolean replace) {
+				lastWriteKey.set(String.valueOf(namedKeys));
+				lastReplace.set(replace);
+				return new WriteResult(payload, false);
+			}
+
+			@Override
+			public boolean delete(EClass entityType, Map<String, String> namedKeys) {
+				lastWriteKey.set(String.valueOf(namedKeys));
+				return true;
+			}
+
+			@Override
 			public boolean delete(EClass entityType, String rawKey) {
 				lastWriteKey.set(rawKey);
 				return deleteFound;
@@ -298,6 +312,10 @@ class ODataServletTest {
 			return null;
 		}).when(response).setHeader(org.mockito.ArgumentMatchers.anyString(),
 				org.mockito.ArgumentMatchers.anyString());
+		doAnswer(invocation -> {
+			headers.put("Content-Type", invocation.getArgument(0));
+			return null;
+		}).when(response).setContentType(org.mockito.ArgumentMatchers.anyString());
 
 		servlet.service(request, response);
 		return new Response(status.get(), body.toString(), headers);
@@ -829,15 +847,100 @@ class ODataServletTest {
 				"a compound predicate must name ALL key properties");
 		assertEquals(400, get("/Product(id='p1',rating=3)", Map.of()).status(),
 				"non-key components are rejected");
-		assertEquals(501, callWrite("PATCH", "/Product(id='p1',name='Milk')",
-				"{\"rating\":5}", "application/json").status(),
-				"composite-key writes are refused honestly (single-raw-key Write SPI)");
+		Response patched = callWrite("PATCH", "/Product(id='p1',name='Milk')", Map.of(),
+				"{\"rating\":5}", "application/json", Map.of("If-Match", "*"));
+		assertEquals(204, patched.status(), "entity-level composite writes go through the"
+				+ " named-key SPI: " + patched.body());
+		assertTrue(lastWriteKey.get().contains("id='p1'") && lastWriteKey.get().contains("name='Milk'"),
+				lastWriteKey.get());
+		assertEquals(204, callWrite("DELETE", "/Product(id='p1',name='Milk')", Map.of(),
+				null, null, Map.of("If-Match", "*")).status());
+		assertEquals(501, callWrite("PUT", "/Product(id='p1',name='Milk')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"Category('c1')\"}", "application/json",
+				Map.of("If-Match", "*")).status(),
+				"below-entity writes on composite keys stay refused");
 
 		// the named SINGLE-key form Set(id='x') is spec-legal too
 		((org.eclipse.emf.ecore.EAttribute) productClass.getEStructuralFeature("name")).setID(false);
 		Response namedSingle = get("/Product(id='p1')", Map.of());
 		assertEquals(200, namedSingle.status(), namedSingle.body());
 		assertEquals("=", ((OperationCallExp) lastQuery.get().filter()).getName());
+	}
+
+	@Test
+	@DisplayName("multipart $batch (the 4.0 wire form): parts + change set dispatch; multipart answer")
+	void multipartBatch() throws Exception {
+		servlet.activate(Map.of()); // default limits — the multipart envelope exceeds the tiny test cap
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		String body = "--b\r\n"
+				+ "Content-Type: application/http\r\n"
+				+ "Content-Transfer-Encoding: binary\r\n\r\n"
+				+ "GET Product('p1') HTTP/1.1\r\n"
+				+ "Accept: application/json\r\n\r\n\r\n"
+				+ "--b\r\n"
+				+ "Content-Type: multipart/mixed; boundary=cs1\r\n\r\n"
+				+ "--cs1\r\n"
+				+ "Content-Type: application/http\r\n"
+				+ "Content-ID: 42\r\n\r\n"
+				+ "PATCH Product('p1') HTTP/1.1\r\n"
+				+ "Content-Type: application/json\r\n"
+				+ "If-Match: *\r\n\r\n"
+				+ "{\"name\":\"Renamed\"}\r\n"
+				+ "--cs1--\r\n"
+				+ "--b--\r\n";
+		Response result = callWrite("POST", "/$batch", body, "multipart/mixed; boundary=b");
+		assertEquals(200, result.status(), result.body());
+		assertTrue(result.headers().get("Content-Type").startsWith("multipart/mixed"),
+				"the answer is multipart: " + result.headers());
+		assertTrue(result.body().contains("HTTP/1.1 200"), "the GET part succeeded: " + result.body());
+		assertTrue(result.body().contains("\"name\":\"Milk\""), result.body());
+		assertTrue(result.body().contains("Content-ID: 42"), "Content-ID correlates: " + result.body());
+		assertTrue(result.body().contains("HTTP/1.1 428")
+				|| result.body().contains("HTTP/1.1 204"),
+				"the change-set PATCH ran through the normal pipeline: " + result.body());
+		servlet.activate(Map.of("odata.max.top", "50",
+				"odata.max.expression.length", "128", "odata.max.nesting.depth", "8",
+				"odata.max.body.size", "256")); // restore the test limits
+	}
+
+	@Test
+	@DisplayName("key literal form must match the key property's type (400, not a silent 404)")
+	void keyLiteralTypeValidation() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		assertEquals(200, get("/Product('p1')", Map.of()).status(), "string key, quoted literal");
+		assertEquals(400, get("/Product(42)", Map.of()).status(),
+				"a plain-number literal against a string key is malformed");
+	}
+
+	@Test
+	@DisplayName("CORS: disabled by default; preflight + headers when configured")
+	void cors() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		Response without = get("/Product", Map.of());
+		assertNull(without.headers().get("Access-Control-Allow-Origin"),
+				"no CORS headers unless configured");
+
+		servlet.activate(Map.of("odata.cors.origin", "*"));
+		Response preflight = call("OPTIONS", "/Product", Map.of(), null, null,
+				Map.of("Origin", "https://xodata.example"));
+		assertEquals(204, preflight.status());
+		assertEquals("*", preflight.headers().get("Access-Control-Allow-Origin"));
+		assertTrue(preflight.headers().get("Access-Control-Allow-Headers").contains("If-Match"));
+
+		Response withCors = get("/Product", Map.of());
+		assertEquals("*", withCors.headers().get("Access-Control-Allow-Origin"));
+		assertTrue(withCors.headers().get("Access-Control-Expose-Headers").contains("ETag"));
+
+		servlet.activate(Map.of("odata.cors.origin", "https://allowed.example"));
+		Response allowed = call("GET", "/Product", Map.of(), null, null,
+				Map.of("Origin", "https://allowed.example"));
+		assertEquals("https://allowed.example", allowed.headers().get("Access-Control-Allow-Origin"));
+		Response denied = call("GET", "/Product", Map.of(), null, null,
+				Map.of("Origin", "https://evil.example"));
+		assertNull(denied.headers().get("Access-Control-Allow-Origin"),
+				"non-allowlisted origins get no CORS headers");
+
+		servlet.activate(Map.of()); // restore for the other tests
 	}
 
 	@Test
@@ -922,9 +1025,9 @@ class ODataServletTest {
 	}
 
 	@Test
-	@DisplayName("$batch rejects non-JSON payloads (multipart/mixed) with 415")
-	void jsonBatchRejectsMultipart() throws Exception {
-		Response res = callWrite("POST", "/$batch", "--boundary", "multipart/mixed;boundary=boundary");
+	@DisplayName("$batch rejects unknown payload formats with 415 (JSON and multipart are accepted)")
+	void batchRejectsUnknownFormat() throws Exception {
+		Response res = callWrite("POST", "/$batch", "not a batch", "text/plain");
 		assertEquals(415, res.status(), res.body());
 	}
 

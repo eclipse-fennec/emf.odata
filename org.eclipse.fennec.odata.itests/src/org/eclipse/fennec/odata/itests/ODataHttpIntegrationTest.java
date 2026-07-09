@@ -382,13 +382,20 @@ public class ODataHttpIntegrationTest {
 		assertTrue(batch.body().contains("Batched"),
 				"the dependent GET sees the created entity: " + batch.body());
 
-		// non-JSON batch (classic multipart) is refused
+		// the classic multipart form (4.0) is accepted since the multipart batch landed —
+		// an empty multipart answers an empty multipart; unknown formats stay 415
 		HttpResponse<String> multipart = client.send(
 				HttpRequest.newBuilder(URI.create(BASE + "/$batch"))
 						.header("Content-Type", "multipart/mixed;boundary=b")
 						.POST(HttpRequest.BodyPublishers.ofString("--b--")).build(),
 				HttpResponse.BodyHandlers.ofString());
-		assertEquals(415, multipart.statusCode(), multipart.body());
+		assertEquals(200, multipart.statusCode(), multipart.body());
+		HttpResponse<String> unknown = client.send(
+				HttpRequest.newBuilder(URI.create(BASE + "/$batch"))
+						.header("Content-Type", "text/plain")
+						.POST(HttpRequest.BodyPublishers.ofString("nope")).build(),
+				HttpResponse.BodyHandlers.ofString());
+		assertEquals(415, unknown.statusCode(), unknown.body());
 	}
 
 	@Test

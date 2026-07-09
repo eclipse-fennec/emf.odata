@@ -12,6 +12,8 @@
  */
 package org.eclipse.fennec.odata.persistence.api;
 
+import java.util.Map;
+
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 
@@ -54,6 +56,21 @@ public interface WriteService {
 
 	/** @return true when the entity existed and is gone now, false when it was absent */
 	boolean delete(EClass entityType, String rawKey);
+
+	/**
+	 * {@link #update(EClass, String, EObject, boolean)} addressed by a COMPOUND key predicate
+	 * ([OData-URL] compoundKey — composite keys). Optional capability: backends without named-key
+	 * support keep the default, which the protocol layer maps to {@code 501}.
+	 */
+	default WriteResult update(EClass entityType, Map<String, String> namedKeys,
+			EObject payload, boolean replace) {
+		throw new UnsupportedOperationException("composite-key updates are not supported");
+	}
+
+	/** {@link #delete(EClass, String)} addressed by a compound key predicate; optional (→ 501). */
+	default boolean delete(EClass entityType, Map<String, String> namedKeys) {
+		throw new UnsupportedOperationException("composite-key deletes are not supported");
+	}
 
 	/**
 	 * Creates a new entity INSIDE a navigation ({@code POST Set(key)/nav}, 13.1.1/20):

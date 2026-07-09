@@ -11,6 +11,7 @@ is the typed IR (no string concatenation), and errors never leak internals.
 | Max. expression length (`$filter`/`$orderby`/`$apply`/`$expand`) | 4096 | `odata.max.expression.length` |
 | Max. parenthesis depth (parser-bomb guard, pre-parse, underflow-safe) | 64 | `odata.max.nesting.depth` |
 | Max. write body size | 1 MiB | `odata.max.body.size` |
+| CORS origin(s) for browser clients (`*` or space-separated allowlist; empty = CORS off) | off | `odata.cors.origin` |
 
 ## Backend / repository
 
