@@ -825,6 +825,14 @@ public class ODataServlet extends HttpServlet {
 					"unknown entity set '" + ODataJson.sanitize(path.entitySet()) + "'");
 			return;
 		}
+		// POST Set(key)/Ns.Action — a bound action (parameters in the body). The qualified action
+		// name parses as a single cast-shaped segment; it is dispatched through the operation SPI,
+		// not the write backend, so it is intercepted before the WriteService is resolved.
+		if ("POST".equals(request.getMethod()) && path.key() != null && path.segments().size() == 1
+				&& path.segments().get(0) instanceof ResourcePath.TypeCastSegment action) {
+			boundAction(path, action.qualifiedName(), request, response);
+			return;
+		}
 		WriteService writeService = writeServices.stream()
 				.filter(s -> s.supports(entityType)).findFirst().orElse(null);
 		if (writeService == null) {
@@ -876,7 +884,7 @@ public class ODataServlet extends HttpServlet {
 				if (result.created()) { // OData upsert (13.1.1/29)
 					respondCreated(path.entitySet(), result.entity(), entityType, request, response);
 				} else {
-					response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+					respondUpdated(path.entitySet(), result.entity(), entityType, request, response);
 				}
 			}
 			case "DELETE" -> {
@@ -1358,21 +1366,77 @@ public class ODataServlet extends HttpServlet {
 		return id == null ? null : urlKeyLiteral(id, entity.eGet(id));
 	}
 
-	/** 201 with Location/OData-EntityId (the entity's edit URL) and the created entity body. */
+	/**
+	 * 201 with Location/OData-EntityId and the created entity body, unless the client asked for
+	 * {@code Prefer: return=minimal} — then 204 with just the headers ([OData-Protocol] 8.2.8.7).
+	 * A honoured preference is echoed via {@code Preference-Applied}.
+	 */
 	private void respondCreated(String setName, EObject entity, EClass entityType,
 			HttpServletRequest request, HttpServletResponse response) throws IOException {
 		EAttribute id = entityType.getEAllAttributes().stream()
 				.filter(EAttribute::isID).findFirst().orElse(null);
 		String editUrl = contextRoot(request) + "/" + setName
 				+ (id == null ? "" : "(" + urlKeyLiteral(id, entity.eGet(id)) + ")");
-		response.setStatus(HttpServletResponse.SC_CREATED);
 		response.setHeader("Location", editUrl);
 		response.setHeader("OData-EntityId", editUrl);
+		if ("minimal".equals(returnPreference(request))) {
+			response.setHeader("Preference-Applied", "return=minimal");
+			response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+			return;
+		}
+		if ("representation".equals(returnPreference(request))) {
+			response.setHeader("Preference-Applied", "return=representation");
+		}
+		response.setStatus(HttpServletResponse.SC_CREATED);
 		String json = entityJson(entity, entityType, null, Set.of());
 		String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
 				+ "/$entity\",";
 		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
 		response.getWriter().write("{" + context + json.substring(1));
+	}
+
+	/**
+	 * 204 for a successful update, unless the client asked for {@code Prefer: return=representation}
+	 * — then 200 with the updated entity ([OData-Protocol] 8.2.8.7). A honoured preference is echoed
+	 * via {@code Preference-Applied}.
+	 */
+	private void respondUpdated(String setName, EObject entity, EClass entityType,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		if ("representation".equals(returnPreference(request)) && entity != null) {
+			response.setHeader("Preference-Applied", "return=representation");
+			response.setStatus(HttpServletResponse.SC_OK);
+			String json = entityJson(entity, entityType, null, Set.of());
+			String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
+					+ "/$entity\",";
+			response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+			response.getWriter().write("{" + context + json.substring(1));
+			return;
+		}
+		if ("minimal".equals(returnPreference(request))) {
+			response.setHeader("Preference-Applied", "return=minimal");
+		}
+		response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+	}
+
+	/** The {@code return=} value of the {@code Prefer} header ("minimal"/"representation"), or null. */
+	private static String returnPreference(HttpServletRequest request) {
+		String prefer = request.getHeader("Prefer");
+		if (prefer == null) {
+			return null;
+		}
+		for (String token : prefer.split(",")) {
+			String t = token.trim();
+			if (t.regionMatches(true, 0, "return=", 0, 7)) {
+				String value = t.substring(7).trim();
+				if (value.equalsIgnoreCase("minimal")) {
+					return "minimal";
+				}
+				if (value.equalsIgnoreCase("representation")) {
+					return "representation";
+				}
+			}
+		}
+		return null;
 	}
 
 	/** URL form of a key value: quoted (with {@code ''} escape) for strings, raw otherwise. */
@@ -1749,6 +1813,43 @@ public class ODataServlet extends HttpServlet {
 		}
 		Object result = handler.invoke(operation, entity, functionParameters(parameterList, operation));
 		writeFunctionResult(result, request, response);
+	}
+
+	/**
+	 * Invokes a bound action {@code POST Set(key)/Ns.Action} on the addressed entity, with the
+	 * parameters in the JSON body ([OData-Protocol] 11.5.4.2). Mirrors {@link #boundFunction} but for
+	 * the POST/body shape; the result is serialised like any operation result (void → 204).
+	 */
+	private void boundAction(ResourcePath path, String qualified, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
+		String localName = qualified.contains(".")
+				? qualified.substring(qualified.lastIndexOf('.') + 1) : qualified;
+		Target target = resolveTarget(path.entitySet(), response);
+		if (target == null) {
+			return;
+		}
+		EObject entity = fetchByKey(target, path.key(), Set.of(), response);
+		if (entity == null) {
+			return; // error already written
+		}
+		EOperation operation = entity.eClass().getEAllOperations().stream()
+				.filter(op -> op.getName().equals(localName) && !isUnbound(op)).findFirst().orElse(null);
+		if (operation == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "no bound action '" + localName + "'");
+			return;
+		}
+		Map<String, Object> parameters = readActionParameters(request, operation, response);
+		if (parameters == null) {
+			return; // error already written
+		}
+		String qualifiedName = operationNamespace(target.entityType()) + "." + localName;
+		ODataOperationHandler handler = operationHandlers.stream()
+				.filter(h -> h.handles(qualifiedName)).findFirst().orElse(null);
+		if (handler == null) {
+			error(response, 501, "no handler for the operation");
+			return;
+		}
+		writeFunctionResult(handler.invoke(operation, entity, parameters), request, response);
 	}
 
 	private String operationNamespace(EClass entityType) {

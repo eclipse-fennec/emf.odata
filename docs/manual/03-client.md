@@ -78,7 +78,18 @@ Expanded navigations decode inline into the typed `EObject` graph.
 Object v        = client.function("doubleOf", Map.of("x", 21));          // GET Name(...)
 EObject entity  = client.functionAsEntity("featured", Map.of(), product);
 Object result   = client.action("recalculate", Map.of("factor", 2));      // POST Name, body
-Object bound     = client.entitySet("Product").boundFunction("'p1'", "My.Shop.label", Map.of());
+Object bfn      = client.entitySet("Product").boundFunction("'p1'", "My.Shop.label", Map.of());
+Object bact     = client.entitySet("Product")                             // POST Set(key)/Ns.Action
+    .boundAction("'p1'", "My.Shop.recalc", Map.of("factor", 2));          // params in the JSON body
+```
+
+## Derived-type casts
+
+`cast(qualifiedTypeName)` addresses a type-cast segment and decodes into the derived type:
+
+```java
+ODataPage sale = client.entitySet("Product").cast("My.Shop.DiscountedProduct").list();   // Set/Ns.Type
+EObject one    = client.entitySet("Product").cast("My.Shop.DiscountedProduct").get("'p1'"); // Set/Ns.Type(key)
 ```
 
 ## Writing
@@ -103,6 +114,16 @@ client.entitySet("Order").create(o, Map.of("items", List.of("Product('p1')", "Pr
 The encoder injects the `"nav@odata.bind"` member(s) and validates that the navigation
 exists, is a non-containment reference (containment children go via deep insert), and
 matches the target cardinality.
+
+**`Prefer: return=…`** controls the write response. `preferReturn("minimal")` asks the
+server for `204` (no body — `create` then returns `null`); `preferReturn("representation")`
+returns the written entity (`update`/`replace` then decode and return it):
+
+```java
+client.entitySet("Product").preferReturn("minimal").create(p);                 // → null
+EObject back = client.entitySet("Product").preferReturn("representation")
+    .update("'p1'", patch, ifMatch);                                            // → the updated entity
+```
 
 ## Batch
 

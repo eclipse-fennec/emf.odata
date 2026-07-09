@@ -672,6 +672,29 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("bound action POST Set(key)/Ns.Action is invoked with the body parameters")
+	void boundActionOnEntity() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		servlet.addOperationHandler(new ODataOperationHandler() {
+			@Override
+			public boolean handles(String qualifiedOperationName) {
+				return qualifiedOperationName.endsWith(".label");
+			}
+
+			@Override
+			public Object invoke(org.eclipse.emf.ecore.EOperation operation, EObject boundInstance,
+					Map<String, Object> parameters) {
+				Object name = boundInstance.eGet(boundInstance.eClass().getEStructuralFeature("name"));
+				return parameters.get("prefix") + ":" + name;
+			}
+		});
+		Response result = callWrite("POST", "/Product('p1')/webshop.label",
+				"{\"prefix\":\"X\"}", "application/json");
+		assertEquals(200, result.status(), result.body());
+		assertTrue(result.body().contains("\"value\":\"X:Milk\""), result.body());
+	}
+
+	@Test
 	@DisplayName("$batch (JSON): sub-requests dispatch through the normal pipeline; results are collected in order")
 	void jsonBatch() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));
@@ -1052,6 +1075,27 @@ class ODataServletTest {
 		deleteFound = false;
 		assertEquals(404, callWrite("DELETE", "/Product('gone')", null, null).status());
 		deleteFound = true;
+	}
+
+	@Test
+	@DisplayName("Prefer return=: minimal → 204 on create; representation → 200 + entity on update")
+	void preferReturn() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response minimal = callWrite("POST", "/Product", Map.of(),
+				"{\"id\":\"n1\",\"name\":\"New\"}", "application/json",
+				Map.of("Prefer", "return=minimal"));
+		assertEquals(204, minimal.status(), minimal.body());
+		assertEquals("return=minimal", minimal.headers().get("Preference-Applied"));
+		assertTrue(minimal.headers().get("Location").endsWith("/Product('n1')"),
+				minimal.headers().toString());
+
+		Response representation = callWrite("PATCH", "/Product('p1')", Map.of(),
+				"{\"name\":\"Renamed\"}", "application/json",
+				Map.of("Prefer", "return=representation", "If-Match", "*"));
+		assertEquals(200, representation.status(), representation.body());
+		assertEquals("return=representation", representation.headers().get("Preference-Applied"));
+		assertTrue(representation.body().contains("\"name\":\"Renamed\""), representation.body());
 	}
 
 	@Test

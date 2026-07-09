@@ -77,6 +77,7 @@ class ODataClientTest {
 	private final AtomicReference<String> lastMaxVersion = new AtomicReference<>();
 	private final AtomicReference<String> lastCsrf = new AtomicReference<>();
 	private final AtomicReference<String> lastBatchBody = new AtomicReference<>();
+	private final AtomicReference<String> lastPrefer = new AtomicReference<>();
 
 	@BeforeAll
 	void setUpStub() throws Exception {
@@ -144,6 +145,12 @@ class ODataClientTest {
 				answer = "{\"id\":\"c1\",\"name\":\"Dairy\"}";
 			} else if (path.endsWith("/reviews")) {
 				answer = "{\"value\":[{\"stars\":5,\"comment\":\"great\"},{\"stars\":4,\"comment\":\"good\"}]}";
+			} else if (path.endsWith("/Product/webshop.DiscountedProduct")) {
+				answer = "{\"value\":[{\"id\":\"d1\",\"name\":\"Sale Milk\",\"price\":\"0.99\","
+						+ "\"rating\":4,\"active\":true,\"discount\":20}]}"; // derived-type collection cast
+			} else if (path.endsWith("/Product/webshop.DiscountedProduct('d1')")) {
+				answer = "{\"id\":\"d1\",\"name\":\"Sale Milk\",\"price\":\"0.99\","
+						+ "\"rating\":4,\"active\":true,\"discount\":20}"; // keyed derived-type cast
 			} else if (path.endsWith("/Product('bad')")) {
 				answer = "this is not json"; // a 200 with an undecodable body
 			} else if (path.endsWith("/Product('p1')")) {
@@ -426,6 +433,30 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("cast addresses Set/Ns.Type[(key)] and decodes into the derived type")
+	void derivedTypeCast() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass discounted = client.entityType("DiscountedProduct");
+		EStructuralFeature discount = discounted.getEStructuralFeature("discount");
+
+		ODataPage page = client.entitySet("Product").cast("webshop.DiscountedProduct").list();
+		assertTrue(lastRequest.get().getRawPath().endsWith("/Product/webshop.DiscountedProduct"),
+				"collection cast segment: " + lastRequest.get());
+		assertEquals(1, page.entities().size());
+		EObject d = page.entities().get(0);
+		assertEquals(discounted, d.eClass(), "decoded into the derived type");
+		assertEquals(20, d.eGet(discount));
+
+		EObject one = client.entitySet("Product").cast("webshop.DiscountedProduct").get("'d1'");
+		assertTrue(lastRequest.get().getRawPath().endsWith("/Product/webshop.DiscountedProduct('d1')"),
+				"keyed cast segment: " + lastRequest.get());
+		assertEquals(20, one.eGet(discount));
+
+		assertThrows(ODataClientException.class,
+				() -> client.entitySet("Product").cast("webshop.Nope"), "unknown derived type");
+	}
+
+	@Test
 	@DisplayName("configured auth header and OData-MaxVersion are sent on every request (incl. $metadata)")
 	void configuredHeadersAreSent() {
 		ODataClientConfig config = ODataClientConfig.DEFAULTS.withBearerToken("tok123").withMaxVersion("4.0");
@@ -633,6 +664,38 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("Prefer return=: minimal create returns null; representation update decodes the body")
+	void preferReturn() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject p = product.getEPackage().getEFactoryInstance().create(product);
+		p.eSet(product.getEStructuralFeature("id"), "n1");
+		p.eSet(product.getEStructuralFeature("name"), "Milk");
+
+		EObject created = client.entitySet("Product").preferReturn("minimal").create(p);
+		assertNull(created, "return=minimal → no representation returned");
+		assertEquals("return=minimal", lastPrefer.get(), "the Prefer header is sent");
+
+		EObject updated = client.entitySet("Product").preferReturn("representation").update("'p1'", p, null);
+		assertEquals("return=representation", lastPrefer.get());
+		assertNotNull(updated, "return=representation → the updated entity is decoded");
+		assertEquals("Milk", updated.eGet(product.getEStructuralFeature("name")));
+	}
+
+	@Test
+	@DisplayName("bound action POSTs its params to Set(key)/Ns.Action and decodes the value")
+	void boundActionInvocation() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		Object result = client.entitySet("Product")
+				.boundAction("'p1'", "webshop.recalc", Map.of("factor", 2));
+		assertEquals("POST", lastWriteMethod.get());
+		assertTrue(lastRequest.get().getRawPath().endsWith("/Product('p1')/webshop.recalc"),
+				lastRequest.get().toString());
+		assertTrue(lastWriteBody.get().contains("\"factor\":2"), lastWriteBody.get());
+		assertEquals("acted", result);
+	}
+
+	@Test
 	@DisplayName("$search / $compute / $format / parameter aliases assemble into the query")
 	void extraQueryOptionsAssemble() {
 		ODataClient client = ODataClient.connect(serviceRoot);
@@ -679,14 +742,25 @@ class ODataClientTest {
 		lastWriteMethod.set(method);
 		lastIfMatch.set(exchange.getRequestHeaders().getFirst("If-Match"));
 		lastCsrf.set(exchange.getRequestHeaders().getFirst("X-CSRF-Token"));
+		lastPrefer.set(exchange.getRequestHeaders().getFirst("Prefer"));
 		lastWriteBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+		boolean returnMinimal = "return=minimal".equals(lastPrefer.get());
+		boolean returnRepresentation = "return=representation".equals(lastPrefer.get());
 		int status;
 		String answer = "";
 		if ("POST".equals(method) && path.endsWith("/Product")) {
-			status = 201;
 			exchange.getResponseHeaders().set("Location", serviceRoot + "Product('n1')");
+			if (returnMinimal) {
+				status = 204; // Prefer: return=minimal → no body
+			} else {
+				status = 201;
+				exchange.getResponseHeaders().set("Content-Type", "application/json");
+				answer = lastWriteBody.get(); // echo the created entity so create() can decode it
+			}
+		} else if ("POST".equals(method) && path.contains("/webshop.")) {
+			status = 200; // a bound action invocation (POST Set(key)/Ns.Action)
 			exchange.getResponseHeaders().set("Content-Type", "application/json");
-			answer = lastWriteBody.get(); // echo the created entity so create() can decode it
+			answer = "{\"value\":\"acted\"}";
 		} else if (path.endsWith("/$ref")) {
 			status = 204;
 		} else if ("DELETE".equals(method)) {
@@ -695,6 +769,10 @@ class ODataClientTest {
 				exchange.getResponseHeaders().set("Content-Type", "application/json");
 				answer = "{\"error\":{\"code\":\"404\",\"message\":\"not found\"}}";
 			}
+		} else if (returnRepresentation) {
+			status = 200; // PATCH/PUT with Prefer: return=representation → the updated entity
+			exchange.getResponseHeaders().set("Content-Type", "application/json");
+			answer = "{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"1.20\",\"rating\":3,\"active\":true}";
 		} else {
 			status = 204; // PATCH / PUT
 		}

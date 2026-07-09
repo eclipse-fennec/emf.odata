@@ -200,15 +200,18 @@ origin is refused. `ODataClient` is `AutoCloseable` and closes only an `HttpClie
 ## Known gaps / not yet
 
 **Server:** CSDL-JSON (`$metadata` in JSON, Q9 — a Minimal SHOULD); `metadata=full`/`none` profiles
-(runtime always emits `metadata=minimal`); `Edm.Int64 > 2^53` `IEEE754Compatible` string form; bound
-**actions**; Advanced conformance (async, `$delta`, deltas); a few 4.01 Intermediate SHOULDs
-(query options on nav paths, some in-`$expand` options); the `ODataRequestFilter` refactor
-(req §5.1.1 — wrapping `RequestLimits`/parse validation in a whiteboard filter); in-memory backend
-is not subtype-polymorphic (JPA is).
+(runtime always emits `metadata=minimal`); `Edm.Int64 > 2^53` `IEEE754Compatible` string form;
+Advanced conformance (async, `$delta`, deltas); a few 4.01 Intermediate SHOULDs (query options on
+nav paths, some in-`$expand` options); the `ODataRequestFilter` refactor (req §5.1.1 — wrapping
+`RequestLimits`/parse validation in a whiteboard filter); in-memory backend is not
+subtype-polymorphic (JPA is).
 
-**Client:** bound **actions**; `Prefer: return=minimal/representation` control on writes; media
-streams (`$value` binary), delta/change-tracking, singleton access. The Atlas-backed schema
-registry impl is downstream (ADR-0007).
+**Client:** media streams (`$value` binary), delta/change-tracking, singleton access. The
+Atlas-backed schema registry impl is downstream (ADR-0007).
+
+Client↔server functional parity now holds across the read/query surface, resource addressing
+(incl. **derived-type casts**), writes (incl. `@odata.bind` and **`Prefer: return=`**), `$batch`, and
+operations (unbound imports, bound functions and **bound actions**).
 
 ## References
 ADR-0001 servlet transport · 0002 CSDL via EDM model · 0003 converter owns resolution ·

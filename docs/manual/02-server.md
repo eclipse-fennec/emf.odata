@@ -91,13 +91,15 @@ DELETE /odata/Product('p1')/category/$ref    # clear / remove
 - **Deep insert** of containment children rides along in the POST body.
 - **`@odata.bind`**: a `"nav@odata.bind": "Category('c1')"` member links to an existing entity; it is extracted and validated before the codec sees the body, then applied as a reference operation after the write (entity level only).
 - **ETags / If-Match**: weak ETags (SHA-256 over the serialized state) on single-entity GET; updates/deletes of existing entities require `If-Match` → `428`/`412`.
+- **`Prefer: return=minimal`** answers a create with `204` (headers only) and an update with `204`; **`return=representation`** returns the full entity (`201`/`200`). The honoured choice is echoed in `Preference-Applied`.
 - Guards: `415` (non-JSON), `413` (body limit), `400` (empty/malformed), `405` (wrong target / no `WriteService`), `409` (conflict).
 
 ## Operations
 
 Registered via the `ODataOperationHandler` SPI: unbound **function imports**
-(`GET Name(p=…)`), unbound **action imports** (`POST Name` with a JSON body), and **bound
-functions** (`GET Set(key)/Ns.Func(p=…)`). (Bound *actions* are not yet routed.)
+(`GET Name(p=…)`), unbound **action imports** (`POST Name` with a JSON body), **bound
+functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions** (`POST Set(key)/Ns.Action`
+with the parameters in the JSON body).
 
 ## Backend configuration
 

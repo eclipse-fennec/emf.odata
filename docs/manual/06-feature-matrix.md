@@ -98,7 +98,7 @@ Spec documents (OASIS OData **v4.01**):
 | `$ref` link / unlink (single + collection, `$id`, 4.01 key-in-URL) | Manage references | ✅ | Protocol §11.4.6 |
 | `@odata.bind` (link to existing on create/update) | SHOULD | ✅ (server receives, client emits) | JSON Format §8.5; Protocol §11.4.2.1 |
 | ETags / `If-Match` (weak, 428/412) | Optimistic concurrency | ✅ | Protocol §11.4.1.1 |
-| `Prefer: return=minimal/representation` | SHOULD | ❌ | Protocol §8.2.8.7 |
+| `Prefer: return=minimal/representation` | SHOULD | ✅ (server honours; client requests) | Protocol §8.2.8.7 |
 | Deep updates, `PATCH`-delta on collections | SHOULD/MAY | ❌ | Protocol §11.4.3 |
 
 ## Operations
@@ -108,7 +108,7 @@ Spec documents (OASIS OData **v4.01**):
 | Unbound function import (`GET Name(...)`) | ✅ | URL Conv. §4.5; Protocol §11.5.4 |
 | Unbound action import (`POST Name`) | ✅ | Protocol §11.5.4 |
 | Bound function (`GET Set(key)/Ns.Func(...)`) | ✅ | Protocol §11.5.4.1 |
-| Bound action (`POST Set(key)/Ns.Action`) | ❌ | Protocol §11.5.4.2 |
+| Bound action (`POST Set(key)/Ns.Action`) | ✅ | Protocol §11.5.4.2 |
 
 ## Formats, headers & versioning
 
@@ -120,7 +120,7 @@ Spec documents (OASIS OData **v4.01**):
 | Server-driven paging `@odata.nextLink` | ✅ | Protocol §11.2.5.7 |
 | `#Ns.Type` discriminator for derived types | ✅ | JSON Format §4.5.8 |
 | `Edm.Int64 > 2^53` `IEEE754Compatible` string form | ❌ | JSON Format §4.3 |
-| `$batch` (JSON) | ✅ (client); server ❌ | Protocol §11.7 |
+| `$batch` (JSON) | ✅ (server + client) | Protocol §11.7 |
 | Asynchronous requests, `$delta` / change tracking | ❌ | Protocol §11.6, §11.3 |
 
 ## Client (E8)
@@ -128,12 +128,14 @@ Spec documents (OASIS OData **v4.01**):
 | Feature | Support | Reference |
 |---|---|---|
 | `$metadata` → Ecore, all read query options, navigation, `$value`, `$count`, `nextPage` | ✅ | — |
+| Derived-type cast addressing (`cast(Ns.Type)` → `Set/Ns.Type[(key)]`) | ✅ | URL Conv. §4.11 |
 | Write: create (deep insert) / update / replace / delete / `$ref` / `@odata.bind` | ✅ | — |
-| Unbound function/action imports, bound functions | ✅ | — |
+| Unbound function/action imports, bound functions, **bound actions** | ✅ | — |
+| `Prefer: return=minimal/representation` (`preferReturn`) | ✅ | Protocol §8.2.8.7 |
 | `$batch` (dependsOn, atomicityGroup) | ✅ | Protocol §11.7 |
 | Schema registry (fetch/persist/lookup decoupled, conditional GET) | ✅ | ADR-0007 |
 | CSRF (SAP) handshake, SSRF guard, XXE-hardened metadata, size cap | ✅ | — |
-| Bound actions, `Prefer: return=…`, media streams, delta, singletons | ❌ | — |
+| Media streams, delta, singletons | ❌ | — |
 
 See [Conformance Levels](/guides/05-conformance) for the roll-up and
 [`docs/odata-conformance-status.md`](../odata-conformance-status.md) for the full

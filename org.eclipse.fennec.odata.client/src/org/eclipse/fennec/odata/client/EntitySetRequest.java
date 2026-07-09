@@ -35,6 +35,12 @@ public final class EntitySetRequest {
 	private final String setName;
 	private final EClass entityType;
 	private final Map<String, String> options = new LinkedHashMap<>();
+	/** Namespace-qualified derived type of a type-cast segment ({@code Set/Ns.Type}), or null. */
+	private String castSegment;
+	/** The derived {@link EClass} the cast restricts to — what {@link #list()}/{@link #get} decode into. */
+	private EClass castedType;
+	/** {@code Prefer: return=} value applied to writes ({@code "minimal"}/{@code "representation"}), or null. */
+	private String returnPreference;
 
 	EntitySetRequest(ODataClient client, String setName, EClass entityType) {
 		this.client = client;
@@ -105,6 +111,31 @@ public final class EntitySetRequest {
 	}
 
 	/**
+	 * Restricts the set to a derived type via a type-cast segment ([OData-URL] 4.11):
+	 * {@link #list()} addresses {@code Set/Ns.Type}, {@link #get(String)} addresses
+	 * {@code Set/Ns.Type(key)}, and both decode into the derived type. {@code qualifiedTypeName} is
+	 * the service's namespace-qualified type name (e.g. {@code webshop.DiscountedProduct}); the
+	 * derived {@link EClass} is resolved from the service metadata (unknown → {@link ODataClientException}).
+	 */
+	public EntitySetRequest cast(String qualifiedTypeName) {
+		String local = qualifiedTypeName.contains(".")
+				? qualifiedTypeName.substring(qualifiedTypeName.lastIndexOf('.') + 1) : qualifiedTypeName;
+		this.castedType = client.entityType(local);
+		this.castSegment = qualifiedTypeName;
+		return this;
+	}
+
+	/** The set path, with the type-cast segment appended when {@link #cast} was applied. */
+	private String collectionPath() {
+		return castSegment == null ? setName : setName + "/" + castSegment;
+	}
+
+	/** The entity type responses decode into — the derived type under a cast, else the set's type. */
+	private EClass decodeType() {
+		return castedType != null ? castedType : entityType;
+	}
+
+	/**
 	 * {@code $apply} aggregation, e.g.
 	 * {@code groupby((category/name),aggregate(price with sum as Total))}. The result rows are
 	 * grouping keys + aggregate aliases (not entities), returned as generic maps.
@@ -116,8 +147,8 @@ public final class EntitySetRequest {
 
 	/** Executes the request and decodes one page. */
 	public ODataPage list() {
-		return ODataJsonDecoder.page(client.fetch(setName + queryString(), "application/json"),
-				entityType, client.metadataService());
+		return ODataJsonDecoder.page(client.fetch(collectionPath() + queryString(), "application/json"),
+				decodeType(), client.metadataService());
 	}
 
 	/**
@@ -147,8 +178,8 @@ public final class EntitySetRequest {
 	 */
 	public EObject get(String keyLiteral) {
 		return ODataJsonDecoder.entity(client.fetch(
-				setName + "(" + encodeKey(keyLiteral) + ")" + queryString(), "application/json"),
-				entityType, client.metadataService());
+				collectionPath() + "(" + encodeKey(keyLiteral) + ")" + queryString(), "application/json"),
+				decodeType(), client.metadataService());
 	}
 
 	// --- navigation-path addressing ---
@@ -211,6 +242,47 @@ public final class EntitySetRequest {
 				resultType, client.metadataService());
 	}
 
+	/**
+	 * Invokes a bound action on an entity: {@code POST Set(key)/Ns.Action} with the parameters as the
+	 * JSON body ([OData-Protocol] 11.5.4.2). Returns the response's primitive {@code value}, or
+	 * {@code null} for a 204 / void action. {@code qualifiedName} is the service's namespace-qualified
+	 * action name (e.g. {@code My.Shop.recalculate}).
+	 */
+	public Object boundAction(String keyLiteral, String qualifiedName, Map<String, ?> parameters) {
+		String body = boundActionCall(keyLiteral, qualifiedName, parameters);
+		return body == null || body.isBlank() ? null : ODataJsonDecoder.value(body);
+	}
+
+	/** As {@link #boundAction}, but decodes an entity-typed result into an {@link EObject}. */
+	public EObject boundActionAsEntity(String keyLiteral, String qualifiedName,
+			Map<String, ?> parameters, EClass resultType) {
+		String body = boundActionCall(keyLiteral, qualifiedName, parameters);
+		return body == null || body.isBlank() ? null
+				: ODataJsonDecoder.entity(body, resultType, client.metadataService());
+	}
+
+	/** As {@link #boundAction}, but decodes an entity-collection result into an {@link ODataPage}. */
+	public ODataPage boundActionAsCollection(String keyLiteral, String qualifiedName,
+			Map<String, ?> parameters, EClass resultType) {
+		String body = boundActionCall(keyLiteral, qualifiedName, parameters);
+		return body == null || body.isBlank() ? null
+				: ODataJsonDecoder.page(body, resultType, client.metadataService());
+	}
+
+	/** POSTs the bound action and returns its raw response body ({@code null} for a 204). */
+	private String boundActionCall(String keyLiteral, String qualifiedName, Map<String, ?> parameters) {
+		String path = entityPath(keyLiteral) + "/" + qualifiedName;
+		String body = ODataJsonDecoder.toJson(parameters);
+		ODataClient.Response response = client.exchange("POST", path, JSON, body, JSON, Map.of());
+		if (response.status() == 204) {
+			return null;
+		}
+		if (response.status() / 100 != 2) {
+			throw failure("POST " + path, response);
+		}
+		return response.body();
+	}
+
 	private String boundFunctionCall(String keyLiteral, String qualifiedName, Map<String, ?> parameters) {
 		StringBuilder call = new StringBuilder(entityPath(keyLiteral)).append('/')
 				.append(qualifiedName).append('(');
@@ -245,7 +317,7 @@ public final class EntitySetRequest {
 		if (options.containsKey("$filter")) {
 			filterOnly.put("$filter", options.get("$filter"));
 		}
-		String answer = client.fetch(setName + "/$count" + queryString(filterOnly), "text/plain");
+		String answer = client.fetch(collectionPath() + "/$count" + queryString(filterOnly), "text/plain");
 		try {
 			return Long.parseLong(answer.trim());
 		} catch (NumberFormatException e) {
@@ -271,8 +343,32 @@ public final class EntitySetRequest {
 	private static final String JSON = "application/json";
 
 	/**
+	 * Sets {@code Prefer: return=<preference>} on the following write ([OData-Protocol] 8.2.8.7):
+	 * {@code "minimal"} asks the server to answer 204 with no body, {@code "representation"} asks it
+	 * to return the written entity. {@link #create}/{@link #update}/{@link #replace} interpret the
+	 * response accordingly.
+	 */
+	public EntitySetRequest preferReturn(String preference) {
+		this.returnPreference = preference;
+		return this;
+	}
+
+	/** Per-write request headers: an optional If-Match and the {@code Prefer: return=} header. */
+	private Map<String, String> writeHeaders(String ifMatch) {
+		Map<String, String> headers = new LinkedHashMap<>();
+		if (ifMatch != null) {
+			headers.put("If-Match", ifMatch);
+		}
+		if (returnPreference != null) {
+			headers.put("Prefer", "return=" + returnPreference);
+		}
+		return headers;
+	}
+
+	/**
 	 * POSTs a new entity to the set (deep insert: containment children in the graph ride along).
-	 * Returns the created entity decoded from the 201 response body.
+	 * Returns the created entity decoded from the 201 response body, or {@code null} when the server
+	 * honoured {@code Prefer: return=minimal} (204).
 	 */
 	public EObject create(EObject entity) {
 		return create(entity, Map.of());
@@ -286,41 +382,51 @@ public final class EntitySetRequest {
 	 */
 	public EObject create(EObject entity, Map<String, ?> bindings) {
 		String body = ODataJsonEncoder.encode(entity, entityType, client.metadataService(), bindings);
-		ODataClient.Response response = client.exchange("POST", setName, JSON, body, JSON, Map.of());
+		ODataClient.Response response = client.exchange("POST", setName, JSON, body, JSON, writeHeaders(null));
+		if (response.status() == 204) {
+			return null; // Prefer: return=minimal
+		}
 		if (response.status() != 201) {
 			throw failure("POST " + setName, response);
 		}
 		return ODataJsonDecoder.entity(response.body(), entityType, client.metadataService());
 	}
 
-	/** PATCH (merge — only the set features are sent) an entity by key; If-Match optional. */
-	public void update(String keyLiteral, EObject patch, String ifMatch) {
-		write("PATCH", keyLiteral, patch, ifMatch, Map.of());
+	/**
+	 * PATCH (merge — only the set features are sent) an entity by key; If-Match optional. Returns the
+	 * updated entity when the server honoured {@code Prefer: return=representation}, else {@code null}.
+	 */
+	public EObject update(String keyLiteral, EObject patch, String ifMatch) {
+		return write("PATCH", keyLiteral, patch, ifMatch, Map.of());
 	}
 
 	/** As {@link #update(String, EObject, String)}, additionally re-binding navigations to existing entities. */
-	public void update(String keyLiteral, EObject patch, String ifMatch, Map<String, ?> bindings) {
-		write("PATCH", keyLiteral, patch, ifMatch, bindings);
+	public EObject update(String keyLiteral, EObject patch, String ifMatch, Map<String, ?> bindings) {
+		return write("PATCH", keyLiteral, patch, ifMatch, bindings);
 	}
 
-	/** PUT (replace) an entity by key; If-Match optional. */
-	public void replace(String keyLiteral, EObject entity, String ifMatch) {
-		write("PUT", keyLiteral, entity, ifMatch, Map.of());
+	/** PUT (replace) an entity by key; If-Match optional. Returns the representation when requested. */
+	public EObject replace(String keyLiteral, EObject entity, String ifMatch) {
+		return write("PUT", keyLiteral, entity, ifMatch, Map.of());
 	}
 
 	/** As {@link #replace(String, EObject, String)}, additionally re-binding navigations to existing entities. */
-	public void replace(String keyLiteral, EObject entity, String ifMatch, Map<String, ?> bindings) {
-		write("PUT", keyLiteral, entity, ifMatch, bindings);
+	public EObject replace(String keyLiteral, EObject entity, String ifMatch, Map<String, ?> bindings) {
+		return write("PUT", keyLiteral, entity, ifMatch, bindings);
 	}
 
-	private void write(String method, String keyLiteral, EObject entity, String ifMatch,
+	private EObject write(String method, String keyLiteral, EObject entity, String ifMatch,
 			Map<String, ?> bindings) {
 		String path = entityPath(keyLiteral);
 		String body = ODataJsonEncoder.encode(entity, entityType, client.metadataService(), bindings);
-		ODataClient.Response response = client.exchange(method, path, JSON, body, JSON, ifMatch(ifMatch));
+		ODataClient.Response response = client.exchange(method, path, JSON, body, JSON, writeHeaders(ifMatch));
 		if (response.status() != 204 && response.status() / 100 != 2) {
 			throw failure(method + " " + path, response);
 		}
+		// Prefer: return=representation → the server answered 200 with the updated entity
+		return response.status() == 200 && response.body() != null && !response.body().isBlank()
+				? ODataJsonDecoder.entity(response.body(), entityType, client.metadataService())
+				: null;
 	}
 
 	/** DELETEs an entity by key; If-Match optional. Returns {@code false} when it did not exist. */
