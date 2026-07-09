@@ -60,7 +60,9 @@ header:
     - 'Jenkinsfile'
     - 'NOTICE'
     - 'cnf/**'
-    - '**/src-gen/**'
+    # EMF-generated code (src-gen) carries the EPL header via the genmodel
+    # copyrightText, so it is validated, not ignored. Only the ANTLR-generated
+    # parser (src-gen-parser) has no header by nature and stays ignored.
     - '**/src-gen-parser/**'
     - '**/generated/**'
     - '.gitattributes'
