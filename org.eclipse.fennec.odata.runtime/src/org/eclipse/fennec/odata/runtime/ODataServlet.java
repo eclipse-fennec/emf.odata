@@ -231,6 +231,48 @@ public class ODataServlet extends HttpServlet {
 	private static final Set<String> KNOWN_UNSUPPORTED_OPTIONS = Set.of(
 			"$skiptoken", "$deltatoken", "$id", "$index", "$schemaversion", "$levels");
 
+	/** The {@code odata.metadata=} format parameter of an Accept header or {@code $format}. */
+	private static final java.util.regex.Pattern METADATA_PARAM =
+			java.util.regex.Pattern.compile("odata\\.metadata\\s*=\\s*(full|minimal|none)",
+					java.util.regex.Pattern.CASE_INSENSITIVE);
+
+	/**
+	 * The response metadata level for the current request, carried request-scoped so the many
+	 * response writers do not each need the request threaded through. Set in {@link #service} and
+	 * cleared afterwards; {@code null} outside a request means {@code minimal}.
+	 */
+	private static final ThreadLocal<String> METADATA_LEVEL = new ThreadLocal<>();
+
+	/**
+	 * The requested response metadata level ([OData-JSON] 3.1): {@code full} when the client asked
+	 * for it via {@code Accept: …;odata.metadata=full} or {@code $format}, else {@code minimal}
+	 * (the default; an explicit {@code none} is served as minimal — more control info than asked for
+	 * is harmless and still valid).
+	 */
+	private static String metadataLevel(HttpServletRequest request) {
+		String source = request.getParameter("$format");
+		if (source == null || source.isBlank()) {
+			source = request.getHeader("Accept");
+		}
+		if (source != null) {
+			java.util.regex.Matcher matcher = METADATA_PARAM.matcher(source);
+			if (matcher.find() && matcher.group(1).equalsIgnoreCase("full")) {
+				return "full";
+			}
+		}
+		return "minimal";
+	}
+
+	private static String responseMetadataLevel() {
+		String level = METADATA_LEVEL.get();
+		return level == null ? "minimal" : level;
+	}
+
+	/** The JSON content type carrying the current request's metadata level. */
+	private static String contentTypeJson() {
+		return "application/json;odata.metadata=" + responseMetadataLevel() + ";charset=UTF-8";
+	}
+
 	@Override
 	protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
 		response.setHeader("OData-Version", negotiateVersion(request));
@@ -292,17 +334,29 @@ public class ODataServlet extends HttpServlet {
 	protected void service(HttpServletRequest request, HttpServletResponse response)
 			throws jakarta.servlet.ServletException, IOException {
 		String pathInfo = request.getPathInfo() == null ? "/" : request.getPathInfo();
-		if ("/$batch".equals(pathInfo)) {
-			batch(request, response);
-			return;
-		}
-		switch (request.getMethod()) {
-			case "GET" -> super.service(request, response);
-			case "POST", "PATCH", "PUT", "DELETE" -> write(request, response);
-			default -> {
-				response.setHeader("OData-Version", negotiateVersion(request));
-				error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
-						"method not supported");
+		// carry the requested metadata level request-scoped (save/restore keeps $batch sub-requests,
+		// which re-enter this method, from clobbering the outer request's level)
+		String previousLevel = METADATA_LEVEL.get();
+		METADATA_LEVEL.set(metadataLevel(request));
+		try {
+			if ("/$batch".equals(pathInfo)) {
+				batch(request, response);
+				return;
+			}
+			switch (request.getMethod()) {
+				case "GET" -> super.service(request, response);
+				case "POST", "PATCH", "PUT", "DELETE" -> write(request, response);
+				default -> {
+					response.setHeader("OData-Version", negotiateVersion(request));
+					error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+							"method not supported");
+				}
+			}
+		} finally {
+			if (previousLevel == null) {
+				METADATA_LEVEL.remove();
+			} else {
+				METADATA_LEVEL.set(previousLevel);
 			}
 		}
 	}
@@ -976,7 +1030,7 @@ public class ODataServlet extends HttpServlet {
 			response.setStatus(HttpServletResponse.SC_CREATED);
 			response.setHeader("Location", request.getRequestURI());
 			String json = entityJson(created, created.eClass(), null, Set.of());
-			response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+			response.setContentType(contentTypeJson());
 			response.getWriter().write(json);
 			return;
 		}
@@ -1391,7 +1445,7 @@ public class ODataServlet extends HttpServlet {
 		String json = entityJson(entity, entityType, null, Set.of());
 		String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
 				+ "/$entity\",";
-		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		response.setContentType(contentTypeJson());
 		response.getWriter().write("{" + context + json.substring(1));
 	}
 
@@ -1408,7 +1462,7 @@ public class ODataServlet extends HttpServlet {
 			String json = entityJson(entity, entityType, null, Set.of());
 			String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
 					+ "/$entity\",";
-			response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+			response.setContentType(contentTypeJson());
 			response.getWriter().write("{" + context + json.substring(1));
 			return;
 		}
@@ -1650,7 +1704,7 @@ public class ODataServlet extends HttpServlet {
 					.append(ODataJson.sanitize(nextLink(request, skip + top))).append('"');
 		}
 		json.append('}');
-		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		response.setContentType(contentTypeJson());
 		response.getWriter().write(json.toString());
 	}
 
@@ -2002,7 +2056,7 @@ public class ODataServlet extends HttpServlet {
 			response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 			return;
 		}
-		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		response.setContentType(contentTypeJson());
 		if (result instanceof EObject entity) {
 			String json = entityJson(entity, entity.eClass(), null, Set.of());
 			String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#"
@@ -2355,7 +2409,7 @@ public class ODataServlet extends HttpServlet {
 		}
 		String context = contextRoot(request) + "/$metadata#" + path.entitySet();
 		if (value instanceof Enumerator literal) { // enum property → value document with the literal
-			response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+			response.setContentType(contentTypeJson());
 			response.getWriter().write("{\"@odata.context\":\"" + ODataJson.sanitize(context)
 					+ "\",\"value\":\"" + ODataJson.sanitize(literal.getLiteral()) + "\"}");
 			return;
@@ -2366,7 +2420,7 @@ public class ODataServlet extends HttpServlet {
 				return;
 			}
 			String json = entityJson(object, object.eClass(), null, Set.of());
-			response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+			response.setContentType(contentTypeJson());
 			response.getWriter().write("{\"@odata.context\":\"" + ODataJson.sanitize(context)
 					+ "\"," + json.substring(1));
 			return;
@@ -2394,7 +2448,7 @@ public class ODataServlet extends HttpServlet {
 				}
 			}
 			json.append("]}");
-			response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+			response.setContentType(contentTypeJson());
 			response.getWriter().write(json.toString());
 			return;
 		}
@@ -2403,7 +2457,7 @@ public class ODataServlet extends HttpServlet {
 		ODataJson.value(json, value instanceof java.util.Date date
 				? java.time.format.DateTimeFormatter.ISO_INSTANT.format(date.toInstant()) : value);
 		json.append('}');
-		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		response.setContentType(contentTypeJson());
 		response.getWriter().write(json.toString());
 	}
 
@@ -2425,7 +2479,7 @@ public class ODataServlet extends HttpServlet {
 		// weave the context annotation into the entity object (single entities have no envelope)
 		String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
 				+ "/$entity\",";
-		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		response.setContentType(contentTypeJson());
 		response.getWriter().write("{" + context + json.substring(1));
 	}
 
@@ -2523,7 +2577,7 @@ public class ODataServlet extends HttpServlet {
 					.append(ODataJson.sanitize(nextLink(request, skip + top))).append('"');
 		}
 		json.append('}');
-		response.setContentType("application/json;odata.metadata=minimal;charset=UTF-8");
+		response.setContentType(contentTypeJson());
 		response.getWriter().write(json.toString());
 	}
 
@@ -2895,15 +2949,21 @@ public class ODataServlet extends HttpServlet {
 
 	private String serializeEntity(EObject entity, EObject copy, EClass entityType,
 			Set<String> expand) throws IOException {
-		ODataJsonResourceImpl resource = ODataJsonResourceImpl.minimalMetadata(
-				URI.createURI("response.odatajson"), metadataService, expand);
+		boolean full = "full".equals(responseMetadataLevel());
+		// full metadata: the default codec profile emits @odata.type/@odata.id per entity;
+		// minimal: control info that is computable from the context URL is left out ([OData-JSON] 3.1)
+		ODataJsonResourceImpl resource = full
+				? new ODataJsonResourceImpl(URI.createURI("response.odatajson"), metadataService, expand)
+				: ODataJsonResourceImpl.minimalMetadata(
+						URI.createURI("response.odatajson"), metadataService, expand);
 		resource.getContents().add(copy);
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		resource.save(out, null);
 		String json = out.toString(StandardCharsets.UTF_8);
-		if (entity.eClass() != entityType) {
-			// derived instance: the type is NOT computable from the context URL, so minimal
-			// metadata must transport the single-field discriminator ([OData-JSON] 4.5.8)
+		if (!full && entity.eClass() != entityType) {
+			// derived instance under minimal metadata: the type is NOT computable from the context
+			// URL, so transport the single-field discriminator ([OData-JSON] 4.5.8). Full metadata
+			// already carries @odata.type, so this is not needed (and would duplicate it).
 			json = "{\"@odata.type\":\"" + resource.typeDiscriminator(entity) + "\""
 					+ (json.length() > 2 ? "," : "") + json.substring(1);
 		}

@@ -98,8 +98,18 @@ public final class EntitySetRequest {
 		return this;
 	}
 
-	/** {@code $format}, e.g. {@code json} or {@code xml}. */
+	/**
+	 * {@code $format}. The client decodes responses through the JSON codec, so only {@code json}
+	 * (or an {@code application/json[;…]} media type) is accepted — a non-JSON format (e.g.
+	 * {@code xml}, which this server family serves as EMF XMI) is rejected up front rather than
+	 * producing a response the client cannot decode.
+	 */
 	public EntitySetRequest format(String format) {
+		String normalized = format.trim().toLowerCase(java.util.Locale.ROOT);
+		if (!normalized.equals("json") && !normalized.startsWith("application/json")) {
+			throw new ODataClientException(
+					"the client decodes JSON only; $format='" + format + "' is not supported");
+		}
 		options.put("$format", format);
 		return this;
 	}

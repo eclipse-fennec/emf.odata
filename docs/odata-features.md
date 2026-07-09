@@ -199,8 +199,9 @@ origin is refused. `ODataClient` is `AutoCloseable` and closes only an `HttpClie
 
 ## Known gaps / not yet
 
-**Server:** CSDL-JSON (`$metadata` in JSON, Q9 — a Minimal SHOULD); `metadata=full`/`none` profiles
-(runtime always emits `metadata=minimal`); `Edm.Int64 > 2^53` `IEEE754Compatible` string form;
+**Server:** CSDL-JSON (`$metadata` in JSON, Q9 — a Minimal SHOULD); `metadata=none` (served as
+minimal — `metadata=full` is supported via Accept/`$format`); `Edm.Int64 > 2^53`
+`IEEE754Compatible` string form;
 Advanced conformance (async, `$delta`, deltas); a few 4.01 Intermediate SHOULDs (query options on
 nav paths, some in-`$expand` options); the `ODataRequestFilter` refactor (req §5.1.1 — wrapping
 `RequestLimits`/parse validation in a whiteboard filter); in-memory backend is not

@@ -695,6 +695,23 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("odata.metadata=full emits @odata.type/@odata.id; minimal (default) omits them")
+	void metadataFull() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response minimal = get("/Product('p1')", Map.of());
+		assertEquals(200, minimal.status(), minimal.body());
+		assertFalse(minimal.body().contains("\"@odata.type\""),
+				"minimal omits @odata.type: " + minimal.body());
+
+		Response full = call("GET", "/Product('p1')", Map.of(),
+				"application/json;odata.metadata=full", null, Map.of());
+		assertEquals(200, full.status(), full.body());
+		assertTrue(full.body().contains("\"@odata.type\""), "full carries @odata.type: " + full.body());
+		assertTrue(full.body().contains("\"@odata.id\""), "full carries @odata.id: " + full.body());
+	}
+
+	@Test
 	@DisplayName("$batch (JSON): sub-requests dispatch through the normal pipeline; results are collected in order")
 	void jsonBatch() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));

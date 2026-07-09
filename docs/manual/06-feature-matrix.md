@@ -114,8 +114,8 @@ Spec documents (OASIS OData **v4.01**):
 
 | Feature | Support | Reference |
 |---|---|---|
-| OData-JSON payloads, `odata.metadata=minimal` | ✅ | JSON Format §3 |
-| `odata.metadata=full`/`none` | ❌ (always minimal) | JSON Format §3.1 |
+| OData-JSON payloads, `odata.metadata=minimal` (default) | ✅ | JSON Format §3 |
+| `odata.metadata=full` (via Accept / `$format`) | ✅ (`none` served as minimal) | JSON Format §3.1 |
 | `OData-Version` / `OData-MaxVersion` negotiation (4.0/4.01) | ✅ | Protocol §8.1.5/8.2.6 |
 | Server-driven paging `@odata.nextLink` | ✅ | Protocol §11.2.5.7 |
 | `#Ns.Type` discriminator for derived types | ✅ | JSON Format §4.5.8 |

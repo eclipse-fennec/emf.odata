@@ -57,6 +57,7 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 | `$compute` | server-computed properties (`price mul 1.19 as gross`) |
 | `$apply` | aggregation (see below) |
 | `$format` | `json` (default), `xml` (EMF XMI) |
+| `odata.metadata=full` | via `Accept`/`$format` → per-entity `@odata.type`/`@odata.id` (default `minimal`; `none` served as minimal) |
 | `@name` | 4.01 parameter aliases referenced from `$filter`/`$orderby` |
 
 **`$filter` surface:** comparison/logical/arithmetic operators (`eq ne gt ge lt le`,

@@ -696,6 +696,14 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("format() accepts json but rejects a non-JSON format (client decodes JSON only)")
+	void formatRejectsNonJson() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		client.entitySet("Product").format("json"); // ok
+		assertThrows(ODataClientException.class, () -> client.entitySet("Product").format("xml"));
+	}
+
+	@Test
 	@DisplayName("$search / $compute / $format / parameter aliases assemble into the query")
 	void extraQueryOptionsAssemble() {
 		ODataClient client = ODataClient.connect(serviceRoot);
