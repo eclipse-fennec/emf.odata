@@ -2,10 +2,10 @@ name: Snapshot Build
 
 on:
   push:
-    # Snapshot publishing only happens on pushes to the snapshot branch.
+    # Snapshot publishing (build + Maven Central snapshot + Pages) only happens on
+    # pushes to the snapshot branch. Every other branch is build-only (build.yml).
     branches:
       - snapshot
-      - initial
   pull_request:
     # Never run on pull requests.
     branches-ignore:

@@ -2,11 +2,11 @@ name: CI Build
 
 on:
   push:
-    # Run on all pushes EXCEPT the main and snapshot branches (those have dedicated workflows).
+    # Build-only on every branch EXCEPT main and snapshot (those release/publish via
+    # their dedicated workflows). All other branches, including initial, only build+test.
     branches-ignore:
       - main
       - snapshot
-      - initial
   pull_request:
     branches:
       - '*'

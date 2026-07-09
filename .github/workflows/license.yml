@@ -2,13 +2,12 @@ name: license
 
 on:
   push:
-    # main/snapshot/initial run the license check as the first gating job of the
-    # snapshot.yml / release.yml orchestrators, so exclude them here to avoid a
-    # duplicate run. This standalone check covers feature branches.
+    # main/snapshot run the license check as the first gating job of the
+    # release.yml / snapshot.yml orchestrators, so exclude them here to avoid a
+    # duplicate run. This standalone check covers all other (build-only) branches.
     branches-ignore:
       - main
       - snapshot
-      - initial
   pull_request:
   workflow_dispatch:
 
