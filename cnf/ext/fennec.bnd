@@ -26,7 +26,10 @@
 	fennecEMFModels,\
 	fennecCodec
 
-base-version: 1.0.0
+# The fennec library derives the bundle/Maven version from this: workspace.bnd sets
+# project-version = ${base-version}.SNAPSHOT and Bundle-Version = ${project-version}.
+# Bundles therefore must NOT declare their own Bundle-Version (the library owns it).
+base-version: 0.1.0
 javac.source: 21
 javac.target: 21
 -require-bnd: "(version>=7.1.0)"

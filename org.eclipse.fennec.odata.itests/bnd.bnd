@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Integration Tests
 Bundle-Description: End-to-end OSGi integration tests: the whole stack (EPackage whiteboard, metadata service, file-backed repository, in-memory query backend, ODataServlet on the Jetty HTTP whiteboard) exercised over real HTTP, including destructive security cases
-Bundle-Version: 1.0.0
 
 Test-Cases: ${classes;HIERARCHY_INDIRECTLY_ANNOTATED;org.junit.platform.commons.annotation.Testable;CONCRETE}
 

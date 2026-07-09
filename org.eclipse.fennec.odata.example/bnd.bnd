@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Example
 Bundle-Description: Self-contained example: a dummy shop model (dynamic EMF, no codegen) with in-memory demo data, exposed as an OData service via the Fennec OData runtime — see README.md and example.bndrun
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

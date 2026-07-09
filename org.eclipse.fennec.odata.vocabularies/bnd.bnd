@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Vocabularies
 Bundle-Description: OASIS standard vocabularies (Org.OData.Core/Capabilities/Validation/Measures V1) provided as EPackages, bootstrapped from their vendored CSDL definitions via the CSDL read path (req §3.4, Q5)
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

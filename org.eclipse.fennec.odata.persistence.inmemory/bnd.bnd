@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData In-Memory Query Backend
 Bundle-Description: In-memory QueryService (req §3.5, mandatory reference backend for tests): evaluates the OCL predicate IR directly against EObjects supplied by EntityRepository services; includes a file-based repository (XMI resources from a configured directory)
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

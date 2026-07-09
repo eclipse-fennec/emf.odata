@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Client
 Bundle-Description: OData v4 client foundation (E8): reads a remote service's $metadata into Ecore (E2 read path), builds entity-set requests through a fluent URL builder and decodes OData-JSON responses into EObjects via the codec profile (E3) — java.net.http transport, no Olingo (ADR-0005)
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Query
 Bundle-Description: E4 query translation — own ANTLR4 grammar for the OData $filter/$orderby expression syntax (req §3.6, no Olingo expression parsing), mapped onto the m2x OCL AST as the internal predicate IR (req §3.5)
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

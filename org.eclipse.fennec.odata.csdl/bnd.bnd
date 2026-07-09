@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData CSDL
 Bundle-Description: CSDL ($metadata) built by populating the OASIS EDM/EDMX model (org.odata.csdl.model) and serializing it via EMF — instead of a hand-written CSDL writer (E2). Owns the standalone OData profile model + resolver (ADR-0003).
-Bundle-Version: 1.0.0
 
 src=${^src},src-gen
 

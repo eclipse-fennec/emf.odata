@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData JSON Codec
 Bundle-Description: OData-JSON data codec profile (E3) — serializes/deserializes EObject instances in the OData JSON format (@odata.type/@odata.id conventions, Edm.* value formats) as a Fennec codec profile, analogous to the GeoJSON profile
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

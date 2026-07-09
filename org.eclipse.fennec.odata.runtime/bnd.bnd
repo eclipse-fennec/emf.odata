@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Runtime
 Bundle-Description: Server runtime skeleton (E6/E7, ADR-0001): catch-all ODataServlet on the OSGi HTTP Whiteboard — $metadata via the CSDL converter (E2), entity-set queries via the QueryService SPI (E5) with OData-JSON responses (E3), plus hard request limits (top, expression length, nesting depth) against resource exhaustion
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

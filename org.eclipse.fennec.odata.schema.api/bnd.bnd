@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Client Schema API
 Bundle-Description: SPI that decouples obtaining Ecore schemas from an OData $metadata endpoint (ODataSchemaReader) from persisting/resolving them (ODataSchemaRegistrar/ODataSchemaResolver), so the client data path only looks schemas up while registration targets the client EPackage registry by default or the Model Atlas via an alternative implementation (ADR-0007)
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

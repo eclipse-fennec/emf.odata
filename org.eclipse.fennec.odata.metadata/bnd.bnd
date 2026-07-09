@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Metadata
 Bundle-Description: OData aspects (odata.ecore) and the ODataAspectProvider, layered on the Model Metadata Service (E1)
-Bundle-Version: 1.0.0
 
 src=${^src},src-gen
 

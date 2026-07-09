@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Persistence API
 Bundle-Description: Backend-agnostic query SPI (req §3.5): EntityQuery (OCL predicate IR + paging) executed by a QueryService per backend, with EntityRepository as the data-source abstraction layer (files, in-memory, JPA, ...)
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

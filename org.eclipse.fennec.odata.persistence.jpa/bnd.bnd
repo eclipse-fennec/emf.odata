@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData JPA Query Backend
 Bundle-Description: JPA QueryService (E5): translates the OCL predicate IR into Jakarta Persistence Criteria queries — full pushdown (filter/order/paging/count/derived-type casts), no in-memory filtering; consumes EntityManagerFactory services provided by Eclipse Fennec Persistence JPA
-Bundle-Version: 1.0.0
 
 -library: enableEMF
 

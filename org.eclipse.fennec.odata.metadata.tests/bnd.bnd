@@ -1,6 +1,5 @@
 Bundle-Name: Fennec OData Metadata Integration Tests
 Bundle-Description: OSGi integration tests for the ODataAspectProvider whiteboard wiring — EPackage service registration through the MetadataService to the composed OData package/class profiles
-Bundle-Version: 1.0.0
 
 Test-Cases: ${classes;HIERARCHY_INDIRECTLY_ANNOTATED;org.junit.platform.commons.annotation.Testable;CONCRETE}
 
