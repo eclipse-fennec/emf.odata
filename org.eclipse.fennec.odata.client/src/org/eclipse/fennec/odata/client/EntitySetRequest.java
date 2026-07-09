@@ -275,7 +275,17 @@ public final class EntitySetRequest {
 	 * Returns the created entity decoded from the 201 response body.
 	 */
 	public EObject create(EObject entity) {
-		String body = ODataJsonEncoder.encode(entity, entityType, client.metadataService());
+		return create(entity, Map.of());
+	}
+
+	/**
+	 * As {@link #create(EObject)}, but links the new entity to ALREADY-existing related entities via
+	 * {@code "nav@odata.bind"}: each binding maps a non-containment navigation to its target edit
+	 * URL(s) — a single {@code String} for a single-valued navigation, an {@code Iterable<String>}
+	 * or {@code String[]} for a collection-valued one (e.g. {@code Map.of("category", "Category(1)")}).
+	 */
+	public EObject create(EObject entity, Map<String, ?> bindings) {
+		String body = ODataJsonEncoder.encode(entity, entityType, client.metadataService(), bindings);
 		ODataClient.Response response = client.exchange("POST", setName, JSON, body, JSON, Map.of());
 		if (response.status() != 201) {
 			throw failure("POST " + setName, response);
@@ -285,17 +295,28 @@ public final class EntitySetRequest {
 
 	/** PATCH (merge — only the set features are sent) an entity by key; If-Match optional. */
 	public void update(String keyLiteral, EObject patch, String ifMatch) {
-		write("PATCH", keyLiteral, patch, ifMatch);
+		write("PATCH", keyLiteral, patch, ifMatch, Map.of());
+	}
+
+	/** As {@link #update(String, EObject, String)}, additionally re-binding navigations to existing entities. */
+	public void update(String keyLiteral, EObject patch, String ifMatch, Map<String, ?> bindings) {
+		write("PATCH", keyLiteral, patch, ifMatch, bindings);
 	}
 
 	/** PUT (replace) an entity by key; If-Match optional. */
 	public void replace(String keyLiteral, EObject entity, String ifMatch) {
-		write("PUT", keyLiteral, entity, ifMatch);
+		write("PUT", keyLiteral, entity, ifMatch, Map.of());
 	}
 
-	private void write(String method, String keyLiteral, EObject entity, String ifMatch) {
+	/** As {@link #replace(String, EObject, String)}, additionally re-binding navigations to existing entities. */
+	public void replace(String keyLiteral, EObject entity, String ifMatch, Map<String, ?> bindings) {
+		write("PUT", keyLiteral, entity, ifMatch, bindings);
+	}
+
+	private void write(String method, String keyLiteral, EObject entity, String ifMatch,
+			Map<String, ?> bindings) {
 		String path = entityPath(keyLiteral);
-		String body = ODataJsonEncoder.encode(entity, entityType, client.metadataService());
+		String body = ODataJsonEncoder.encode(entity, entityType, client.metadataService(), bindings);
 		ODataClient.Response response = client.exchange(method, path, JSON, body, JSON, ifMatch(ifMatch));
 		if (response.status() != 204 && response.status() / 100 != 2) {
 			throw failure(method + " " + path, response);

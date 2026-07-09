@@ -391,6 +391,41 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("create with @odata.bind emits the nav binding to an existing entity")
+	void createWithBindEmitsOdataBind() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject p = product.getEPackage().getEFactoryInstance().create(product);
+		p.eSet(product.getEStructuralFeature("id"), "n1");
+		p.eSet(product.getEStructuralFeature("name"), "Milk");
+
+		client.entitySet("Product").create(p, Map.of("category", "Category('c1')"));
+		assertEquals("POST", lastWriteMethod.get());
+		assertTrue(lastWriteBody.get().contains("\"category@odata.bind\":\"Category('c1')\""),
+				"the bind member links to the existing entity: " + lastWriteBody.get());
+		assertTrue(lastWriteBody.get().contains("\"name\":\"Milk\""),
+				"the entity's own properties are still there: " + lastWriteBody.get());
+	}
+
+	@Test
+	@DisplayName("@odata.bind rejects an unknown navigation, a containment ref and a cardinality mismatch")
+	void bindValidation() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject p = product.getEPackage().getEFactoryInstance().create(product);
+		p.eSet(product.getEStructuralFeature("id"), "n1");
+		EntitySetRequest set = client.entitySet("Product");
+
+		assertThrows(ODataClientException.class,
+				() -> set.create(p, Map.of("nope", "Category('c1')")), "unknown navigation");
+		assertThrows(ODataClientException.class,
+				() -> set.create(p, Map.of("reviews", List.of("Review(1)"))), "containment ref");
+		assertThrows(ODataClientException.class,
+				() -> set.create(p, Map.of("category", List.of("Category('c1')"))),
+				"a list for a single-valued navigation");
+	}
+
+	@Test
 	@DisplayName("configured auth header and OData-MaxVersion are sent on every request (incl. $metadata)")
 	void configuredHeadersAreSent() {
 		ODataClientConfig config = ODataClientConfig.DEFAULTS.withBearerToken("tok123").withMaxVersion("4.0");
