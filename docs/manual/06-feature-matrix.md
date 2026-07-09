@@ -133,6 +133,7 @@ Spec documents (OASIS OData **v4.01**):
 |---|---|---|
 | `$metadata` → Ecore, all read query options, navigation, `$value`, `$count`, `nextPage` | ✅ | — |
 | Derived-type cast addressing (`cast(Ns.Type)` → `Set/Ns.Type[(key)]`) | ✅ | URL Conv. §4.11 |
+| Composite/named keys (`get(Map)`, `updateByKeys`/`deleteByKeys`) | ✅ | URL Conv. §4.3 |
 | Write: create (deep insert) / update / replace / delete / `$ref` / `@odata.bind` | ✅ | — |
 | Unbound function/action imports, bound functions, **bound actions** | ✅ | — |
 | `Prefer: return=minimal/representation` (`preferReturn`) | ✅ | Protocol §8.2.8.7 |
@@ -142,6 +143,11 @@ Spec documents (OASIS OData **v4.01**):
 | Container singletons (`singleton(name)` → `GET /Me`) | ✅ | URL Conv. §4.3 |
 | Media entities (`mediaRead`/`mediaWrite` → `Set(key)/$value`) | ✅ | Protocol §11.2.4/11.4.7 |
 | Delta / change tracking | ❌ | — |
+
+All of the above is proven against real systems: the live interop suite runs the client against
+TripPin, TripPin RESTier, the OData demo and Northwind, and mirrors their schemas onto our
+server for behaviour-parity and value-fidelity checks — see
+[Live Interop Findings](/guides/odata-live-interop-findings).
 
 See [Conformance Levels](/guides/05-conformance) for the roll-up and
 [`docs/odata-conformance-status.md`](../odata-conformance-status.md) for the full

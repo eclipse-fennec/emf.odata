@@ -30,7 +30,7 @@ property-level writes (replace-based), and deep inserts of containments.
 
 ## Known SHOULD/MAY gaps
 
-- **`metadata=full`/`none`** profiles — the runtime always emits `metadata=minimal`.
+- **`metadata=none`** — served (and labelled) as `minimal`, which is spec-safe; `metadata=full` is supported.
 - A few **4.01 Intermediate SHOULDs** — some query options on navigation paths, some options inside `$expand`.
 - **`Edm.Int64 > 2^53`** `IEEE754Compatible` string form (Java round-trip is exact).
 - **Advanced level** — asynchronous requests, `$delta`/change tracking, `$batch` of change sets.

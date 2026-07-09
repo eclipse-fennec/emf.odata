@@ -21,6 +21,7 @@ export const GUIDES = [
   // Specification — what the spec requires vs. what we implement.
   { file: 'manual/05-conformance.md', title: 'Conformance Levels', group: 'Specification' },
   { file: 'manual/06-feature-matrix.md', title: 'Feature Matrix', group: 'Specification' },
+  { file: 'odata-live-interop-findings.md', title: 'Live Interop Findings', group: 'Specification' },
 ];
 
 // Route name for a guide: the file's base name without the .md extension.

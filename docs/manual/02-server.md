@@ -34,7 +34,9 @@ property `fennec.odata.backend=jpa`.
 | `GET /odata/{Set}({key})/{nav}` | navigation (entity or collection) |
 | `GET /odata/{Set}({key})/{prop}/$value` | raw property/enum value |
 | `GET /odata/{Set}/$count`, `…/{nav}/$count` | count (honours `$filter`) |
+| `GET /odata/{Set}(k1=v1,k2=v2)` | composite / named key predicate |
 | `GET /odata/{Set}/{Ns.Type}` | derived-type cast segment |
+| `POST /odata/$batch` | batch — OData JSON (4.01) **and** multipart/mixed (4.0) |
 
 ## Query options
 
@@ -93,7 +95,16 @@ DELETE /odata/Product('p1')/category/$ref    # clear / remove
 - **`@odata.bind`**: a `"nav@odata.bind": "Category('c1')"` member links to an existing entity; it is extracted and validated before the codec sees the body, then applied as a reference operation after the write (entity level only).
 - **ETags / If-Match**: weak ETags (SHA-256 over the serialized state) on single-entity GET; updates/deletes of existing entities require `If-Match` → `428`/`412`.
 - **`Prefer: return=minimal`** answers a create with `204` (headers only) and an update with `204`; **`return=representation`** returns the full entity (`201`/`200`). The honoured choice is echoed in `Preference-Applied`.
+- **Composite keys**: entity-level `PATCH`/`PUT`/`DELETE` accept compound predicates (`(k1=v1,k2=v2)`, all key properties named); below-entity composite writes answer 501. Key literals whose form contradicts the key type (quoted vs. numeric) are rejected with 400.
 - Guards: `415` (non-JSON), `413` (body limit), `400` (empty/malformed), `405` (wrong target / no `WriteService`), `409` (conflict).
+
+## Batch
+
+`POST /odata/$batch` accepts **both** wire forms and answers in kind: the OData **JSON** batch
+(4.01 — `requests` array with `dependsOn` and `atomicityGroup`) and **multipart/mixed** (4.0 —
+the format SAP-era clients speak; change sets map onto the same transactional atomicity
+groups, `Content-ID` correlates the responses). Sub-requests dispatch through the normal
+pipeline, so every feature behaves exactly as in a direct call.
 
 ## Operations
 

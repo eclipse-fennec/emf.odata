@@ -22,12 +22,17 @@ hero:
 features:
   - icon: 🗂️
     title: Model-driven metadata
-    details: "$metadata (CSDL) is a direct Ecore↔EDM conversion against the OASIS CSDL model — entity/complex types, enums, inheritance, keys, navigation bindings and a vocabulary-annotation layer, XSD-validated round-trip."
+    details: "$metadata as CSDL XML and CSDL JSON, generated straight from Ecore against the OASIS model — types, inheritance, composite keys, navigation bindings, renamed entity sets, singletons and annotations, XSD-validated round-trip."
     link: /guides/01-architecture
     linkText: Architecture
   - icon: 🔎
     title: Full query surface
-    details: "$filter / $orderby / $select / $expand / $search / $compute / $apply / derived-type casts — parsed by an own ANTLR4 grammar into an OCL predicate IR and pushed down to the backend. No in-memory filtering, no N+1."
+    details: "$filter / $orderby / $select / $expand / $search / $compute / $apply / derived-type casts / composite keys — parsed by an own ANTLR4 grammar into an OCL predicate IR and pushed down to the backend. No in-memory filtering, no N+1."
+    link: /guides/02-server
+    linkText: Server manual
+  - icon: ✍️
+    title: Updatable service
+    details: "Create, update, delete, upsert and deep inserts with ETags/If-Match, $ref management, @odata.bind, Prefer return=, media streams and $batch in BOTH wire forms — OData JSON (4.01) and multipart/mixed (4.0/SAP)."
     link: /guides/02-server
     linkText: Server manual
   - icon: 🗄️
@@ -37,9 +42,14 @@ features:
     linkText: Server manual
   - icon: 🔌
     title: Schema-aware client
-    details: A fluent EMF client for any conformant OData v4 service — reads $metadata into Ecore, decodes through the same codec profile, writes (incl. @odata.bind), $batch, CSRF and SSRF hardening, and a decoupled schema registry.
+    details: A fluent EMF client for any conformant OData v4 service — $metadata (XML or JSON) into Ecore, reads/writes incl. composite keys, media, singletons, both $batch formats, CSRF/SSRF hardening and a decoupled schema registry.
     link: /guides/03-client
     linkText: Client manual
+  - icon: 🌍
+    title: Field-tested interop
+    details: A live suite runs the client against TripPin, RESTier, the OData demo and Northwind — and mirrors their schemas onto our server for behaviour parity. Thirteen spec-traced findings, each fixed and guarded offline.
+    link: /guides/odata-live-interop-findings
+    linkText: Live interop findings
   - icon: ✅
     title: Conformance-tracked
     details: "4.0 and 4.01 Minimal and Intermediate are met (incl. the Updatable Service), verified clause-by-clause against the OASIS spec and thousands of ABNF acceptance cases."

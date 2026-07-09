@@ -79,7 +79,9 @@ functions (`contains`/`startswith`/`endswith`/`tolower`/`toupper`/`trim`/`length
 ### Resource-path addressing (own parser, ADR-0005)
 `Set(key)`, single/collection navigation paths (`Set(key)/nav/...`, keyed nav segments `nav(k)`),
 `/$value` (primitive + enum), `/$count` on sets and navigations, derived-type **cast segments**
-(`Set/Ns.Type`, `Set/Ns.Type(key)`, casts inside nav paths, max one cast per step), and `/$ref`.
+(`Set/Ns.Type`, `Set/Ns.Type(key)`, casts inside nav paths, max one cast per step), composite/named
+key predicates (`(k1=v1,k2=v2)`, reads and entity-level writes; type-mismatched key literals → 400),
+and `/$ref`.
 Path length and segment count are capped before parsing.
 
 ### Write — "Updatable OData Service" (4.0 + 4.01)
@@ -221,8 +223,10 @@ Container singletons are supported on both sides: declared via an `EPackage` ann
 `ODataClient.singleton(name)`.
 
 Client↔server functional parity now holds across the read/query surface, resource addressing
-(incl. **derived-type casts**), writes (incl. `@odata.bind` and **`Prefer: return=`**), `$batch`, and
-operations (unbound imports, bound functions and **bound actions**).
+(incl. **derived-type casts** and **composite keys**), writes (incl. `@odata.bind`,
+**`Prefer: return=`** and composite-key updates), **both `$batch` wire forms**, media, singletons and
+operations (unbound imports, bound functions and **bound actions**). Opt-in **CORS**
+(`odata.cors.origin`) serves browser clients. Field-proof: `docs/odata-live-interop-findings.md`.
 
 ## References
 ADR-0001 servlet transport · 0002 CSDL via EDM model · 0003 converter owns resolution ·

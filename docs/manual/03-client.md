@@ -90,6 +90,10 @@ Object bact     = client.entitySet("Product")                             // POS
 ```java
 ODataPage sale = client.entitySet("Product").cast("My.Shop.DiscountedProduct").list();   // Set/Ns.Type
 EObject one    = client.entitySet("Product").cast("My.Shop.DiscountedProduct").get("'p1'"); // Set/Ns.Type(key)
+
+// composite / named keys ([OData-URL] compoundKey):
+EObject line = client.entitySet("Order_Details").get(Map.of("OrderID", 10248, "ProductID", 11));
+client.entitySet("Order_Details").updateByKeys(Map.of("OrderID", 10248, "ProductID", 11), patch, "*");
 ```
 
 ## Singletons
@@ -148,8 +152,12 @@ client.entitySet("Photos").mediaWrite("'p1'", bytes, "image/png", etag); // PUT 
 ```java
 ODataBatch batch = client.batch();
 String g = batch.create("Product", newProduct);          // atomicity group / dependsOn supported
-batch.update("Product", "'p1'", patch);
-List<ODataBatch.Result> results = batch.execute();        // one round-trip
+batch.update("Product('p1')", patch);
+List<ODataBatch.Result> results = batch.execute();        // one round-trip (JSON, 4.01)
+
+// 4.0 servers (SAP world, TripPin) only speak multipart/mixed:
+List<ODataBatch.Result> r40 = client.batch().multipart()
+    .read("People('russellwhyte')").read("People?$top=2").execute();
 ```
 
 ## Transport & hardening (`ODataClientConfig`)
