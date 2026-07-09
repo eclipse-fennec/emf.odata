@@ -116,6 +116,47 @@ class ODataClientTest {
 			exchange.getResponseBody().write(bytes);
 			exchange.close();
 		});
+		// a "foreign" service: every spec-legal metadata quirk the live suite met in the wild —
+		// two schemas (container separate from the types, Northwind-style), set names that
+		// differ from type names ([OData-CSDL] 13.2), symbolic Scale/SRID facet values
+		// ([OData-CSDL] 7.2.4/7.2.6) and a V3 legacy attribute clients MUST safely ignore
+		// ([OData-Protocol] 6.2)
+		String foreignCsdl = """
+				<?xml version="1.0" encoding="utf-8"?>
+				<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">
+				  <edmx:DataServices>
+				    <Schema Namespace="Foreign.Model" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+				      <EntityType Name="Person">
+				        <Key><PropertyRef Name="UserName"/></Key>
+				        <Property Name="UserName" Type="Edm.String" Nullable="false" ConcurrencyMode="Fixed"/>
+				        <Property Name="Budget" Type="Edm.Decimal" Scale="Variable"/>
+				        <Property Name="Location" Type="Edm.GeographyPoint" SRID="Variable"/>
+				      </EntityType>
+				    </Schema>
+				    <Schema Namespace="Foreign.Container" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+				      <EntityContainer Name="Default">
+				        <EntitySet Name="People" EntityType="Foreign.Model.Person"/>
+				      </EntityContainer>
+				    </Schema>
+				  </edmx:DataServices>
+				</edmx:Edmx>""";
+		server.createContext("/foreign/", exchange -> {
+			String path = exchange.getRequestURI().getPath();
+			String answer = path.endsWith("/$metadata") ? foreignCsdl
+					: "{\"value\":[{\"UserName\":\"anna\"}]}";
+			byte[] bytes = answer.getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Content-Type",
+					path.endsWith("/$metadata") ? "application/xml" : "application/json");
+			exchange.sendResponseHeaders(200, bytes.length);
+			exchange.getResponseBody().write(bytes);
+			exchange.close();
+		});
+		// a root that redirects to the real service root (the TripPin session-key pattern)
+		server.createContext("/redirected/", exchange -> {
+			exchange.getResponseHeaders().set("Location", serviceRoot);
+			exchange.sendResponseHeaders(302, -1);
+			exchange.close();
+		});
 		server.createContext("/odata/", exchange -> {
 			lastRequest.set(exchange.getRequestURI());
 			lastAuth.set(exchange.getRequestHeaders().getFirst("Authorization"));
@@ -468,6 +509,61 @@ class ODataClientTest {
 		assertThrows(ODataClientException.class,
 				() -> set.create(p, Map.of("category", List.of("Category('c1')"))),
 				"a list for a single-valued navigation");
+	}
+
+	@Test
+	@DisplayName("foreign metadata: renamed sets, cross-schema container, symbolic facets, V3 relics")
+	void foreignMetadataQuirks() {
+		String foreignRoot = serviceRoot.replace("/odata/", "/foreign/");
+		try (ODataClient client = ODataClient.connect(foreignRoot)) {
+			// [OData-CSDL] 13.2: the set name is independent of the type name; the container may
+			// live in a DIFFERENT schema than the types — both must resolve
+			EClass person = client.entityType("People");
+			assertEquals("Person", person.getName());
+			// [OData-CSDL] 7.2.4/7.2.6: symbolic Scale/SRID values are spec-legal — the properties
+			// carrying them survive; [OData-Protocol] 6.2: unknown content (ConcurrencyMode) is
+			// safely ignored instead of failing the whole document
+			assertNotNull(person.getEStructuralFeature("Budget"));
+			assertNotNull(person.getEStructuralFeature("Location"));
+
+			ODataPage page = client.entitySet("People").top(1).list();
+			assertEquals("anna", page.entities().get(0)
+					.eGet(person.getEStructuralFeature("UserName")), "data decodes via the renamed set");
+		}
+	}
+
+	@Test
+	@DisplayName("connect follows a service-root redirect (session URLs) and pins the final root")
+	void serviceRootRedirect() {
+		String redirecting = serviceRoot.replace("/odata/", "/redirected/");
+		try (ODataClient client = ODataClient.connect(redirecting)) {
+			client.entitySet("Product").list(); // data requests must hit the REDIRECTED root
+			assertTrue(lastRequest.get().getRawPath().startsWith("/odata/"),
+					"the session root is the data root: " + lastRequest.get());
+		}
+	}
+
+	@Test
+	@DisplayName("same-host http links behind an https root are upgraded, never downgraded")
+	void schemeUpgrade() {
+		java.net.URI httpsRoot = java.net.URI.create("https://services.example.org/V4/Svc/");
+		assertEquals("https://services.example.org/V4/Svc/People?$skip=8",
+				ODataClient.upgradeToRootScheme(httpsRoot,
+						java.net.URI.create("http://services.example.org/V4/Svc/People?$skip=8"))
+						.toString(), "TripPin-style plain-http nextLink is upgraded");
+		assertEquals("https://services.example.org/x",
+				ODataClient.upgradeToRootScheme(httpsRoot,
+						java.net.URI.create("http://services.example.org:80/x")).toString(),
+				"an explicit default port is dropped by the upgrade");
+		assertEquals("http://elsewhere.org/x",
+				ODataClient.upgradeToRootScheme(httpsRoot,
+						java.net.URI.create("http://elsewhere.org/x")).toString(),
+				"foreign hosts are untouched (the SSRF guard refuses them)");
+		java.net.URI httpRoot = java.net.URI.create("http://services.example.org/V4/Svc/");
+		assertEquals("http://services.example.org/x",
+				ODataClient.upgradeToRootScheme(httpRoot,
+						java.net.URI.create("http://services.example.org/x")).toString(),
+				"an http root upgrades nothing");
 	}
 
 	@Test

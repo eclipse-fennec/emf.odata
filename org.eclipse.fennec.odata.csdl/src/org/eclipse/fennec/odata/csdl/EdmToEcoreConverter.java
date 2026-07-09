@@ -36,6 +36,7 @@ import org.open.oasis.docs.odata.ns.edm.AnnotationType;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
 import org.open.oasis.docs.odata.ns.edm.TComplexType;
 import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
+import org.open.oasis.docs.odata.ns.edm.TEntitySet;
 import org.open.oasis.docs.odata.ns.edm.TEntityType;
 import org.open.oasis.docs.odata.ns.edm.TSingleton;
 import org.open.oasis.docs.odata.ns.edm.TEnumType;
@@ -213,6 +214,22 @@ public class EdmToEcoreConverter {
 					pkg.getEAnnotations().add(holder);
 				}
 				holder.getDetails().put(singleton.getName(), simpleName(singleton.getType()));
+			}
+			// entity-set NAMES are container facts, not type facts: real services name sets
+			// differently from their types (TripPin People -> Person). Capture every set whose
+			// name differs, so clients and the runtime can address the service's actual sets.
+			for (TEntitySet set : container.getEntitySet()) {
+				String typeName = simpleName(String.valueOf(set.getEntityType()));
+				if (set.getName() == null || set.getName().equals(typeName)) {
+					continue; // the default convention needs no annotation
+				}
+				EAnnotation holder = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+				if (holder == null) {
+					holder = ecore.createEAnnotation();
+					holder.setSource(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+					pkg.getEAnnotations().add(holder);
+				}
+				holder.getDetails().put(set.getName(), typeName);
 			}
 		}
 

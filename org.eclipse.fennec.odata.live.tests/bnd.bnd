@@ -1,0 +1,33 @@
+Bundle-Name: Fennec OData Live Interop Tests
+Bundle-Description: Live interop suite (@Tag "live", gradle task liveTest — NOT part of the normal build/CI): runs the OData client against PUBLIC reference services (TripPin, OData demo, Northwind) and mirrors their schemas onto OUR server for a maximal round trip — the same request specs must behave identically against the open service and the mirror (only the data differs)
+
+-library: enableEMF
+
+# Test-only bundle: the src folder stays empty, everything lives in test/ (plain JUnit 5,
+# executed via the gradle liveTest task; unreachable endpoints skip via assumptions).
+-buildpath: \
+	org.eclipse.fennec.odata.client;version=project,\
+	org.eclipse.fennec.odata.schema.api;version=project,\
+	org.eclipse.fennec.odata.csdl;version=project,\
+	org.eclipse.fennec.odata.codec.json;version=project,\
+	org.eclipse.fennec.odata.runtime;version=project,\
+	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.odata.persistence.api;version=project,\
+	org.eclipse.fennec.odata.persistence.inmemory;version=project,\
+	org.eclipse.fennec.odata.operation.api;version=project,\
+	org.apache.felix.http.servlet-api;version=latest,\
+	org.osgi.service.servlet;version=latest,\
+	org.osgi.service.condition;version=latest,\
+	org.eclipse.fennec.m2x.ocl.model;version=latest,\
+	org.antlr.antlr4-runtime;version=latest,\
+	org.eclipse.fennec.codec.api;version=latest,\
+	org.eclipse.fennec.codec;version=latest,\
+	org.eclipse.fennec.codec.metadata;version=latest,\
+	org.eclipse.fennec.model.metadata.api;version=latest,\
+	org.eclipse.fennec.model.metadata;version=latest,\
+	org.odata.csdl.model;version=latest,\
+	org.eclipse.emf.ecore.xmi;version=latest,\
+	org.eclipse.fennec.emf.osgi.api;version=latest,\
+	tools.jackson.core.jackson-core;version=latest,\
+	tools.jackson.core.jackson-databind;version=latest,\
+	com.fasterxml.jackson.core.jackson-annotations;version=latest

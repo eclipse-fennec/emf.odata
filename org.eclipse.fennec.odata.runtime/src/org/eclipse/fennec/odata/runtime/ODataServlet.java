@@ -1657,8 +1657,13 @@ public class ODataServlet extends HttpServlet {
 		edmx.getReference().add(vocabularyReference("Org.OData.Core.V1", "Core"));
 		edmx.getReference().add(vocabularyReference("Org.OData.Capabilities.V1", "Capabilities"));
 		TDataServices dataServices = EdmxFactory.eINSTANCE.createTDataServices();
+		// set renames are declared per package but the container may live in ANOTHER schema than
+		// its types (Northwind) — collect the renames of all packages and apply them everywhere
+		Map<String, String> setNames = new HashMap<>();
+		packages.forEach(pkg -> setNames.putAll(EcoreToEdmConverter.entitySetNames(pkg)));
 		for (EPackage pkg : packages) { // one Schema per registered package (req §3.3 composition)
 			SchemaType schema = converter.toSchema(pkg);
+			converter.applyEntitySetNames(setNames, schema);
 			for (TEntityContainer container : schema.getEntityContainer()) {
 				AnnotationType versions = EdmFactory.eINSTANCE.createAnnotationType();
 				versions.setTerm("Org.OData.Core.V1.ODataVersions");
@@ -2974,8 +2979,20 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	private EClass resolveEntityType(String setName) {
+		// container set names may differ from their types (TripPin People -> Person): the read
+		// path captures them as an EPackage annotation the runtime honours. The container can
+		// live in a DIFFERENT schema than the types (Northwind), so mapping and type resolve
+		// across all packages independently.
+		String typeName = setName;
 		for (EPackage pkg : packages) {
-			if (pkg.getEClassifier(setName) instanceof EClass eClass && !eClass.isAbstract()) {
+			EAnnotation sets = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+			if (sets != null && sets.getDetails().containsKey(setName)) {
+				typeName = sets.getDetails().get(setName);
+				break;
+			}
+		}
+		for (EPackage pkg : packages) {
+			if (pkg.getEClassifier(typeName) instanceof EClass eClass && !eClass.isAbstract()) {
 				return eClass;
 			}
 		}
@@ -2983,11 +3000,20 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	private List<String> entitySetNames() {
-		return packages.stream()
-				.flatMap(pkg -> pkg.getEClassifiers().stream())
-				.filter(EClass.class::isInstance).map(EClass.class::cast)
-				.filter(c -> !c.isAbstract())
-				.map(EClass::getName).sorted().toList();
+		List<String> names = new ArrayList<>();
+		for (EPackage pkg : packages) {
+			EAnnotation sets = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+			Map<String, String> renamed = new HashMap<>(); // type name -> set name
+			if (sets != null) {
+				sets.getDetails().forEach(entry -> renamed.put(entry.getValue(), entry.getKey()));
+			}
+			pkg.getEClassifiers().stream()
+					.filter(EClass.class::isInstance).map(EClass.class::cast)
+					.filter(c -> !c.isAbstract())
+					.map(c -> renamed.getOrDefault(c.getName(), c.getName()))
+					.forEach(names::add);
+		}
+		return names.stream().sorted().toList();
 	}
 
 	// --- $select / $expand / formats ---

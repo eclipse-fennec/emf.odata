@@ -58,6 +58,15 @@ public final class ODataAnnotationConstants {
 	 */
 	public static final String SINGLETONS_SOURCE = "https://eclipse.org/fennec/odata/singletons";
 
+	/**
+	 * EAnnotation source for container entity-set names, placed on the {@code EPackage}: each
+	 * detail entry {@code setName -> EClassName} names an entity set whose name DIFFERS from its
+	 * entity type's (e.g. TripPin's {@code People -> Person}). The CSDL read path captures the
+	 * container's sets here; the write path and the runtime honour it — without the annotation the
+	 * convention "set name = type name" applies.
+	 */
+	public static final String ENTITY_SETS_SOURCE = "https://eclipse.org/fennec/odata/entitysets";
+
 	// package
 	public static final String NAMESPACE = "OData.Namespace";
 	public static final String ALIAS = "OData.Alias";

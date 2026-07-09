@@ -19,10 +19,11 @@ subprojects {
         mavenCentral()
     }
     // Allow gradle to enable JUnit support in submodules
-    // Exclude @Tag("perf") tests from normal builds — run via perfTest task
+    // Exclude @Tag("perf") (perfTest task) and @Tag("live") (liveTest task, external services)
+    // from normal builds
     test {
         useJUnitPlatform {
-            excludeTags 'perf'
+            excludeTags 'perf', 'live'
         }
     }
 
@@ -32,6 +33,15 @@ subprojects {
     tasks.register('perfTest', Test) {
         useJUnitPlatform {
             includeTags 'perf'
+        }
+    }
+
+    // Live interop suite (@Tag("live")): runs the client against PUBLIC OData services (TripPin,
+    // OData demo, Northwind) and the mirror round-trip. Manual only — external services are not
+    // CI material; unreachable endpoints skip via assumptions instead of failing.
+    tasks.register('liveTest', Test) {
+        useJUnitPlatform {
+            includeTags 'live'
         }
     }
 

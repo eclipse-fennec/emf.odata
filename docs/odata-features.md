@@ -30,6 +30,7 @@ Ecore↔EDM conversion against the OASIS CSDL model (no intermediate EDM object 
 | `odata.schema.api` | E8 | Client schema-registry SPI: `ODataSchemaReader` / `Registrar` / `Resolver` / `ODataSchema` / `SchemaScope` (ADR-0007) |
 | `odata.client` | E8 | `ODataClient`, fluent `EntitySetRequest`, `$batch`, CSRF, schema registry impl |
 | `odata.metadata.tests`, `odata.itests` | — | OSGi integration tests (whiteboard chain / real HTTP end-to-end) |
+| `odata.live.tests` | — | live interop suite (`liveTest`): client vs TripPin/OData demo/Northwind + mirror round-trip (see `odata-live-interop-findings.md`) |
 | `odata.example` | — | Demo model + data + runnable `example.bndrun` (port 8080) + E9 acceptance scripts |
 
 ---

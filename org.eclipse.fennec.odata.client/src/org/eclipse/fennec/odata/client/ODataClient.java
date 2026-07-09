@@ -125,7 +125,7 @@ public final class ODataClient implements AutoCloseable {
 			MetadataWhiteboard whiteboard, boolean ownsHttp, ODataClientConfig config) {
 		// convenience/standalone path == the opt-in "lazy" policy (ADR-0007): read the schema now
 		// (via the default reader, same transport config) and build the data client from it
-		SchemaScope scope = SchemaScope.of(serviceRoot);
+		SchemaScope scope = SchemaScope.of(resolveServiceRoot(serviceRoot, http, config));
 		ODataSchema schema = new HttpODataSchemaReader(http, config)
 				.read(scope, ODataSchemaReader.Conditional.NONE)
 				.orElseThrow(() -> new ODataClientException(
@@ -167,6 +167,45 @@ public final class ODataClient implements AutoCloseable {
 	}
 
 	/**
+	 * Follows service-root redirects before connecting: public services (e.g. TripPin) mint a
+	 * per-session root via {@code 302 Location: …/(S(key))/Service/} — the SESSION URL must become
+	 * the data root, or every later request would mint a fresh session. Only same-host targets are
+	 * followed and the scheme may never downgrade ({@code https → http}); at most 3 hops.
+	 */
+	private static String resolveServiceRoot(String serviceRoot, HttpClient http,
+			ODataClientConfig config) {
+		URI current = URI.create(serviceRoot);
+		for (int hop = 0; hop < 3; hop++) {
+			HttpRequest probe = HttpRequest.newBuilder(current)
+					.timeout(config.requestTimeout()).GET().build();
+			HttpResponse<Void> response;
+			try {
+				response = http.send(probe, HttpResponse.BodyHandlers.discarding());
+			} catch (IOException e) {
+				throw new ODataClientException("GET " + current + " failed", e);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new ODataClientException("GET " + current + " interrupted", e);
+			}
+			if (response.statusCode() / 100 != 3) {
+				return current.toString();
+			}
+			String location = response.headers().firstValue("Location").orElse(null);
+			if (location == null) {
+				return current.toString();
+			}
+			URI target = current.resolve(location);
+			if (!equalsIgnoreCase(current.getHost(), target.getHost())
+					|| ("https".equalsIgnoreCase(current.getScheme())
+							&& !"https".equalsIgnoreCase(target.getScheme()))) {
+				throw new ODataClientException("refusing the service-root redirect to " + target);
+			}
+			current = target;
+		}
+		return current.toString();
+	}
+
+	/**
 	 * Releases the internally-created {@link HttpClient} (its connection pool and selector/worker
 	 * threads). A caller-injected client is left untouched — the caller owns its lifecycle.
 	 */
@@ -188,12 +227,23 @@ public final class ODataClient implements AutoCloseable {
 	}
 
 	/**
-	 * The entity type behind a set name (this server family names sets after their EClass;
-	 * schemas are searched in document order).
+	 * The entity type behind a set name. Real services name sets differently from their types
+	 * (TripPin {@code People -> Person}) — the container's set names, captured by the metadata
+	 * read path as an EPackage annotation, resolve first; the convention "set name = type name"
+	 * is the fallback. The container often lives in a DIFFERENT schema than the types (Northwind),
+	 * so the set mapping and the type are looked up across ALL packages independently.
 	 */
 	public EClass entityType(String setName) {
+		String typeName = setName;
 		for (EPackage pkg : packages) {
-			if (pkg.getEClassifier(setName) instanceof EClass entityType) {
+			EAnnotation sets = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+			if (sets != null && sets.getDetails().containsKey(setName)) {
+				typeName = sets.getDetails().get(setName);
+				break;
+			}
+		}
+		for (EPackage pkg : packages) {
+			if (pkg.getEClassifier(typeName) instanceof EClass entityType) {
 				return entityType;
 			}
 		}
@@ -338,7 +388,7 @@ public final class ODataClient implements AutoCloseable {
 		if (config.csrf() && !"GET".equals(method) && !"HEAD".equals(method)) {
 			headers.put("X-CSRF-Token", ensureCsrfToken());
 		}
-		URI target = serviceRoot.resolve(relative);
+		URI target = upgradeToRootScheme(serviceRoot, serviceRoot.resolve(relative));
 		if (!sameOrigin(serviceRoot, target)) {
 			throw new ODataClientException(
 					"refusing to follow a link to a different origin than the service root: " + target);
@@ -430,7 +480,7 @@ public final class ODataClient implements AutoCloseable {
 	 */
 	private Response rawExchange(String method, String relative, String accept, String body,
 			String contentType, Map<String, String> extraHeaders) {
-		URI target = serviceRoot.resolve(relative);
+		URI target = upgradeToRootScheme(serviceRoot, serviceRoot.resolve(relative));
 		// a server-supplied absolute link (e.g. @odata.nextLink) must not steer the client — with
 		// its Accept/version headers and any ambient credentials — to a different host (SSRF)
 		if (!sameOrigin(serviceRoot, target)) {
@@ -475,6 +525,24 @@ public final class ODataClient implements AutoCloseable {
 		} catch (IOException e) {
 			throw new ODataClientException("reading the response from " + target + " failed", e);
 		}
+	}
+
+	/**
+	 * Upgrades a same-host {@code http://} link to the root's {@code https://} scheme: public
+	 * services (e.g. TripPin) emit plain-http {@code @odata.nextLink}/{@code @odata.id} URLs even
+	 * when reached over https. Following them verbatim would leak headers over cleartext (and the
+	 * SSRF guard rightly refuses); upgrading is safe — the opposite direction never happens here,
+	 * a downgrade still fails the {@link #sameOrigin} check. Package-private for the unit test.
+	 */
+	static URI upgradeToRootScheme(URI root, URI target) {
+		if (!"https".equalsIgnoreCase(root.getScheme()) || !"http".equalsIgnoreCase(target.getScheme())
+				|| !equalsIgnoreCase(root.getHost(), target.getHost())
+				|| (target.getPort() != -1 && target.getPort() != 80)) {
+			return target; // only the plain default-port http form of the SAME host is upgraded
+		}
+		return URI.create("https" + target.toString().substring("http".length())
+				.replaceFirst("^://" + java.util.regex.Pattern.quote(target.getHost()) + ":80",
+						"://" + target.getHost()));
 	}
 
 	/** Same scheme, host and (default-aware) port — the origin the service root was reached at. */

@@ -206,6 +206,31 @@ class EcoreEdmRoundTripTest {
 	}
 
 	@Test
+	void entitySetNamesRoundTrip() {
+		// [OData-CSDL] 13.2: the entity set's Name is independent of its type's name
+		EAnnotation ann = EcoreFactory.eINSTANCE.createEAnnotation();
+		ann.setSource(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+		ann.getDetails().put("Staff", "Person");
+		model.getEAnnotations().add(ann);
+
+		TEntityContainer container = new EcoreToEdmConverter().toSchema(model)
+				.getEntityContainer().get(0);
+		assertTrue(container.getEntitySet().stream().anyMatch(s -> "Staff".equals(s.getName())),
+				"the set is emitted under its declared name");
+		assertTrue(container.getEntitySet().stream().noneMatch(s -> "Person".equals(s.getName())),
+				"the type-named default disappears for the renamed set");
+		assertTrue(container.getEntitySet().stream()
+				.flatMap(s -> s.getNavigationPropertyBinding().stream())
+				.noneMatch(b -> "Person".equals(String.valueOf(b.getTarget()))),
+				"binding targets follow the rename");
+
+		EPackage rt = new EdmToEcoreConverter().toEPackage(new EcoreToEdmConverter().toEdmx(model));
+		EAnnotation roundTripped = rt.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+		assertNotNull(roundTripped, "the set mapping survives the round trip");
+		assertEquals("Person", roundTripped.getDetails().get("Staff"));
+	}
+
+	@Test
 	void roundTripsBackToEcore() {
 		EdmxRoot edmx = new EcoreToEdmConverter().toEdmx(model);
 		EPackage rt = new EdmToEcoreConverter().toEPackage(edmx);

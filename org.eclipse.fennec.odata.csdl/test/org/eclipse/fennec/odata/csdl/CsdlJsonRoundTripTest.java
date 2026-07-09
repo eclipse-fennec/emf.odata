@@ -82,6 +82,10 @@ class CsdlJsonRoundTripTest {
 		singletons.setSource(ODataAnnotationConstants.SINGLETONS_SOURCE);
 		singletons.getDetails().put("Me", "Person");
 		model.getEAnnotations().add(singletons);
+		EAnnotation sets = EcoreFactory.eINSTANCE.createEAnnotation();
+		sets.setSource(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+		sets.getDetails().put("Staff", "Person"); // renamed set survives the JSON form too
+		model.getEAnnotations().add(sets);
 
 		String json = CsdlJsonWriter.write(new EcoreToEdmConverter().toEdmx(model));
 		EdmxRoot parsed = new CsdlJsonReader().read(json);
@@ -106,6 +110,9 @@ class CsdlJsonRoundTripTest {
 		EAnnotation rtSingletons = rt.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
 		assertNotNull(rtSingletons, "singleton declaration survives JSON");
 		assertEquals("Person", rtSingletons.getDetails().get("Me"));
+		EAnnotation rtSets = rt.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+		assertNotNull(rtSets, "the set mapping survives JSON");
+		assertEquals("Person", rtSets.getDetails().get("Staff"));
 
 		SchemaType schema = parsed.getEdmx().getDataServices().getSchema().get(0);
 		assertTrue(schema.getAction().stream().anyMatch(a -> "raiseSalary".equals(a.getName())),

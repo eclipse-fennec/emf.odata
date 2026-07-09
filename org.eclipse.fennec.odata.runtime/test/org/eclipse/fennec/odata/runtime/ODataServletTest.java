@@ -814,6 +814,31 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("renamed entity sets ([OData-CSDL] 13.2): served, listed and emitted under the set name")
+	void renamedEntitySets() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		EAnnotation sets = EcoreFactory.eINSTANCE.createEAnnotation();
+		sets.setSource(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+		sets.getDetails().put("Items", "Product"); // the set's name differs from its type's
+		pkg.getEAnnotations().add(sets);
+
+		Response collection = get("/Items", Map.of());
+		assertEquals(200, collection.status(), collection.body());
+		assertTrue(collection.body().contains("\"name\":\"Milk\""), collection.body());
+
+		Response one = get("/Items('p1')", Map.of());
+		assertEquals(200, one.status(), one.body());
+
+		Response serviceDoc = get("/", Map.of());
+		assertTrue(serviceDoc.body().contains("\"name\":\"Items\""),
+				"the service document lists the set name: " + serviceDoc.body());
+
+		Response metadata = get("/$metadata", Map.of());
+		assertTrue(metadata.body().contains("Name=\"Items\""),
+				"$metadata emits the renamed set: " + metadata.body());
+	}
+
+	@Test
 	@DisplayName("$metadata?$format=json serves CSDL JSON; the default stays CSDL XML")
 	void metadataAsCsdlJson() throws Exception {
 		Response json = get("/$metadata", Map.of("$format", "json"));

@@ -16,6 +16,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
@@ -23,6 +24,7 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
+import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
 import org.eclipse.fennec.odata.csdl.CsdlJsonReader;
 import org.eclipse.fennec.odata.csdl.CsdlXmlLoad;
@@ -56,7 +58,18 @@ final class CsdlMetadataReader {
 		return readXml(csdl);
 	}
 
+	/**
+	 * CSDL allows symbolic values for the {@code Scale} and {@code SRID} facets
+	 * ({@code variable}/{@code floating}) where the XSD-generated EDM model only accepts integers —
+	 * real services use them (the OData demo serves {@code SRID="Variable"} on its geography
+	 * properties). Both are lossy facets for the Ecore mapping anyway, so the symbolic form is
+	 * stripped before parsing instead of failing the whole document.
+	 */
+	private static final java.util.regex.Pattern SYMBOLIC_FACET =
+			java.util.regex.Pattern.compile("\\s(?:Scale|SRID)=\"(?i:variable|floating)\"");
+
 	private static List<EPackage> readXml(String csdlXml) {
+		csdlXml = SYMBOLIC_FACET.matcher(csdlXml).replaceAll("");
 		ResourceSet resourceSet = new ResourceSetImpl();
 		resourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("*",
 				new XMLResourceFactoryImpl());
@@ -64,9 +77,14 @@ final class CsdlMetadataReader {
 		resourceSet.getPackageRegistry().put(EdmxPackage.eNS_URI, EdmxPackage.eINSTANCE);
 		Resource resource = resourceSet.createResource(URI.createURI("metadata.xml"));
 		try {
-			// XXE-hardened: a malicious/compromised service's $metadata is untrusted input
+			// XXE-hardened: a malicious/compromised service's $metadata is untrusted input.
+			// Foreign services carry legacy/vendor attributes the 4.01 XSD model does not know
+			// (the OData demo still emits the V3 ConcurrencyMode) — record them instead of failing.
+			Map<Object, Object> options = CsdlXmlLoad.secureOptions();
+			options.put(XMLResource.OPTION_RECORD_UNKNOWN_FEATURE,
+					Boolean.TRUE);
 			resource.load(new ByteArrayInputStream(csdlXml.getBytes(StandardCharsets.UTF_8)),
-					CsdlXmlLoad.secureOptions());
+					options);
 		} catch (IOException e) {
 			throw new ODataClientException("the service's $metadata is not parseable CSDL XML", e);
 		}

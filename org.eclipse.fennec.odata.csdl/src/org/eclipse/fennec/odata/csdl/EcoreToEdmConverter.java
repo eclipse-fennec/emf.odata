@@ -96,9 +96,12 @@ public class EcoreToEdmConverter {
 	public EdmxRoot toEdmx(EPackage pkg) {
 		ODataPackageProfile profile = new OdataResolver().resolve(pkg);
 		EdmxRoot root = toEdmx(profile);
-		// container-level singletons are driven by an EPackage annotation, not the profile model
+		// container-level singletons/set names are driven by EPackage annotations, not the profile
 		root.getEdmx().getDataServices().getSchema()
-				.forEach(schema -> addSingletons(pkg, profile, schema));
+				.forEach(schema -> {
+					addSingletons(pkg, profile, schema);
+					renameEntitySets(pkg, schema);
+				});
 		return root;
 	}
 
@@ -107,7 +110,57 @@ public class EcoreToEdmConverter {
 		ODataPackageProfile profile = new OdataResolver().resolve(pkg);
 		SchemaType schema = toSchema(profile);
 		addSingletons(pkg, profile, schema);
+		renameEntitySets(pkg, schema);
 		return schema;
+	}
+
+	/**
+	 * Applies container entity-set NAMES from the {@code EPackage} annotation
+	 * ({@link ODataAnnotationConstants#ENTITY_SETS_SOURCE}, {@code setName -> EClass name}): the
+	 * default convention names a set after its type; a service whose sets differ (TripPin
+	 * {@code People -> Person}) keeps its names through the round trip. Navigation-binding targets
+	 * reference set names, so they are renamed alongside.
+	 */
+	private void renameEntitySets(EPackage pkg, SchemaType schema) {
+		applyEntitySetNames(entitySetNames(pkg), schema);
+	}
+
+	/** The {@code type name -> set name} renames declared on the package, or an empty map. */
+	public static java.util.Map<String, String> entitySetNames(EPackage pkg) {
+		EAnnotation annotation = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+		java.util.Map<String, String> typeToSet = new java.util.HashMap<>();
+		if (annotation != null) {
+			annotation.getDetails().forEach(entry -> typeToSet.put(entry.getValue(), entry.getKey()));
+		}
+		return typeToSet;
+	}
+
+	/**
+	 * Applies {@code type name -> set name} renames to the schema's containers (sets and their
+	 * binding targets). Public because the runtime applies the renames of ALL registered packages
+	 * to every schema — the container may live in a different schema than its types (Northwind).
+	 * Idempotent: an already-renamed set no longer matches a type-name key.
+	 */
+	public void applyEntitySetNames(java.util.Map<String, String> typeToSet, SchemaType schema) {
+		if (typeToSet.isEmpty()) {
+			return;
+		}
+		for (TEntityContainer container : schema.getEntityContainer()) {
+			for (TEntitySet set : container.getEntitySet()) {
+				String renamed = typeToSet.get(set.getName());
+				if (renamed != null) {
+					set.setName(renamed);
+				}
+			}
+			for (TEntitySet set : container.getEntitySet()) {
+				set.getNavigationPropertyBinding().forEach(binding -> {
+					String renamed = typeToSet.get(String.valueOf(binding.getTarget()));
+					if (renamed != null) {
+						binding.setTarget(renamed);
+					}
+				});
+			}
+		}
 	}
 
 	/**
