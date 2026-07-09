@@ -476,6 +476,34 @@ public final class EntitySetRequest {
 		}
 	}
 
+	/**
+	 * Reads a media entity's binary stream: {@code GET Set(key)/$value} on a HasStream type
+	 * ([OData-Protocol] 11.2.4). Non-2xx answers raise with status and error body.
+	 */
+	public MediaContent mediaRead(String keyLiteral) {
+		String path = entityPath(keyLiteral) + "/$value";
+		ODataClient.BinaryResponse response = client.exchangeBinary("GET", path, null, null, Map.of());
+		if (response.status() / 100 != 2) {
+			throw new ODataClientException("GET " + path + " answered " + response.status(),
+					response.status(), new String(response.body(), StandardCharsets.UTF_8));
+		}
+		return new MediaContent(response.body(), response.header("Content-Type"));
+	}
+
+	/**
+	 * Replaces a media entity's binary stream: {@code PUT Set(key)/$value} with the raw content
+	 * ([OData-Protocol] 11.4.7.1); If-Match optional.
+	 */
+	public void mediaWrite(String keyLiteral, byte[] content, String contentType, String ifMatch) {
+		String path = entityPath(keyLiteral) + "/$value";
+		ODataClient.BinaryResponse response = client.exchangeBinary("PUT", path, content,
+				contentType, ifMatch(ifMatch));
+		if (response.status() != 204 && response.status() / 100 != 2) {
+			throw new ODataClientException("PUT " + path + " answered " + response.status(),
+					response.status(), new String(response.body(), StandardCharsets.UTF_8));
+		}
+	}
+
 	private void reference(String method, String path, String targetEditUrl) {
 		String body = "{\"@odata.id\":\"" + targetEditUrl + "\"}";
 		ODataClient.Response response = client.exchange(method, path, JSON, body, JSON, Map.of());

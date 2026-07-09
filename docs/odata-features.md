@@ -208,8 +208,11 @@ nav paths, some in-`$expand` options); the `ODataRequestFilter` refactor (req §
 `RequestLimits`/parse validation in a whiteboard filter); in-memory backend is not
 subtype-polymorphic (JPA is).
 
-**Client:** media streams (`$value` binary), delta/change-tracking. The Atlas-backed schema
-registry impl is downstream (ADR-0007).
+**Client:** delta/change-tracking. The Atlas-backed schema registry impl is downstream (ADR-0007).
+
+Media entities are supported on both sides: a `HasStream` type's binary stream is served and
+replaced at `GET/PUT Set(key)/$value` (server: `MediaService` SPI, in-memory reference impl;
+client: `mediaRead`/`mediaWrite` over a binary transport path with the same origin/size guards).
 
 Container singletons are supported on both sides: declared via an `EPackage` annotation
 (`…/odata/singletons`, name → type), emitted as `<Singleton>` in `$metadata`, served at `GET /Me`

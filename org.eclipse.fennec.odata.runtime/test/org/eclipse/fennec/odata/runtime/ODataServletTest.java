@@ -51,7 +51,9 @@ import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
+import java.nio.charset.StandardCharsets;
 import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
+import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.query.OclEvaluator;
@@ -253,7 +255,7 @@ class ODataServletTest {
 		when(request.getContentType()).thenReturn(contentType);
 		if (payload != null) {
 			when(request.getInputStream()).thenReturn(
-					servletInputStream(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+					servletInputStream(payload.getBytes(StandardCharsets.UTF_8)));
 		}
 		when(request.getHeader("Accept")).thenReturn(accept);
 		when(request.getHeader("OData-MaxVersion")).thenReturn(maxVersion);
@@ -269,6 +271,22 @@ class ODataServletTest {
 		HttpServletResponse response = mock(HttpServletResponse.class);
 		StringWriter body = new StringWriter();
 		when(response.getWriter()).thenReturn(new PrintWriter(body, true));
+		// binary responses (media streams) go through the output stream — mirror into the writer
+		when(response.getOutputStream()).thenReturn(new jakarta.servlet.ServletOutputStream() {
+			@Override
+			public void write(int b) {
+				body.write(b);
+			}
+
+			@Override
+			public boolean isReady() {
+				return true;
+			}
+
+			@Override
+			public void setWriteListener(jakarta.servlet.WriteListener listener) {
+			}
+		});
 		AtomicInteger status = new AtomicInteger(200);
 		doAnswer(invocation -> {
 			status.set(invocation.getArgument(0));
@@ -741,6 +759,58 @@ class ODataServletTest {
 
 		singletonResult = null; // no instance → 404
 		assertEquals(404, get("/Me", Map.of()).status());
+	}
+
+	@Test
+	@DisplayName("media entity: GET/PUT Set(key)/$value stream via the MediaService; 501 without one")
+	void mediaStream() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		EAnnotation hasStream = EcoreFactory.eINSTANCE.createEAnnotation();
+		hasStream.setSource(ODataAnnotationConstants.SOURCE);
+		hasStream.getDetails().put(
+				ODataAnnotationConstants.HAS_STREAM, "true");
+		productClass.getEAnnotations().add(hasStream);
+
+		assertEquals(501, get("/Product('p1')/$value", Map.of()).status(),
+				"no MediaService for the type → 501");
+
+		AtomicReference<MediaService.MediaStream> stored =
+				new AtomicReference<>(new MediaService.MediaStream(
+						"PNG".getBytes(StandardCharsets.UTF_8), "image/png"));
+		servlet.addMediaService(new MediaService() {
+			@Override
+			public boolean supports(EClass entityType) {
+				return entityType == productClass;
+			}
+
+			@Override
+			public Optional<MediaStream> readMedia(EClass entityType, String rawKey) {
+				return "'p1'".equals(rawKey) ? Optional.ofNullable(stored.get()) : Optional.empty();
+			}
+
+			@Override
+			public boolean writeMedia(EClass entityType, String rawKey, MediaStream stream) {
+				if (!"'p1'".equals(rawKey)) {
+					return false;
+				}
+				stored.set(stream);
+				return true;
+			}
+		});
+
+		Response read = get("/Product('p1')/$value", Map.of());
+		assertEquals(200, read.status(), read.body());
+		assertEquals("PNG", read.body(), "the raw stream bytes are served");
+
+		Response write = callWrite("PUT", "/Product('p1')/$value", Map.of(),
+				"NEWPNG", "image/png", Map.of("If-Match", "*"));
+		assertEquals(204, write.status(), write.body());
+		assertEquals("image/png", stored.get().contentType());
+		assertEquals("NEWPNG", new String(stored.get().content(),
+				StandardCharsets.UTF_8));
+
+		assertEquals(404, get("/Product('missing')/$value", Map.of()).status(),
+				"unknown key → no stream → 404");
 	}
 
 	@Test

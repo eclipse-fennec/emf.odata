@@ -29,6 +29,7 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
+import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
 import org.junit.jupiter.api.AfterEach;
@@ -193,6 +194,25 @@ class MemoryWriteRepositoryTest {
 		payload.eSet(productClass.getEStructuralFeature("id"), id);
 		payload.eSet(productClass.getEStructuralFeature("name"), newName);
 		return payload;
+	}
+
+	@Test
+	@DisplayName("media stream: write/read round-trip; no entity → empty read, refused write")
+	void mediaStreamRoundTrip() {
+		repository.create(productClass, product("m1", "Photo", "1.00"));
+
+		assertTrue(repository.readMedia(productClass, "'m1'").isEmpty(),
+				"an entity without content has no stream yet");
+		assertTrue(repository.readMedia(productClass, "'nope'").isEmpty(), "no entity → no stream");
+		assertFalse(repository.writeMedia(productClass, "'nope'",
+				new MediaService.MediaStream(new byte[] { 1 }, "image/png")),
+				"media belongs to an existing entity");
+
+		assertTrue(repository.writeMedia(productClass, "'m1'",
+				new MediaService.MediaStream(new byte[] { 1, 2, 3 }, "image/png")));
+		MediaService.MediaStream stream = repository.readMedia(productClass, "'m1'").orElseThrow();
+		assertEquals("image/png", stream.contentType());
+		assertEquals(3, stream.content().length);
 	}
 
 	private List<EObject> read() {

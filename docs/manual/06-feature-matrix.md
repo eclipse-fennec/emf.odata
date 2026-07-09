@@ -57,6 +57,7 @@ Spec documents (OASIS OData **v4.01**):
 | `/$count` on sets and navigations | — | ✅ | URL Conv. §4.8 |
 | Derived-type cast `Set/Ns.Type[(key)]` | Type-cast segments | ✅ (one cast per step) | URL Conv. §4.11 |
 | Container singleton `GET /Me[/…]` | Address a singleton | ✅ (declared via EPackage annotation; backend supplies the instance) | URL Conv. §4.3; CSDL §13.5 |
+| Media entity stream `GET/PUT Set(key)/$value` | HasStream types serve/replace their binary stream | ✅ (via the `MediaService` SPI; 501 without a backend) | Protocol §11.2.4/11.4.7 |
 | `/$ref` | Reference to an entity | ✅ (writes); read → 501 | URL Conv. §4.9 |
 | Key-as-segment | MAY | ❌ | URL Conv. §4.3.1 |
 
@@ -137,7 +138,8 @@ Spec documents (OASIS OData **v4.01**):
 | Schema registry (fetch/persist/lookup decoupled, conditional GET) | ✅ | ADR-0007 |
 | CSRF (SAP) handshake, SSRF guard, XXE-hardened metadata, size cap | ✅ | — |
 | Container singletons (`singleton(name)` → `GET /Me`) | ✅ | URL Conv. §4.3 |
-| Media streams, delta | ❌ | — |
+| Media entities (`mediaRead`/`mediaWrite` → `Set(key)/$value`) | ✅ | Protocol §11.2.4/11.4.7 |
+| Delta / change tracking | ❌ | — |
 
 See [Conformance Levels](/guides/05-conformance) for the roll-up and
 [`docs/odata-conformance-status.md`](../odata-conformance-status.md) for the full

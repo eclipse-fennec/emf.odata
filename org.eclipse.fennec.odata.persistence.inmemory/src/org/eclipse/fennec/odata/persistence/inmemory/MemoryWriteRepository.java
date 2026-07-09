@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -27,6 +28,7 @@ import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.odata.persistence.api.EntityRepository;
+import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.osgi.service.component.annotations.Component;
@@ -44,11 +46,13 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  * their defaults (key excluded); updates with unknown keys create (OData upsert). Everything
  * synchronizes on the per-class map — reference semantics, not a transactional store.
  */
-@Component(service = { EntityRepository.class, WriteService.class })
-public class MemoryWriteRepository implements EntityRepository, WriteService {
+@Component(service = { EntityRepository.class, WriteService.class, MediaService.class })
+public class MemoryWriteRepository implements EntityRepository, WriteService, MediaService {
 
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	private final Map<EClass, Map<String, EObject>> store = new ConcurrentHashMap<>();
+	/** Media streams of HasStream entities, keyed like the entity store (reference semantics). */
+	private final Map<EClass, Map<String, MediaStream>> media = new ConcurrentHashMap<>();
 	/**
 	 * Per-thread snapshot of the whole store, taken at {@link #begin()} and restored on
 	 * {@link #rollback()}. The reference backend gives $batch change sets ATOMICITY (all-or-nothing)
@@ -302,6 +306,34 @@ public class MemoryWriteRepository implements EntityRepository, WriteService {
 			} else if (replace && target.eIsSet(feature)) {
 				target.eUnset(feature);
 			}
+		}
+	}
+
+	// --- media side (HasStream entities, [OData-Protocol] 11.2.4/11.4.7) ---
+
+	@Override
+	public Optional<MediaStream> readMedia(EClass entityType, String rawKey) {
+		String key = unquote(rawKey);
+		Map<String, EObject> entities = classStore(entityType);
+		synchronized (entities) {
+			if (!entities.containsKey(key)) {
+				return Optional.empty(); // no entity → no stream (404)
+			}
+			return Optional.ofNullable(
+					media.getOrDefault(entityType, Map.of()).get(key));
+		}
+	}
+
+	@Override
+	public boolean writeMedia(EClass entityType, String rawKey, MediaStream stream) {
+		String key = unquote(rawKey);
+		Map<String, EObject> entities = classStore(entityType);
+		synchronized (entities) {
+			if (!entities.containsKey(key)) {
+				return false; // the media value belongs to an EXISTING entity (404)
+			}
+			media.computeIfAbsent(entityType, type -> new ConcurrentHashMap<>()).put(key, stream);
+			return true;
 		}
 	}
 

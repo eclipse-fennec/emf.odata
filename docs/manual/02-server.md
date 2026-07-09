@@ -111,6 +111,14 @@ They are emitted as `<Singleton>` in `$metadata`, listed in the service document
 name)` (a backend without that capability yields 501; a missing instance is 404). A path below a
 singleton (`GET /Me/nav`) walks from that instance.
 
+## Media entities
+
+An entity type annotated `@OData.HasStream` is a media entity ([OData-Protocol] 11.2.4): its
+binary stream is served at `GET Set(key)/$value` (with its media content type) and replaced with
+`PUT Set(key)/$value` (raw body, any content type, If-Match applies, body-size limit enforced).
+The stream comes from the `MediaService` SPI — a type without a media backend answers 501, a
+missing entity or stream 404. The in-memory backend is the reference implementation.
+
 ## Backend configuration
 
 | Setting | PID | Default |

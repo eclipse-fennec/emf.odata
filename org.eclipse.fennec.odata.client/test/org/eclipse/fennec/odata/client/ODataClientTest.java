@@ -168,6 +168,9 @@ class ODataClientTest {
 				answer = "{\"value\":42}"; // unbound function import result
 			} else if (path.contains("/webshop.label(")) {
 				answer = "{\"value\":\"X:Milk\"}"; // bound function result
+			} else if (path.endsWith("/Product('p1')/$value")) {
+				answer = "PNGDATA"; // the media entity's binary stream
+				contentType = "image/png";
 			} else if (path.endsWith("/name/$value")) {
 				answer = "Milk";
 				contentType = "text/plain;charset=UTF-8";
@@ -481,6 +484,24 @@ class ODataClientTest {
 			assertEquals("Milk", page.entities().get(0)
 					.eGet(product.getEStructuralFeature("name")));
 		}
+	}
+
+	@Test
+	@DisplayName("media: mediaRead GETs the raw stream; mediaWrite PUTs it with its content type")
+	void mediaStream() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+
+		MediaContent media = client.entitySet("Product").mediaRead("'p1'");
+		assertTrue(lastRequest.get().getRawPath().endsWith("/Product('p1')/$value"),
+				lastRequest.get().toString());
+		assertEquals("image/png", media.contentType());
+		assertEquals("PNGDATA", new String(media.content(), StandardCharsets.UTF_8));
+
+		client.entitySet("Product").mediaWrite("'p1'",
+				"RAWPNG".getBytes(StandardCharsets.UTF_8), "image/png", "W/\"e1\"");
+		assertEquals("PUT", lastWriteMethod.get());
+		assertEquals("W/\"e1\"", lastIfMatch.get());
+		assertEquals("RAWPNG", lastWriteBody.get(), "the raw bytes are the body");
 	}
 
 	@Test

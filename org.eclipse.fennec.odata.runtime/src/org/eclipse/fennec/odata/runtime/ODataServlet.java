@@ -78,6 +78,7 @@ import org.eclipse.fennec.codec.resource.CodecResource;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
+import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
@@ -167,6 +168,7 @@ public class ODataServlet extends HttpServlet {
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	private final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	private final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
+	private final List<MediaService> mediaServices = new CopyOnWriteArrayList<>();
 	private final List<ODataOperationHandler> operationHandlers = new CopyOnWriteArrayList<>();
 	private final CachingODataQueryParser parser = new CachingODataQueryParser();
 	private final OclEvaluator expandFilterEvaluator = new OclEvaluator();
@@ -208,6 +210,15 @@ public class ODataServlet extends HttpServlet {
 
 	void removeWriteService(WriteService writeService) {
 		writeServices.remove(writeService);
+	}
+
+	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void addMediaService(MediaService mediaService) {
+		mediaServices.add(mediaService);
+	}
+
+	void removeMediaService(MediaService mediaService) {
+		mediaServices.remove(mediaService);
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
@@ -886,6 +897,14 @@ public class ODataServlet extends HttpServlet {
 		if ("POST".equals(request.getMethod()) && path.key() != null && path.segments().size() == 1
 				&& path.segments().get(0) instanceof ResourcePath.TypeCastSegment action) {
 			boundAction(path, action.qualifiedName(), request, response);
+			return;
+		}
+		// PUT Set(key)/$value on a media entity replaces the binary stream — routed to the
+		// MediaService SPI before the WriteService (and its JSON-only content-type guard).
+		if ("PUT".equals(request.getMethod()) && path.key() != null && path.segments().size() == 1
+				&& path.segments().get(0) instanceof ResourcePath.ValueSegment
+				&& hasStream(entityType)) {
+			mediaWrite(entityType, path, request, response);
 			return;
 		}
 		WriteService writeService = writeServices.stream()
@@ -1855,6 +1874,14 @@ public class ODataServlet extends HttpServlet {
 		if (target == null) {
 			return;
 		}
+		// media entity ([OData-Protocol] 11.2.4): GET Set(key)/$value on a HasStream type is the
+		// binary media stream, not a property value — routed to the MediaService SPI
+		if (path.segments().size() == 1
+				&& path.segments().get(0) instanceof ResourcePath.ValueSegment
+				&& hasStream(target.entityType())) {
+			mediaRead(target.entityType(), path.key(), response);
+			return;
+		}
 		EObject entity = fetchByKey(target, path.key(),
 				path.segments().isEmpty() ? expandOption(request, target.entityType()).keySet()
 						: walkPrefetch(target.entityType(), path.segments()),
@@ -1867,6 +1894,57 @@ public class ODataServlet extends HttpServlet {
 		} else {
 			walk(path, entity, request, response);
 		}
+	}
+
+	/** Whether the entity type is a media entity ({@code @OData.HasStream}, [OData-CSDL] 8.1.2). */
+	private static boolean hasStream(EClass entityType) {
+		EAnnotation annotation = entityType.getEAnnotation(ODataAnnotationConstants.SOURCE);
+		return annotation != null
+				&& "true".equals(annotation.getDetails().get(ODataAnnotationConstants.HAS_STREAM));
+	}
+
+	/** {@code GET Set(key)/$value} on a media entity: the raw stream with its media type. */
+	private void mediaRead(EClass entityType, String rawKey, HttpServletResponse response)
+			throws IOException {
+		MediaService mediaService = mediaServices.stream()
+				.filter(s -> s.supports(entityType)).findFirst().orElse(null);
+		if (mediaService == null) {
+			error(response, 501, "no media backend for this entity type");
+			return;
+		}
+		MediaService.MediaStream stream = mediaService.readMedia(entityType, rawKey).orElse(null);
+		if (stream == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "the media entity has no stream");
+			return;
+		}
+		response.setContentType(stream.contentType());
+		response.setContentLength(stream.content().length);
+		response.getOutputStream().write(stream.content());
+	}
+
+	/** {@code PUT Set(key)/$value} on a media entity: replaces the stream ([OData-Protocol] 11.4.7.1). */
+	private void mediaWrite(EClass entityType, ResourcePath path, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
+		if (!preconditionHolds(entityType, path.key(), request, response)) {
+			return; // 428/412 already written
+		}
+		MediaService mediaService = mediaServices.stream()
+				.filter(s -> s.supports(entityType)).findFirst().orElse(null);
+		if (mediaService == null) {
+			error(response, 501, "no media backend for this entity type");
+			return;
+		}
+		byte[] body = request.getInputStream().readNBytes(limits.maxBodyBytes() + 1);
+		if (body.length > limits.maxBodyBytes()) {
+			error(response, 413, "payload exceeds the maximum size of " + limits.maxBodyBytes() + " bytes");
+			return;
+		}
+		if (!mediaService.writeMedia(entityType, path.key(),
+				new MediaService.MediaStream(body, request.getContentType()))) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "no entity with this key");
+			return;
+		}
+		response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 	}
 
 	/** {@code GET Set/$count}: the (optionally filtered, optionally cast) total as text/plain. */

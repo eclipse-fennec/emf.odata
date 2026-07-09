@@ -133,6 +133,16 @@ EObject back = client.entitySet("Product").preferReturn("representation")
     .update("'p1'", patch, ifMatch);                                            // → the updated entity
 ```
 
+## Media entities
+
+`mediaRead`/`mediaWrite` transfer a HasStream entity's binary stream over a dedicated binary
+transport path (same origin/size guards; media bytes never pass through a string):
+
+```java
+MediaContent photo = client.entitySet("Photos").mediaRead("'p1'");     // GET  Set(key)/$value
+client.entitySet("Photos").mediaWrite("'p1'", bytes, "image/png", etag); // PUT Set(key)/$value
+```
+
 ## Batch
 
 ```java

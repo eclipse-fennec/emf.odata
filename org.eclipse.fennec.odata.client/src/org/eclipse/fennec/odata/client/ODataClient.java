@@ -319,6 +319,63 @@ public final class ODataClient implements AutoCloseable {
 		}
 	}
 
+	/** Status, raw body bytes and headers of a binary exchange (media streams). */
+	record BinaryResponse(int status, byte[] body, HttpHeaders headers) {
+
+		String header(String name) {
+			return headers.firstValue(name).orElse(null);
+		}
+	}
+
+	/**
+	 * Binary exchange for media streams ({@code Set(key)/$value} on HasStream entities): the same
+	 * origin/header/size rules as {@link #exchange}, but raw bytes in and out — media content must
+	 * not pass through a UTF-8 String. Writes run the CSRF handshake like their JSON siblings.
+	 */
+	BinaryResponse exchangeBinary(String method, String relative, byte[] body, String contentType,
+			Map<String, String> extraHeaders) {
+		Map<String, String> headers = new LinkedHashMap<>(extraHeaders);
+		if (config.csrf() && !"GET".equals(method) && !"HEAD".equals(method)) {
+			headers.put("X-CSRF-Token", ensureCsrfToken());
+		}
+		URI target = serviceRoot.resolve(relative);
+		if (!sameOrigin(serviceRoot, target)) {
+			throw new ODataClientException(
+					"refusing to follow a link to a different origin than the service root: " + target);
+		}
+		HttpRequest.Builder builder = HttpRequest.newBuilder(target)
+				.timeout(config.requestTimeout())
+				.header("Accept", "*/*")
+				.header("OData-MaxVersion", config.odataMaxVersion());
+		if (contentType != null) {
+			builder.header("Content-Type", contentType);
+		}
+		config.headers().forEach(builder::header);
+		headers.forEach(builder::header);
+		builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody()
+				: HttpRequest.BodyPublishers.ofByteArray(body));
+		HttpResponse<InputStream> response;
+		try {
+			response = http.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
+		} catch (IOException e) {
+			throw new ODataClientException(method + " " + target + " failed", e);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new ODataClientException(method + " " + target + " interrupted", e);
+		}
+		int cap = (int) Math.min(maxResponseBytes, Integer.MAX_VALUE - 1L);
+		try (InputStream in = response.body()) {
+			byte[] bytes = in.readNBytes(cap + 1);
+			if (bytes.length > cap) {
+				throw new ODataClientException("the response from " + target
+						+ " exceeds the client limit of " + maxResponseBytes + " bytes");
+			}
+			return new BinaryResponse(response.statusCode(), bytes, response.headers());
+		} catch (IOException e) {
+			throw new ODataClientException("reading the response from " + target + " failed", e);
+		}
+	}
+
 	/** GET relative to the service root; non-2xx answers raise with status and error body. */
 	String fetch(String relative, String accept) {
 		Response response = exchange("GET", relative, accept, null, null, Map.of());
