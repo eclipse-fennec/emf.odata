@@ -207,8 +207,13 @@ nav paths, some in-`$expand` options); the `ODataRequestFilter` refactor (req §
 `RequestLimits`/parse validation in a whiteboard filter); in-memory backend is not
 subtype-polymorphic (JPA is).
 
-**Client:** media streams (`$value` binary), delta/change-tracking, singleton access. The
-Atlas-backed schema registry impl is downstream (ADR-0007).
+**Client:** media streams (`$value` binary), delta/change-tracking. The Atlas-backed schema
+registry impl is downstream (ADR-0007).
+
+Container singletons are supported on both sides: declared via an `EPackage` annotation
+(`…/odata/singletons`, name → type), emitted as `<Singleton>` in `$metadata`, served at `GET /Me`
+(the backend supplies the instance via `QueryService.singleton`), and read by the client through
+`ODataClient.singleton(name)`.
 
 Client↔server functional parity now holds across the read/query surface, resource addressing
 (incl. **derived-type casts**), writes (incl. `@odata.bind` and **`Prefer: return=`**), `$batch`, and

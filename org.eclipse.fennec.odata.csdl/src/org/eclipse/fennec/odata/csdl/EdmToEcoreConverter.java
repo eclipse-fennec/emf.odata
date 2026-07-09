@@ -35,7 +35,9 @@ import org.eclipse.emf.ecore.EcorePackage;
 import org.open.oasis.docs.odata.ns.edm.AnnotationType;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
 import org.open.oasis.docs.odata.ns.edm.TComplexType;
+import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
 import org.open.oasis.docs.odata.ns.edm.TEntityType;
+import org.open.oasis.docs.odata.ns.edm.TSingleton;
 import org.open.oasis.docs.odata.ns.edm.TEnumType;
 import org.open.oasis.docs.odata.ns.edm.TEnumTypeMember;
 import org.open.oasis.docs.odata.ns.edm.TNavigationProperty;
@@ -198,6 +200,21 @@ public class EdmToEcoreConverter {
 		}
 
 		mapAnnotations(schema.getAnnotation(), pkg);
+
+		// container-level singletons ([OData-CSDL] 13.5) have no structural Ecore counterpart and
+		// cannot be regenerated from the types (unlike entity sets), so capture them as an EPackage
+		// annotation (name -> simple type name) — the exact source the write path reads back
+		for (TEntityContainer container : schema.getEntityContainer()) {
+			for (TSingleton singleton : container.getSingleton()) {
+				EAnnotation holder = pkg.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
+				if (holder == null) {
+					holder = ecore.createEAnnotation();
+					holder.setSource(ODataAnnotationConstants.SINGLETONS_SOURCE);
+					pkg.getEAnnotations().add(holder);
+				}
+				holder.getDetails().put(singleton.getName(), simpleName(singleton.getType()));
+			}
+		}
 
 		// vocabulary terms have no structural Ecore counterpart → one EAnnotation per term on
 		// the package (source = TERM_SOURCE_PREFIX + name), queryable by term registries (E1)

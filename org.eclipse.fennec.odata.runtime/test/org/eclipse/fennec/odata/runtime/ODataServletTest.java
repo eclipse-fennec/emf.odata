@@ -30,11 +30,14 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EcoreFactory;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EStructuralFeature;
@@ -48,6 +51,7 @@ import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
+import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.query.OclEvaluator;
@@ -77,6 +81,7 @@ class ODataServletTest {
 	private final AtomicReference<EntityQuery> lastQuery = new AtomicReference<>();
 	private final AtomicReference<RuntimeException> backendFailure = new AtomicReference<>();
 	private List<EObject> backendResult = List.of();
+	private EObject singletonResult;
 	private List<Map<String, Object>> applyResult = List.of();
 	private boolean applySupported = true;
 	private final AtomicReference<org.eclipse.fennec.odata.persistence.api.ApplyQuery> lastApplyQuery =
@@ -135,6 +140,11 @@ class ODataServletTest {
 				}
 				return new org.eclipse.fennec.odata.persistence.api.ApplyResult(applyResult,
 						query.count() ? applyResult.size() : -1);
+			}
+
+			@Override
+			public Optional<EObject> singleton(EClass type, String name) {
+				return Optional.ofNullable(singletonResult);
 			}
 		});
 		servlet.addWriteService(new WriteService() {
@@ -709,6 +719,28 @@ class ODataServletTest {
 		assertEquals(200, full.status(), full.body());
 		assertTrue(full.body().contains("\"@odata.type\""), "full carries @odata.type: " + full.body());
 		assertTrue(full.body().contains("\"@odata.id\""), "full carries @odata.id: " + full.body());
+	}
+
+	@Test
+	@DisplayName("container singleton: GET /Me serves the backend instance; the service doc lists it")
+	void singleton() throws Exception {
+		singletonResult = product("me", "Me Product", "9.99", null);
+		EAnnotation ann = EcoreFactory.eINSTANCE.createEAnnotation();
+		ann.setSource(ODataAnnotationConstants.SINGLETONS_SOURCE);
+		ann.getDetails().put("Me", "Product");
+		pkg.getEAnnotations().add(ann);
+
+		Response me = get("/Me", Map.of());
+		assertEquals(200, me.status(), me.body());
+		assertTrue(me.body().contains("/$metadata#Me\""), "singleton context URL: " + me.body());
+		assertTrue(me.body().contains("\"name\":\"Me Product\""), me.body());
+
+		Response serviceDoc = get("/", Map.of());
+		assertTrue(serviceDoc.body().contains("\"kind\":\"Singleton\"")
+				&& serviceDoc.body().contains("\"name\":\"Me\""), serviceDoc.body());
+
+		singletonResult = null; // no instance → 404
+		assertEquals(404, get("/Me", Map.of()).status());
 	}
 
 	@Test

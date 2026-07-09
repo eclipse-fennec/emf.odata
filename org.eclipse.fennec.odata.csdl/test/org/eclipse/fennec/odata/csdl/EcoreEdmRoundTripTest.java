@@ -26,10 +26,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EEnum;
+import org.eclipse.emf.ecore.EcoreFactory;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EcorePackage;
@@ -183,6 +185,25 @@ class EcoreEdmRoundTripTest {
 	}
 
 	// ============================================================ round trip (Ecore -> EDM -> Ecore)
+
+	@Test
+	void singletonsRoundTrip() {
+		EAnnotation ann = EcoreFactory.eINSTANCE.createEAnnotation();
+		ann.setSource(ODataAnnotationConstants.SINGLETONS_SOURCE);
+		ann.getDetails().put("Me", "Person");
+		model.getEAnnotations().add(ann);
+
+		TEntityContainer container = new EcoreToEdmConverter().toSchema(model)
+				.getEntityContainer().get(0);
+		assertEquals(1, container.getSingleton().size(), "one <Singleton> emitted");
+		assertEquals("Me", container.getSingleton().get(0).getName());
+		assertEquals("company.Person", container.getSingleton().get(0).getType());
+
+		EPackage rt = new EdmToEcoreConverter().toEPackage(new EcoreToEdmConverter().toEdmx(model));
+		EAnnotation roundTripped = rt.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
+		assertNotNull(roundTripped, "singleton annotation survives the round trip");
+		assertEquals("Person", roundTripped.getDetails().get("Me"));
+	}
 
 	@Test
 	void roundTripsBackToEcore() {

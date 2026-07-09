@@ -19,6 +19,7 @@ import java.util.Map;
 
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.odata.csdl.profile.ODataAnnotation;
 import org.eclipse.fennec.odata.csdl.profile.ODataClassProfile;
@@ -40,6 +41,7 @@ import org.open.oasis.docs.odata.ns.edm.TActionFunctionParameter;
 import org.open.oasis.docs.odata.ns.edm.TActionFunctionReturnType;
 import org.open.oasis.docs.odata.ns.edm.TComplexType;
 import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
+import org.open.oasis.docs.odata.ns.edm.TSingleton;
 import org.open.oasis.docs.odata.ns.edm.TEntityKeyElement;
 import org.open.oasis.docs.odata.ns.edm.TEntitySet;
 import org.open.oasis.docs.odata.ns.edm.TEntityType;
@@ -92,12 +94,45 @@ public class EcoreToEdmConverter {
 
 	/** Build a full {@code <edmx:Edmx Version="4.0">} document for the package. */
 	public EdmxRoot toEdmx(EPackage pkg) {
-		return toEdmx(new OdataResolver().resolve(pkg));
+		ODataPackageProfile profile = new OdataResolver().resolve(pkg);
+		EdmxRoot root = toEdmx(profile);
+		// container-level singletons are driven by an EPackage annotation, not the profile model
+		root.getEdmx().getDataServices().getSchema()
+				.forEach(schema -> addSingletons(pkg, profile, schema));
+		return root;
 	}
 
 	/** Build the {@code <Schema>} for the package. */
 	public SchemaType toSchema(EPackage pkg) {
-		return toSchema(new OdataResolver().resolve(pkg));
+		ODataPackageProfile profile = new OdataResolver().resolve(pkg);
+		SchemaType schema = toSchema(profile);
+		addSingletons(pkg, profile, schema);
+		return schema;
+	}
+
+	/**
+	 * Emits container-level {@code <Singleton>}s from the {@code EPackage} annotation
+	 * ({@link ODataAnnotationConstants#SINGLETONS_SOURCE}, {@code name -> EClass name}); the type is
+	 * qualified with the schema namespace ([OData-CSDL] 13.5).
+	 */
+	private void addSingletons(EPackage pkg, ODataPackageProfile profile, SchemaType schema) {
+		EAnnotation annotation = pkg.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
+		if (annotation == null || annotation.getDetails().isEmpty()) {
+			return;
+		}
+		TEntityContainer container = schema.getEntityContainer().isEmpty()
+				? null : schema.getEntityContainer().get(0);
+		if (container == null) {
+			container = edm.createTEntityContainer();
+			container.setName(profile.getContainerName());
+			schema.getEntityContainer().add(container);
+		}
+		for (String name : new java.util.ArrayList<>(annotation.getDetails().keySet())) {
+			TSingleton singleton = edm.createTSingleton();
+			singleton.setName(name);
+			singleton.setType(profile.getNamespace() + "." + annotation.getDetails().get(name));
+			container.getSingleton().add(singleton);
+		}
 	}
 
 	// --- build (step 2): profile -> EDM, no Ecore access ---

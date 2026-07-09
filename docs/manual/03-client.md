@@ -92,6 +92,14 @@ ODataPage sale = client.entitySet("Product").cast("My.Shop.DiscountedProduct").l
 EObject one    = client.entitySet("Product").cast("My.Shop.DiscountedProduct").get("'p1'"); // Set/Ns.Type(key)
 ```
 
+## Singletons
+
+`singleton(name)` reads a container singleton (`GET /Me`), decoded into its declared type:
+
+```java
+EObject me = client.singleton("Me");
+```
+
 ## Writing
 
 ```java

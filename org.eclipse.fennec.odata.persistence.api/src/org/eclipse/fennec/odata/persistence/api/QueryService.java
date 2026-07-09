@@ -12,7 +12,10 @@
  */
 package org.eclipse.fennec.odata.persistence.api;
 
+import java.util.Optional;
+
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EObject;
 
 /**
  * Backend query SPI (req §3.5): each backend (in-memory over {@link EntityRepository}s, JPA,
@@ -40,5 +43,14 @@ public interface QueryService {
 	 */
 	default ApplyResult executeApply(ApplyQuery query) {
 		throw new UnsupportedOperationException("$apply is not supported by this backend");
+	}
+
+	/**
+	 * The single instance backing a container singleton (e.g. {@code Me}) of the given type, or
+	 * {@link Optional#empty()} when the singleton has no instance ({@code 404}). Optional capability —
+	 * the default maps to {@code 501 Not Implemented} at the protocol layer.
+	 */
+	default Optional<EObject> singleton(EClass type, String name) {
+		throw new UnsupportedOperationException("singletons are not supported by this backend");
 	}
 }

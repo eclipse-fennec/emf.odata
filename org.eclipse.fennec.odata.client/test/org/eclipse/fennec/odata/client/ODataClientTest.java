@@ -37,7 +37,9 @@ import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.emf.ecore.EcoreFactory;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
@@ -45,6 +47,7 @@ import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
+import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -81,7 +84,12 @@ class ODataClientTest {
 
 	@BeforeAll
 	void setUpStub() throws Exception {
-		String csdl = csdlFor(loadWebshop());
+		EPackage shop = loadWebshop();
+		EAnnotation singleton = EcoreFactory.eINSTANCE.createEAnnotation();
+		singleton.setSource(ODataAnnotationConstants.SINGLETONS_SOURCE);
+		singleton.getDetails().put("Me", "Product"); // container singleton for the client test
+		shop.getEAnnotations().add(singleton);
+		String csdl = csdlFor(shop);
 		server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
 		server.createContext("/odata/", exchange -> {
 			lastRequest.set(exchange.getRequestURI());
@@ -145,6 +153,8 @@ class ODataClientTest {
 				answer = "{\"id\":\"c1\",\"name\":\"Dairy\"}";
 			} else if (path.endsWith("/reviews")) {
 				answer = "{\"value\":[{\"stars\":5,\"comment\":\"great\"},{\"stars\":4,\"comment\":\"good\"}]}";
+			} else if (path.endsWith("/Me")) {
+				answer = "{\"id\":\"me\",\"name\":\"Milk\",\"price\":\"1.20\",\"rating\":3,\"active\":true}";
 			} else if (path.endsWith("/Product/webshop.DiscountedProduct")) {
 				answer = "{\"value\":[{\"id\":\"d1\",\"name\":\"Sale Milk\",\"price\":\"0.99\","
 						+ "\"rating\":4,\"active\":true,\"discount\":20}]}"; // derived-type collection cast
@@ -430,6 +440,19 @@ class ODataClientTest {
 		assertThrows(ODataClientException.class,
 				() -> set.create(p, Map.of("category", List.of("Category('c1')"))),
 				"a list for a single-valued navigation");
+	}
+
+	@Test
+	@DisplayName("singleton(name) reads GET /Me and decodes the declared type")
+	void singletonAccess() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+
+		EObject me = client.singleton("Me");
+		assertTrue(lastRequest.get().getRawPath().endsWith("/Me"), lastRequest.get().toString());
+		assertEquals("Milk", me.eGet(product.getEStructuralFeature("name")));
+
+		assertThrows(ODataClientException.class, () -> client.singleton("Nope"), "unknown singleton");
 	}
 
 	@Test

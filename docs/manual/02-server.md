@@ -102,6 +102,15 @@ Registered via the `ODataOperationHandler` SPI: unbound **function imports**
 functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions** (`POST Set(key)/Ns.Action`
 with the parameters in the JSON body).
 
+## Singletons
+
+Container singletons ([OData-CSDL] 13.5) are declared with an `EPackage` annotation
+(source `https://eclipse.org/fennec/odata/singletons`, detail `singletonName → EClass name`).
+They are emitted as `<Singleton>` in `$metadata`, listed in the service document, and served at
+`GET /<name>` — the backend supplies the single instance through `QueryService.singleton(type,
+name)` (a backend without that capability yields 501; a missing instance is 404). A path below a
+singleton (`GET /Me/nav`) walks from that instance.
+
 ## Backend configuration
 
 | Setting | PID | Default |

@@ -1536,9 +1536,82 @@ public class ODataServlet extends HttpServlet {
 		String sets = entitySetNames().stream()
 				.map(name -> "{\"name\":\"" + name + "\",\"kind\":\"EntitySet\",\"url\":\"" + name + "\"}")
 				.collect(Collectors.joining(","));
+		String singletons = singletonNames().stream()
+				.map(name -> "{\"name\":\"" + name + "\",\"kind\":\"Singleton\",\"url\":\"" + name + "\"}")
+				.collect(Collectors.joining(","));
+		String value = singletons.isEmpty() ? sets : sets.isEmpty() ? singletons : sets + "," + singletons;
 		response.setContentType("application/json;charset=UTF-8");
 		response.getWriter().write("{\"@odata.context\":\"" + request.getRequestURI()
-				+ "/$metadata\",\"value\":[" + sets + "]}");
+				+ "/$metadata\",\"value\":[" + value + "]}");
+	}
+
+	/** Names of the container singletons declared across the registered packages ([OData-CSDL] 13.5). */
+	private List<String> singletonNames() {
+		List<String> names = new ArrayList<>();
+		for (EPackage pkg : packages) {
+			EAnnotation annotation = pkg.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
+			if (annotation != null) {
+				names.addAll(annotation.getDetails().keySet());
+			}
+		}
+		return names;
+	}
+
+	/** The entity type of a declared container singleton by name, or null. */
+	private EClass resolveSingleton(String name) {
+		for (EPackage pkg : packages) {
+			EAnnotation annotation = pkg.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
+			if (annotation != null && annotation.getDetails().containsKey(name)
+					&& pkg.getEClassifier(annotation.getDetails().get(name)) instanceof EClass type) {
+				return type;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Serves a container singleton {@code GET /Me[/…]}: the backend supplies the single instance
+	 * (via {@link QueryService#singleton}); a bare singleton serialises like a single entity (with a
+	 * singleton context URL {@code #Me}), a path below it walks from that instance.
+	 */
+	private void singletonResource(ResourcePath path, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
+		EClass type = resolveSingleton(path.entitySet());
+		QueryService queryService = queryServices.stream().filter(s -> s.supports(type))
+				.findFirst().orElse(null);
+		if (queryService == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND,
+					"no backend for singleton '" + ODataJson.sanitize(path.entitySet()) + "'");
+			return;
+		}
+		EObject entity = queryService.singleton(type, path.entitySet()).orElse(null);
+		if (entity == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "the singleton has no instance");
+			return;
+		}
+		if (path.segments().isEmpty()) {
+			singletonEntity(path.entitySet(), entity, type, request, response);
+		} else {
+			walk(path, entity, request, response);
+		}
+	}
+
+	/** {@link #singleEntity} for a container singleton — same shaping, but the context URL is {@code #Name}. */
+	private void singletonEntity(String name, EObject entity, EClass type,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		response.setHeader("ETag", etagOf(entity, type));
+		SelectTree select = selectOption(request, type);
+		Map<String, OclExpression> expand = expandOption(request, type);
+		if (wantsXml(request)) {
+			List<EObject> copies = shaper.shapeAll(List.of(entity), type, select, expand.keySet());
+			copies.forEach(copy -> applyNestedFilters(copy, expand));
+			writeXmi(response, copies);
+			return;
+		}
+		String json = entityJson(entity, type, select, expand);
+		String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + name + "\",";
+		response.setContentType(contentTypeJson());
+		response.getWriter().write("{" + context + json.substring(1));
 	}
 
 	private void metadataDocument(HttpServletResponse response) throws Exception {
@@ -1737,6 +1810,10 @@ public class ODataServlet extends HttpServlet {
 			path = resourceParser.parse(rawPath);
 		} catch (ODataQueryParseException e) {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
+			return;
+		}
+		if (path.key() == null && resolveSingleton(path.entitySet()) != null) {
+			singletonResource(path, request, response); // container singleton (GET /Me[/…])
 			return;
 		}
 		if (path.key() == null && path.segments().isEmpty()) {

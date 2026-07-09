@@ -49,6 +49,15 @@ public final class ODataAnnotationConstants {
 	 */
 	public static final String ANNOTATIONS_SOURCE = "https://eclipse.org/fennec/odata/annotations";
 
+	/**
+	 * EAnnotation source for container-level singletons ([OData-CSDL] 13.5), placed on the
+	 * {@code EPackage}: each detail entry {@code singletonName -> EClassName} becomes a
+	 * {@code <Singleton Name="singletonName" Type="Namespace.EClassName"/>} in the entity
+	 * container, and back. The value is the simple {@code EClass} name; the converter qualifies it
+	 * with the schema namespace.
+	 */
+	public static final String SINGLETONS_SOURCE = "https://eclipse.org/fennec/odata/singletons";
+
 	// package
 	public static final String NAMESPACE = "OData.Namespace";
 	public static final String ALIAS = "OData.Alias";

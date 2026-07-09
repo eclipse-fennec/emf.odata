@@ -26,9 +26,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.eclipse.fennec.codec.util.MetadataServiceFactory;
 import org.eclipse.fennec.model.metadata.api.MetadataService;
 import org.eclipse.fennec.model.metadata.api.MetadataWhiteboard;
@@ -200,6 +202,27 @@ public final class ODataClient implements AutoCloseable {
 
 	public EntitySetRequest entitySet(String setName) {
 		return new EntitySetRequest(this, setName, entityType(setName));
+	}
+
+	/**
+	 * Reads a container singleton (e.g. {@code Me}) by name: {@code GET /<name>}, decoded into the
+	 * singleton's declared type. The type comes from the service metadata (the singleton declaration
+	 * the E2 read path captured); an unknown singleton is a hard error.
+	 */
+	public EObject singleton(String name) {
+		return ODataJsonDecoder.entity(fetch(name, "application/json"), singletonType(name),
+				metadataService);
+	}
+
+	private EClass singletonType(String name) {
+		for (EPackage pkg : packages) {
+			EAnnotation annotation = pkg.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
+			if (annotation != null && annotation.getDetails().containsKey(name)
+					&& pkg.getEClassifier(annotation.getDetails().get(name)) instanceof EClass type) {
+				return type;
+			}
+		}
+		throw new ODataClientException("the service metadata has no singleton '" + name + "'");
 	}
 
 	/**
