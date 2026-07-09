@@ -45,7 +45,8 @@ Ecore↔EDM conversion against the OASIS CSDL model (no intermediate EDM object 
 - Ecore↔EDM covers entity/complex types, properties, navigation properties, enums, single
   inheritance (base types), entity sets, composite keys, `Partner`/`eOpposite`, bound operations,
   navigation-property bindings + referential constraints, and a constant-subset annotation layer.
-  Round-trip is XSD-validated. (CSDL-JSON is a known SHOULD gap — Q9.)
+  Round-trip is XSD-validated. `$metadata` is served as CSDL XML (default) or **CSDL JSON**
+  (`$format=json` / `Accept: application/json`); the client reads both forms.
 
 ### Read — system query options
 All accepted options are declared in `ODataServlet.SUPPORTED_OPTIONS`; spec options that are known
@@ -98,8 +99,8 @@ Path length and segment count are capped before parsing.
 
 ### Operations (via `ODataOperationHandler` SPI)
 Unbound **function imports** (`GET Name(p=…)`), unbound **action imports** (`POST Name` with a JSON
-body), and **bound functions** (`GET Set(key)/Ns.Func(p=…)`). *Bound actions* (`POST
-Set(key)/Ns.Action`) are not yet routed (see gaps).
+body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
+(`POST Set(key)/Ns.Action` with the parameters in the JSON body).
 
 ### Backends (behind the persistence SPIs)
 - **In-memory** (reference semantics): the `OclEvaluator` interprets the IR directly (three-valued
@@ -199,7 +200,7 @@ origin is refused. `ODataClient` is `AutoCloseable` and closes only an `HttpClie
 
 ## Known gaps / not yet
 
-**Server:** CSDL-JSON (`$metadata` in JSON, Q9 — a Minimal SHOULD); `metadata=none` (served as
+**Server:** `metadata=none` (served as
 minimal — `metadata=full` is supported via Accept/`$format`); `Edm.Int64 > 2^53`
 `IEEE754Compatible` string form;
 Advanced conformance (async, `$delta`, deltas); a few 4.01 Intermediate SHOULDs (query options on

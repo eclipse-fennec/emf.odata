@@ -81,7 +81,8 @@ public final class HttpODataSchemaReader implements ODataSchemaReader {
 		URI target = URI.create(scope.serviceRoot() + "/$metadata");
 		HttpRequest.Builder builder = HttpRequest.newBuilder(target)
 				.timeout(config.requestTimeout())
-				.header("Accept", "application/xml")
+				// XML preferred; JSON accepted so 4.01 JSON-only services can answer (CSDL JSON)
+				.header("Accept", "application/xml, application/json;q=0.9")
 				.header("OData-MaxVersion", config.odataMaxVersion())
 				.GET();
 		config.headers().forEach(builder::header); // auth / custom headers for a protected endpoint

@@ -46,6 +46,7 @@ import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
+import org.eclipse.fennec.odata.csdl.CsdlJsonWriter;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
 import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.junit.jupiter.api.AfterAll;
@@ -90,7 +91,31 @@ class ODataClientTest {
 		singleton.getDetails().put("Me", "Product"); // container singleton for the client test
 		shop.getEAnnotations().add(singleton);
 		String csdl = csdlFor(shop);
+		String csdlJson = CsdlJsonWriter.write(new EcoreToEdmConverter().toEdmx(shop));
 		server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		// a second endpoint whose $metadata is the CSDL *JSON* representation (4.01)
+		server.createContext("/jsonshop/", exchange -> {
+			String path = exchange.getRequestURI().getPath();
+			String answer;
+			String contentType;
+			if (path.endsWith("/$metadata")) {
+				answer = csdlJson;
+				contentType = "application/json;charset=UTF-8";
+			} else if (path.endsWith("/Product")) {
+				answer = "{\"value\":[{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"1.20\","
+						+ "\"rating\":3,\"active\":true}]}";
+				contentType = "application/json;odata.metadata=minimal;charset=UTF-8";
+			} else {
+				answer = "{\"error\":{\"code\":\"404\",\"message\":\"unknown\"}}";
+				contentType = "application/json";
+			}
+			byte[] bytes = answer.getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Content-Type", contentType);
+			exchange.sendResponseHeaders(path.endsWith("/$metadata") || path.endsWith("/Product") ? 200 : 404,
+					bytes.length);
+			exchange.getResponseBody().write(bytes);
+			exchange.close();
+		});
 		server.createContext("/odata/", exchange -> {
 			lastRequest.set(exchange.getRequestURI());
 			lastAuth.set(exchange.getRequestHeaders().getFirst("Authorization"));
@@ -440,6 +465,22 @@ class ODataClientTest {
 		assertThrows(ODataClientException.class,
 				() -> set.create(p, Map.of("category", List.of("Category('c1')"))),
 				"a list for a single-valued navigation");
+	}
+
+	@Test
+	@DisplayName("connect discovers a service whose $metadata is CSDL JSON (4.01)")
+	void csdlJsonMetadata() {
+		String jsonRoot = serviceRoot.replace("/odata/", "/jsonshop/");
+		try (ODataClient client = ODataClient.connect(jsonRoot)) {
+			EClass product = client.entityType("Product");
+			assertNotNull(product.getEStructuralFeature("price"), "features survive CSDL JSON");
+			assertNotNull(product.getEStructuralFeature("category"), "navigations survive CSDL JSON");
+
+			ODataPage page = client.entitySet("Product").list();
+			assertEquals(1, page.entities().size());
+			assertEquals("Milk", page.entities().get(0)
+					.eGet(product.getEStructuralFeature("name")));
+		}
 	}
 
 	@Test

@@ -67,6 +67,7 @@ import org.eclipse.fennec.m2x.model.ocl.Variable;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
 import org.eclipse.fennec.model.metadata.api.MetadataService;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
+import org.eclipse.fennec.odata.csdl.CsdlJsonWriter;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
 import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.eclipse.fennec.odata.csdl.OdataResolver;
@@ -310,7 +311,7 @@ public class ODataServlet extends HttpServlet {
 			if ("/".equals(path) || path.isEmpty()) {
 				serviceDocument(request, response);
 			} else if ("/$metadata".equals(path)) {
-				metadataDocument(response);
+				metadataDocument(request, response);
 			} else {
 				resource(path.substring(1), request, response);
 			}
@@ -1614,7 +1615,19 @@ public class ODataServlet extends HttpServlet {
 		response.getWriter().write("{" + context + json.substring(1));
 	}
 
-	private void metadataDocument(HttpServletResponse response) throws Exception {
+	/** Whether the client asked for the CSDL <b>JSON</b> representation of {@code $metadata} (4.01). */
+	private static boolean wantsJsonMetadata(HttpServletRequest request) {
+		String format = request.getParameter("$format");
+		if (format != null && !format.isBlank()) {
+			String normalized = format.trim().toLowerCase(java.util.Locale.ROOT);
+			return normalized.equals("json") || normalized.startsWith("application/json");
+		}
+		String accept = request.getHeader("Accept");
+		return accept != null && accept.toLowerCase(java.util.Locale.ROOT).contains("application/json");
+	}
+
+	private void metadataDocument(HttpServletRequest request, HttpServletResponse response)
+			throws Exception {
 		EcoreToEdmConverter converter = new EcoreToEdmConverter();
 		EdmxRoot root = EdmxFactory.eINSTANCE.createEdmxRoot();
 		TEdmx edmx = EdmxFactory.eINSTANCE.createTEdmx();
@@ -1648,6 +1661,12 @@ public class ODataServlet extends HttpServlet {
 		}
 		edmx.setDataServices(dataServices);
 		root.setEdmx(edmx);
+
+		if (wantsJsonMetadata(request)) { // CSDL JSON ([OData-CSDL-JSON]) — same tree, second wire form
+			response.setContentType("application/json;charset=UTF-8");
+			response.getWriter().write(CsdlJsonWriter.write(root));
+			return;
+		}
 
 		ResourceSet rs = new ResourceSetImpl();
 		rs.getResourceFactoryRegistry().getExtensionToFactoryMap().put("*", new XMLResourceFactoryImpl());

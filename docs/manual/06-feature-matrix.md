@@ -26,7 +26,7 @@ Spec documents (OASIS OData **v4.01**):
 | Bound operations in `$metadata` | — | ✅ | CSDL §12 |
 | `Core.ODataVersions` + Capabilities annotations | Advertise supported versions/capabilities | ✅ | CSDL §14; Core/Capabilities vocab. |
 | Vocabulary annotation layer (constant terms) | — | ◑ constants; rich `<Record>`/`<Collection>` not emitted | CSDL §14 |
-| CSDL **JSON** representation | SHOULD | ❌ | CSDL JSON |
+| CSDL **JSON** representation (`$metadata?$format=json` / Accept) | SHOULD | ✅ (server emits; client reads) | CSDL JSON |
 
 ## System query options
 

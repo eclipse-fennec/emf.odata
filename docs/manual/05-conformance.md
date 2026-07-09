@@ -10,7 +10,7 @@ against the vendored OASIS spec artifacts (`reference/specs/`): Part 1 (Protocol
 | Level | Status | Notes |
 |---|---|---|
 | **4.0 Minimal** (§13.1.1) | ✅ **met** — incl. *Updatable* | Items 1–15 met; 16–17 async N/A; 33 is MAY |
-| **4.01 Minimal** (§13.2.1) | ✅ **met** | MUSTs met/N-A; open only SHOULD (CSDL-JSON) / MAY |
+| **4.01 Minimal** (§13.2.1) | ✅ **met** | MUSTs met/N-A; CSDL-JSON SHOULD met too |
 | **4.0 Intermediate** (§13.1.2) | ✅ **met** | all MUSTs **and** all SHOULDs (1–17) |
 | **4.01 Intermediate** (§13.2.2) | ✅ **met** | MUSTs done; SHOULDs 6/7/9 partial |
 | **4.0 Advanced** (§13.1.3) | ❌ not met | async, deltas, `$batch`-of-changesets MUSTs missing |
@@ -30,7 +30,6 @@ property-level writes (replace-based), and deep inserts of containments.
 
 ## Known SHOULD/MAY gaps
 
-- **CSDL-JSON** (`$metadata` in JSON) — a Minimal SHOULD.
 - **`metadata=full`/`none`** profiles — the runtime always emits `metadata=minimal`.
 - A few **4.01 Intermediate SHOULDs** — some query options on navigation paths, some options inside `$expand`.
 - **`Edm.Int64 > 2^53`** `IEEE754Compatible` string form (Java round-trip is exact).

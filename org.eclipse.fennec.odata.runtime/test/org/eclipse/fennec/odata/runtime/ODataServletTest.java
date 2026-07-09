@@ -744,6 +744,22 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("$metadata?$format=json serves CSDL JSON; the default stays CSDL XML")
+	void metadataAsCsdlJson() throws Exception {
+		Response json = get("/$metadata", Map.of("$format", "json"));
+		assertEquals(200, json.status(), json.body());
+		assertTrue(json.body().contains("\"$Version\""), "CSDL JSON document: " + json.body());
+		assertTrue(json.body().replaceAll("\\s", "").contains("\"$Kind\":\"EntityType\""), json.body());
+		assertTrue(json.body().contains("\"$EntityContainer\""), json.body());
+		assertTrue(json.body().contains("@Org.OData.Core.V1.ODataVersions"),
+				"container annotations survive into JSON: " + json.body());
+
+		Response xml = get("/$metadata", Map.of());
+		assertTrue(xml.body().contains("<") && xml.body().contains("EntityType"),
+				"default remains CSDL XML: " + xml.body().substring(0, Math.min(120, xml.body().length())));
+	}
+
+	@Test
 	@DisplayName("$batch (JSON): sub-requests dispatch through the normal pipeline; results are collected in order")
 	void jsonBatch() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));

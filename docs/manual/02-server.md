@@ -28,7 +28,7 @@ property `fennec.odata.backend=jpa`.
 | Path | Result |
 |---|---|
 | `GET /odata/` | service document |
-| `GET /odata/$metadata` | CSDL XML (multi-schema; `Core.ODataVersions` + Capabilities annotations) |
+| `GET /odata/$metadata` | CSDL XML (default) or **CSDL JSON** via `$format=json` / `Accept: application/json` (multi-schema; `Core.ODataVersions` + Capabilities annotations) |
 | `GET /odata/{Set}` | entity collection |
 | `GET /odata/{Set}({key})` | single entity by key |
 | `GET /odata/{Set}({key})/{nav}` | navigation (entity or collection) |
