@@ -1,5 +1,9 @@
 # Fennec OData – Architektur
 
+> **Aktueller Funktionsstand (Server & Client), englisch:** siehe
+> [`odata-features.md`](odata-features.md). Dieses Dokument ist der (deutsche) Architektur- und
+> Änderungs-Log mit den historischen Detail-Notizen; die Meilenstein-Einträge unten sind datiert.
+
 Status: 2026-07-04. Einstiegsdokument — Details in den verlinkten ADRs/Backlogs.
 Conformance: **4.0 Minimal (read-only) erfüllt, 4.01 Minimal im Wesentlichen erfüllt**
 (`odata-conformance-status.md`); Spec-Artefakte/Tooling: `odata-spec-repos-gap-analysis.md`.
