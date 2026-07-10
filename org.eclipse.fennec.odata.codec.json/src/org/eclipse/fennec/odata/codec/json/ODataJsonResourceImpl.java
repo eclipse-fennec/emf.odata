@@ -71,6 +71,8 @@ public class ODataJsonResourceImpl extends CodecResource {
 	private static final String COLLECTION_OPEN = "Collection(";
 
 	private final MetadataService odataMetadataService;
+	/** {@code IEEE754Compatible=true} exchanges: Edm.Int64/Edm.Decimal travel as strings. */
+	private boolean ieee754Compatible;
 	/**
 	 * Fallback profiles for packages the MetadataService has no OData profile for. Weakly keyed
 	 * so unregistered/discarded EPackages can be collected — safe because the csdl profile holds
@@ -107,6 +109,16 @@ public class ODataJsonResourceImpl extends CodecResource {
 	public static ODataJsonResourceImpl minimalMetadata(URI uri, MetadataService metadataService,
 			Set<String> expandedReferences) {
 		return new ODataJsonResourceImpl(uri, metadataService, expandedReferences, true);
+	}
+
+	/**
+	 * Switches the resource to {@code IEEE754Compatible=true} ([OData-JSON] 8.1): {@code Edm.Int64}
+	 * and {@code Edm.Decimal} values are written as (and read from) STRINGS, preserving their exact
+	 * value for clients whose numbers are IEEE 754 doubles.
+	 */
+	public ODataJsonResourceImpl ieee754Compatible(boolean on) {
+		this.ieee754Compatible = on;
+		return this;
 	}
 
 	private static ConfigurationResolver createODataResolver(Set<String> expandedReferences,
@@ -191,8 +203,8 @@ public class ODataJsonResourceImpl extends CodecResource {
 						continue;
 					}
 					Object codec = write
-							? EdmJsonValues.writer(unwrapCollection(property.getTypeName()))
-							: EdmJsonValues.reader(unwrapCollection(property.getTypeName()));
+							? EdmJsonValues.writer(unwrapCollection(property.getTypeName()), ieee754Compatible)
+							: EdmJsonValues.reader(unwrapCollection(property.getTypeName()), ieee754Compatible);
 					if (codec != null) {
 						instances.putIfAbsent(attribute, codec);
 					}

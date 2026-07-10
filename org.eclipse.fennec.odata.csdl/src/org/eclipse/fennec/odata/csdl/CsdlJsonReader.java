@@ -362,7 +362,7 @@ public final class CsdlJsonReader {
 		}
 	}
 
-	/** {@code "@Term": constantValue} members → {@link AnnotationType}s in attribute-constant form. */
+	/** {@code "@Term": value} members → {@link AnnotationType}s (constants and rich expressions). */
 	private void annotations(ObjectNode node, java.util.function.Consumer<AnnotationType> out) {
 		node.propertyStream().forEach(entry -> {
 			if (!entry.getKey().startsWith("@")) {
@@ -379,8 +379,10 @@ public final class CsdlJsonReader {
 				a.setDecimal1(value.decimalValue().toPlainString());
 			} else if (value.isString()) {
 				a.setString1(value.asString());
+			} else if (value.isObject() || value.isArray()) {
+				CsdlAnnotationExpressions.applyValue(value, a); // Record/Collection/path forms
 			} else {
-				return; // rich expressions (objects/arrays) are out of the constant subset
+				return;
 			}
 			out.accept(a);
 		});

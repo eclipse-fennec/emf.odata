@@ -70,8 +70,17 @@ public class ApplyFactoryImpl extends EFactoryImpl implements ApplyFactory {
 			case ApplyPackage.APPLY_PIPELINE: return createApplyPipeline();
 			case ApplyPackage.FILTER_TRANSFORMATION: return createFilterTransformation();
 			case ApplyPackage.GROUP_BY_TRANSFORMATION: return createGroupByTransformation();
+			case ApplyPackage.ROLLUP_HIERARCHY: return createRollupHierarchy();
 			case ApplyPackage.AGGREGATE_TRANSFORMATION: return createAggregateTransformation();
 			case ApplyPackage.AGGREGATE_EXPRESSION: return createAggregateExpression();
+			case ApplyPackage.AGGREGATE_FROM: return createAggregateFrom();
+			case ApplyPackage.BOTTOM_TOP_TRANSFORMATION: return createBottomTopTransformation();
+			case ApplyPackage.CONCAT_TRANSFORMATION: return createConcatTransformation();
+			case ApplyPackage.TOP_TRANSFORMATION: return createTopTransformation();
+			case ApplyPackage.SKIP_TRANSFORMATION: return createSkipTransformation();
+			case ApplyPackage.IDENTITY_TRANSFORMATION: return createIdentityTransformation();
+			case ApplyPackage.ORDER_BY_TRANSFORMATION: return createOrderByTransformation();
+			case ApplyPackage.ORDER_BY_EXPRESSION: return createOrderByExpression();
 			case ApplyPackage.COMPUTE_TRANSFORMATION: return createComputeTransformation();
 			case ApplyPackage.COMPUTE_EXPRESSION: return createComputeExpression();
 			default:
@@ -89,6 +98,8 @@ public class ApplyFactoryImpl extends EFactoryImpl implements ApplyFactory {
 		switch (eDataType.getClassifierID()) {
 			case ApplyPackage.AGGREGATE_METHOD:
 				return createAggregateMethodFromString(eDataType, initialValue);
+			case ApplyPackage.BOTTOM_TOP_METHOD:
+				return createBottomTopMethodFromString(eDataType, initialValue);
 			default:
 				throw new IllegalArgumentException("The datatype '" + eDataType.getName() + "' is not a valid classifier");
 		}
@@ -104,6 +115,8 @@ public class ApplyFactoryImpl extends EFactoryImpl implements ApplyFactory {
 		switch (eDataType.getClassifierID()) {
 			case ApplyPackage.AGGREGATE_METHOD:
 				return convertAggregateMethodToString(eDataType, instanceValue);
+			case ApplyPackage.BOTTOM_TOP_METHOD:
+				return convertBottomTopMethodToString(eDataType, instanceValue);
 			default:
 				throw new IllegalArgumentException("The datatype '" + eDataType.getName() + "' is not a valid classifier");
 		}
@@ -148,6 +161,17 @@ public class ApplyFactoryImpl extends EFactoryImpl implements ApplyFactory {
 	 * @generated
 	 */
 	@Override
+	public RollupHierarchy createRollupHierarchy() {
+		RollupHierarchyImpl rollupHierarchy = new RollupHierarchyImpl();
+		return rollupHierarchy;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
 	public AggregateTransformation createAggregateTransformation() {
 		AggregateTransformationImpl aggregateTransformation = new AggregateTransformationImpl();
 		return aggregateTransformation;
@@ -162,6 +186,94 @@ public class ApplyFactoryImpl extends EFactoryImpl implements ApplyFactory {
 	public AggregateExpression createAggregateExpression() {
 		AggregateExpressionImpl aggregateExpression = new AggregateExpressionImpl();
 		return aggregateExpression;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public AggregateFrom createAggregateFrom() {
+		AggregateFromImpl aggregateFrom = new AggregateFromImpl();
+		return aggregateFrom;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public BottomTopTransformation createBottomTopTransformation() {
+		BottomTopTransformationImpl bottomTopTransformation = new BottomTopTransformationImpl();
+		return bottomTopTransformation;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public ConcatTransformation createConcatTransformation() {
+		ConcatTransformationImpl concatTransformation = new ConcatTransformationImpl();
+		return concatTransformation;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public TopTransformation createTopTransformation() {
+		TopTransformationImpl topTransformation = new TopTransformationImpl();
+		return topTransformation;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public SkipTransformation createSkipTransformation() {
+		SkipTransformationImpl skipTransformation = new SkipTransformationImpl();
+		return skipTransformation;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public IdentityTransformation createIdentityTransformation() {
+		IdentityTransformationImpl identityTransformation = new IdentityTransformationImpl();
+		return identityTransformation;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public OrderByTransformation createOrderByTransformation() {
+		OrderByTransformationImpl orderByTransformation = new OrderByTransformationImpl();
+		return orderByTransformation;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public OrderByExpression createOrderByExpression() {
+		OrderByExpressionImpl orderByExpression = new OrderByExpressionImpl();
+		return orderByExpression;
 	}
 
 	/**
@@ -203,6 +315,26 @@ public class ApplyFactoryImpl extends EFactoryImpl implements ApplyFactory {
 	 * @generated
 	 */
 	public String convertAggregateMethodToString(EDataType eDataType, Object instanceValue) {
+		return instanceValue == null ? null : instanceValue.toString();
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	public BottomTopMethod createBottomTopMethodFromString(EDataType eDataType, String initialValue) {
+		BottomTopMethod result = BottomTopMethod.get(initialValue);
+		if (result == null) throw new IllegalArgumentException("The value '" + initialValue + "' is not a valid enumerator of '" + eDataType.getName() + "'");
+		return result;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	public String convertBottomTopMethodToString(EDataType eDataType, Object instanceValue) {
 		return instanceValue == null ? null : instanceValue.toString();
 	}
 

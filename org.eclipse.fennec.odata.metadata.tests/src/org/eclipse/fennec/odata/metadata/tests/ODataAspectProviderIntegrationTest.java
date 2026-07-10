@@ -42,6 +42,7 @@ import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceRegistration;
 import org.osgi.test.common.annotation.InjectBundleContext;
 import org.osgi.test.common.annotation.InjectService;
+import org.osgi.test.common.service.ServiceAware;
 import org.osgi.test.junit5.context.BundleContextExtension;
 import org.osgi.test.junit5.service.ServiceExtension;
 
@@ -93,8 +94,24 @@ public class ODataAspectProviderIntegrationTest {
 
 	@Test
 	@DisplayName("ODataAspectProviderComponent is registered as AspectProvider service")
-	public void odataAspectProviderIsRegistered(@InjectService AspectProvider provider) {
-		assertEquals(ODATA, provider.getAspectTypeId());
+	public void odataAspectProviderIsRegistered(
+			@InjectService ServiceAware<AspectProvider> providers) {
+		// other whiteboard providers (codec, ...) register too — the odata one must be among them
+		long deadline = System.currentTimeMillis() + 5_000;
+		while (System.currentTimeMillis() < deadline) {
+			if (providers.getServices().stream()
+					.anyMatch(provider -> ODATA.equals(provider.getAspectTypeId()))) {
+				return;
+			}
+			try {
+				Thread.sleep(50);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				fail("interrupted while waiting for the odata AspectProvider");
+			}
+		}
+		fail("no AspectProvider with type id '" + ODATA + "' registered within 5s: "
+				+ providers.getServices().stream().map(AspectProvider::getAspectTypeId).toList());
 	}
 
 	@Test

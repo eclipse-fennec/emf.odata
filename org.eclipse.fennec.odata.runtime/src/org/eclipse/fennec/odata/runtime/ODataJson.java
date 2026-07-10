@@ -13,6 +13,7 @@
 package org.eclipse.fennec.odata.runtime;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +30,15 @@ public final class ODataJson {
 
 	/** Appends any $apply row value (maps/lists/numbers/booleans/text) as JSON. */
 	public static void value(StringBuilder out, Object value) {
+		value(out, value, false);
+	}
+
+	/**
+	 * {@link #value(StringBuilder, Object)} with {@code IEEE754Compatible=true} support
+	 * ([OData-JSON] 8.1): 64-bit integers and decimals travel as strings so their exact value
+	 * survives IEEE 754 clients.
+	 */
+	public static void value(StringBuilder out, Object value, boolean ieee754Compatible) {
 		switch (value) {
 			case null -> out.append("null");
 			case Map<?, ?> map -> {
@@ -40,7 +50,7 @@ public final class ODataJson {
 					}
 					first = false;
 					out.append('"').append(sanitize(String.valueOf(entry.getKey()))).append("\":");
-					value(out, entry.getValue());
+					value(out, entry.getValue(), ieee754Compatible);
 				}
 				out.append('}');
 			}
@@ -50,12 +60,20 @@ public final class ODataJson {
 					if (i > 0) {
 						out.append(',');
 					}
-					value(out, list.get(i));
+					value(out, list.get(i), ieee754Compatible);
 				}
 				out.append(']');
 			}
-			case Number number -> out.append(number instanceof BigDecimal decimal
-					? decimal.toPlainString() : number.toString());
+			case Number number -> {
+				String lexical = number instanceof BigDecimal decimal
+						? decimal.toPlainString() : number.toString();
+				if (ieee754Compatible && (number instanceof Long || number instanceof BigDecimal
+						|| number instanceof BigInteger)) {
+					out.append('"').append(lexical).append('"');
+				} else {
+					out.append(lexical);
+				}
+			}
 			case Boolean bool -> out.append(bool);
 			default -> out.append('"').append(sanitize(String.valueOf(value))).append('"');
 		}

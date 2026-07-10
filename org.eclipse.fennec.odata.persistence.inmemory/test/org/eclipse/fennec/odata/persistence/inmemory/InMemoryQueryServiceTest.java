@@ -41,6 +41,7 @@ import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataQueryParser;
+import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -264,6 +265,53 @@ class InMemoryQueryServiceTest {
 		var broken = parser.parseApply("aggregate(name with sum as S)", productClass);
 		assertThrows(IllegalArgumentException.class, () -> service.executeApply(
 				new ApplyQuery(productClass, broken, null, List.of(), 0, -1, false)));
+	}
+
+	@Test
+	@DisplayName("$apply preserving transformations: bottom/top, concat, top/skip/orderby, rollup")
+	void applyPreserving() {
+		// prices: Cheese 4.50, Bread 2.80, Milk 1.20, Salt null
+		assertEquals(List.of("Cheese", "Bread"), rowNames("topcount(2,price)"));
+		assertEquals(List.of("Milk"), rowNames("bottomcount(1,price)"));
+		assertEquals(List.of("Cheese"), rowNames("topsum(4.00,price)"),
+				"4.50 already reaches the requested sum");
+		assertEquals(List.of("Cheese"), rowNames("toppercent(50,price)"),
+				"4.50 of 8.50 total is more than 50%");
+		assertEquals(4, rowNames("topsum(99.00,price)").size(),
+				"the whole set stays when the sum is unreachable");
+		assertEquals(List.of("Cheese", "Milk"),
+				rowNames("concat(topcount(1,price),bottomcount(1,price))"));
+		assertEquals(List.of("Bread", "Milk"), rowNames("orderby(price desc)/skip(1)/top(2)"));
+		assertEquals(4, rowNames("identity").size());
+
+		// rollup(category/name, name): fine grouping (category,name) = 4 groups plus the
+		// coarser (category) = 3 groups (Dairy, Bakery, null category)
+		var rollup = parser.parseApply(
+				"groupby((rollup(category/name,name)),aggregate(price with sum as T))", productClass);
+		assertEquals(7, execute(rollup).size());
+
+		// path/$count aggregates sum the related instances
+		var reviewCount = parser.parseApply("aggregate(reviews/$count as RC)", productClass);
+		assertEquals(2L, execute(reviewCount).get(0).get("RC"), "Cheese has the only two reviews");
+
+		// parseable but not executable → 501, never a silently wrong result
+		assertThrows(UnsupportedOperationException.class, () -> execute(parser.parseApply(
+				"aggregate(price with sum from category/name with average as A)", productClass)));
+		assertThrows(UnsupportedOperationException.class, () -> execute(parser.parseApply(
+				"aggregate(Forecast as F)", productClass)));
+		assertThrows(UnsupportedOperationException.class, () -> execute(parser.parseApply(
+				"groupby((rollup(ProductHierarchy)))", productClass)),
+				"named leveled hierarchies need model annotations we do not resolve");
+	}
+
+	private List<Map<String, Object>> execute(ApplyPipeline pipeline) {
+		return service.executeApply(
+				new ApplyQuery(productClass, pipeline, null, List.of(), 0, -1, false)).rows();
+	}
+
+	private List<String> rowNames(String apply) {
+		return execute(parser.parseApply(apply, productClass)).stream()
+				.map(row -> String.valueOf(row.get("name"))).toList();
 	}
 
 	@Test

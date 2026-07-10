@@ -23,6 +23,20 @@
  */
 grammar ODataFilter;
 
+@parser::members {
+	/** Soft-keyword gate: the upcoming identifier selects the apply transformation. */
+	private boolean trafo(String name) {
+		return name.equals(_input.LT(1).getText());
+	}
+
+	private boolean bottomTopTrafo() {
+		return switch (_input.LT(1).getText()) {
+			case "topcount", "topsum", "toppercent", "bottomcount", "bottomsum", "bottompercent" -> true;
+			default -> false;
+		};
+	}
+}
+
 filter  : expr EOF ;
 orderby : orderbyItem (COMMA orderbyItem)* EOF ;
 orderbyItem : expr direction=(ASC | DESC)? ;
@@ -36,26 +50,54 @@ resource : IDENT keyPredicate? (SLASH resourceSegment)* EOF ;
 keyPredicate : LPAREN ( keyLiteral | namedKeyValue (COMMA namedKeyValue)* ) RPAREN ;
 namedKeyValue : IDENT EQUALS keyLiteral ;
 keyLiteral : STRING | INT | DECIMAL | GUID | DATETIMEOFFSET | DATE | TIMEOFDAY ;
+// key-as-segment ([OData-URL] 4.3.3, 4.01 MAY — the Microsoft Graph style): a bare literal
+// segment is a key value; bare IDENT string keys parse as PropertySegment and are
+// disambiguated against the model at the protocol layer (declared properties win)
 resourceSegment : castName keyPredicate?  # CastSegment
                 | IDENT keyPredicate?     # PropertySegment
                 | COUNT                   # CountSegment
                 | VALUE                   # ValueSegment
                 | REF                     # RefSegment
+                | keyLiteral              # KeyValueSegment
                 ;
 castName : IDENT (DOT IDENT)+ ;
 
-// $apply pipeline (E4-AP-4): slash-separated transformations; the transformation names are
-// soft keywords (validated in the builder), disambiguated by their argument shapes
-apply : applyTrafo (SLASH applyTrafo)* EOF ;
+// $apply pipeline (E4-AP-4 + the deferred aggregation block): slash-separated
+// transformations. The names are soft keywords gated by semantic predicates on the upcoming
+// identifier — pure shape dispatch became ambiguous once custom aggregates (aggregate(Path
+// as X) vs compute items) and nested pipelines (concat args vs function-call expressions)
+// joined. Still open: search, nest/addnested, join/outerjoin, ancestors/descendants/
+// traverse, rolluprecursive, $these.
+apply : applySeq EOF ;
+applySeq : applyTrafo (SLASH applyTrafo)* ;
 applyTrafo
-    : name=IDENT LPAREN LPAREN memberPath (COMMA memberPath)* RPAREN (COMMA applyTrafo)? RPAREN  # GroupByTrafo
-    | name=IDENT LPAREN aggregateItem (COMMA aggregateItem)* RPAREN                              # AggregateTrafo
-    | name=IDENT LPAREN computeItem (COMMA computeItem)* RPAREN                                  # ComputeTrafo
-    | name=IDENT LPAREN expr RPAREN                                                              # FilterTrafo
+    : {trafo("groupby")}?   name=IDENT LPAREN LPAREN groupbyElement (COMMA groupbyElement)* RPAREN (COMMA applySeq)? RPAREN  # GroupByTrafo
+    | {trafo("aggregate")}? name=IDENT LPAREN aggregateItem (COMMA aggregateItem)* RPAREN    # AggregateTrafo
+    | {trafo("compute")}?   name=IDENT LPAREN computeItem (COMMA computeItem)* RPAREN        # ComputeTrafo
+    | {trafo("concat")}?    name=IDENT LPAREN applySeq (COMMA applySeq)+ RPAREN              # ConcatTrafo
+    | {trafo("filter")}?    name=IDENT LPAREN expr RPAREN                                    # FilterTrafo
+    | {bottomTopTrafo()}?   name=IDENT LPAREN expr COMMA expr RPAREN                         # BottomTopTrafo
+    | {trafo("orderby")}?   name=IDENT LPAREN orderbyItem (COMMA orderbyItem)* RPAREN        # OrderByTrafo
+    | {trafo("top") || trafo("skip")}? name=IDENT LPAREN INT RPAREN                          # RowLimitTrafo
+    | {trafo("identity")}?  name=IDENT                                                       # IdentityTrafo
     ;
-aggregateItem : expr WITH method=IDENT AS alias=IDENT   # AggregateWithItem
-              | COUNT AS alias=IDENT                    # AggregateCountItem
-              ;
+// rollup: 2+ paths = unnamed leveled hierarchy; ONE simple identifier = named hierarchy
+// (Aggregation.LeveledHierarchy qualifier) — disambiguated in the builder
+groupbyElement
+    : {trafo("rollup")}? name=IDENT LPAREN memberPath (COMMA memberPath)* RPAREN  # RollupElement
+    | memberPath                                                                  # PathElement
+    ;
+// ABNF aggregateExpr: 'with'-items and $count require the alias and their from clauses a
+// method (aggregateFrom); custom aggregates (bare path, no 'with') may omit both (customFrom)
+aggregateItem
+    : expr WITH method=methodName aggrFrom* AS alias=IDENT   # AggregateWithItem
+    | COUNT aggrFrom* AS alias=IDENT                         # AggregateCountItem
+    | expr customFrom* AS alias=IDENT                        # AggregateCustomAliased
+    | expr                                                   # AggregateCustomBare
+    ;
+methodName : IDENT (DOT IDENT)* ;
+aggrFrom   : FROM memberPath (COMMA memberPath)* WITH method=methodName ;
+customFrom : FROM memberPath (COMMA memberPath)* (WITH method=methodName)? ;
 computeItem : expr AS alias=IDENT ;
 
 expr    : orExpr ;
@@ -97,8 +139,20 @@ qualifiedTypeName : IDENT (DOT IDENT)* ;
 
 functionCall : IDENT LPAREN (expr (COMMA expr)*)? RPAREN ;
 // member path with optional lambda or /$count tail: Items/any(d: d/Qty gt 5), Tags/any(),
-// Products/$count. Parameterless any() = "has members"; all() REQUIRES a lambda (5.1.1.13.2)
-memberPath   : IDENT (SLASH IDENT)* (SLASH lambdaCall | SLASH COUNT)? ;
+// Products/$count. Parameterless any() = "has members"; all() REQUIRES a lambda (5.1.1.13.2).
+// Segments may be bound/composed function calls (E4-AP-10): namespace-qualified, with named
+// (bound operations) or positional (built-ins like geo.*) arguments
+memberPath   : pathSegment (SLASH pathSegment)* (SLASH lambdaCall | SLASH COUNT)? ;
+pathSegment  : IDENT       # PropertyPathSegment
+             | boundCall   # BoundCallSegment
+             ;
+// the name may be unqualified (4.01 allows it when unambiguous); at the EXPRESSION HEAD a
+// simple call parses as functionCall first (canonical functions win the ambiguity there)
+boundCall    : IDENT (DOT IDENT)* LPAREN boundCallArgs? RPAREN ;
+boundCallArgs : namedArg (COMMA namedArg)*
+              | expr (COMMA expr)*
+              ;
+namedArg     : IDENT EQUALS expr ;
 lambdaCall   : op=ANY LPAREN (IDENT COLON expr)? RPAREN
              | op=ALL LPAREN IDENT COLON expr RPAREN
              ;
@@ -149,6 +203,7 @@ VALUE : '$value' ;
 REF   : '$ref' ;
 WITH : 'with' ;
 AS   : 'as' ;
+FROM : 'from' ;
 
 LPAREN : '(' ;
 RPAREN : ')' ;

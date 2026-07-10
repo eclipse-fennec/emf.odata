@@ -53,6 +53,7 @@ import org.open.oasis.docs.odata.ns.edm.TFunctionImport;
 import org.open.oasis.docs.odata.ns.edm.TNavigationProperty;
 import org.open.oasis.docs.odata.ns.edm.TNavigationPropertyBinding;
 import org.open.oasis.docs.odata.ns.edm.TProperty;
+import org.open.oasis.docs.odata.ns.edm.TVariable;
 import org.open.oasis.docs.odata.ns.edm.TPropertyRef;
 import org.open.oasis.docs.odata.ns.edm.TReferentialConstraint;
 import org.open.oasis.docs.odata.ns.edmx.EdmxFactory;
@@ -350,6 +351,21 @@ public class EcoreToEdmConverter {
 			if (p.getDefaultValue() != null) {
 				tp.setDefaultValue(p.getDefaultValue());
 			}
+			if (p.getSrid() != null) {
+				// the model's union takes the TVariable enumerator or a number, not raw text
+				if ("variable".equalsIgnoreCase(p.getSrid())) {
+					tp.setSRID(TVariable.VARIABLE);
+				} else {
+					try {
+						tp.setSRID(new BigInteger(p.getSrid().trim()));
+					} catch (NumberFormatException e) {
+						// lenient like the annotation resolver: malformed SRID is skipped
+					}
+				}
+			}
+			if (p.getUnicode() != null) {
+				tp.setUnicode(p.getUnicode());
+			}
 			if (p.isComputed()) {
 				tp.getAnnotation().add(coreAnnotation(CORE_COMPUTED));
 			}
@@ -369,15 +385,21 @@ public class EcoreToEdmConverter {
 	}
 
 	/**
-	 * Generic vocabulary-term annotations (AP-5, constant-expression subset). The constant kind
-	 * is derived lexically: {@code true|false} → Bool, integral → Int, decimal → Decimal,
-	 * everything else → String.
+	 * Generic vocabulary-term annotations (AP-5). Rich expressions (Record/Collection/path
+	 * forms/EnumMember) arrive as their [OData-CSDL-JSON] value encoding in the detail string
+	 * and become the corresponding EDM expression tree; plain constants keep the lexical
+	 * typing: {@code true|false} → Bool, integral → Int, decimal → Decimal, else String.
 	 */
 	private void addAnnotations(List<ODataAnnotation> annotations, List<AnnotationType> out) {
 		for (ODataAnnotation annotation : annotations) {
 			AnnotationType a = edm.createAnnotationType();
 			a.setTerm(annotation.getTerm());
 			String value = annotation.getValue() == null ? "" : annotation.getValue();
+			if (JacksonSupport.PRESENT && CsdlAnnotationExpressions.isRich(value)
+					&& CsdlAnnotationExpressions.apply(value, a)) {
+				out.add(a);
+				continue;
+			}
 			if ("true".equals(value) || "false".equals(value)) {
 				a.setBool1(Boolean.parseBoolean(value));
 			} else if (value.matches("[+-]?\\d+")) {

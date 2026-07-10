@@ -78,6 +78,25 @@ class ODataResourceParserTest {
 	}
 
 	@Test
+	@DisplayName("key-as-segment: bare literal segments parse as KeySegment ([OData-URL] 4.3.3)")
+	void keyAsSegment() {
+		ResourcePath numeric = parser.parse("Product/5");
+		assertEquals("5", ((ResourcePath.KeySegment) numeric.segments().get(0)).value());
+
+		ResourcePath quoted = parser.parse("Product/'p1'/category");
+		assertEquals("'p1'", ((ResourcePath.KeySegment) quoted.segments().get(0)).value());
+		assertEquals("category", ((PropertySegment) quoted.segments().get(1)).name());
+
+		ResourcePath nested = parser.parse("Category('c1')/products/5/$count");
+		assertEquals("5", ((ResourcePath.KeySegment) nested.segments().get(1)).value());
+		assertInstanceOf(CountSegment.class, nested.segments().get(2));
+
+		// a bare IDENT stays a PropertySegment — the protocol layer disambiguates vs the model
+		ResourcePath ident = parser.parse("Product/p1");
+		assertEquals("p1", ((PropertySegment) ident.segments().get(0)).name());
+	}
+
+	@Test
 	@DisplayName("destructive: malformed paths, segment bombs, traversal shapes")
 	void destructive() {
 		for (String bad : new String[] {

@@ -758,6 +758,99 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("odata.metadata=none omits ALL control info except @odata.count/@odata.nextLink")
+	void metadataNone() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response collection = call("GET", "/Product", Map.of("$count", "true"),
+				"application/json;odata.metadata=none", null, Map.of());
+		assertEquals(200, collection.status(), collection.body());
+		assertFalse(collection.body().contains("@odata.context"),
+				"none omits the context URL: " + collection.body());
+		assertTrue(collection.body().contains("\"@odata.count\":1"),
+				"count control info stays under none: " + collection.body());
+		assertTrue(collection.body().startsWith("{\"@odata.count\""), collection.body());
+		assertTrue(collection.headers().getOrDefault("Content-Type", "")
+				.contains("odata.metadata=none"), collection.headers().toString());
+
+		Response single = call("GET", "/Product('p1')", Map.of(),
+				"application/json;odata.metadata=none", null, Map.of());
+		assertEquals(200, single.status(), single.body());
+		assertFalse(single.body().contains("@odata"),
+				"a single entity under none carries no control info at all: " + single.body());
+
+		// the ETag must not vary with the metadata level — a write with the default level
+		// has to match what a none/full GET handed out
+		Response minimal = get("/Product('p1')", Map.of());
+		assertEquals(minimal.headers().get("ETag"), single.headers().get("ETag"),
+				"ETag is pinned to the canonical serialization");
+
+		Response serviceDoc = call("GET", "/", Map.of(),
+				"application/json;odata.metadata=none", null, Map.of());
+		assertFalse(serviceDoc.body().contains("@odata.context"), serviceDoc.body());
+		assertTrue(serviceDoc.body().contains("\"value\":["), serviceDoc.body());
+	}
+
+	@Test
+	@DisplayName("key-as-segment: Product/p1 routes like Product('p1'), declared properties win")
+	void keyAsSegment() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response canonical = get("/Product('p1')", Map.of());
+		Response segment = get("/Product/p1", Map.of());
+		assertEquals(200, segment.status(), segment.body());
+		assertEquals(canonical.body(), segment.body(), "both key conventions address the same entity");
+
+		Response property = get("/Product/p1/name", Map.of());
+		assertEquals(200, property.status(), property.body());
+		assertTrue(property.body().contains("\"value\":\"Milk\""), property.body());
+
+		assertEquals(404, get("/Product/name", Map.of()).status(),
+				"a declared property name is NOT folded into a key");
+
+		// write path: DELETE with the key as segment
+		Response deleted = callWrite("DELETE", "/Product/p1", Map.of(), null, null,
+				Map.of("If-Match", "*"));
+		assertEquals(204, deleted.status(), deleted.body());
+		assertEquals("'p1'", lastWriteKey.get(), "the folded key reaches the backend quoted");
+	}
+
+	@Test
+	@DisplayName("IEEE754Compatible=true: Edm.Decimal/Int64 and @odata.count travel as strings")
+	void ieee754Compatible() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response plain = get("/Product('p1')", Map.of());
+		assertTrue(plain.body().contains("\"price\":1.20"),
+				"default: decimals are JSON numbers: " + plain.body());
+
+		Response compatible = call("GET", "/Product('p1')", Map.of(),
+				"application/json;IEEE754Compatible=true", null, Map.of());
+		assertEquals(200, compatible.status(), compatible.body());
+		assertTrue(compatible.body().contains("\"price\":\"1.20\""),
+				"IEEE754Compatible: decimals are strings: " + compatible.body());
+		assertTrue(compatible.headers().getOrDefault("Content-Type", "")
+				.contains("IEEE754Compatible=true"), compatible.headers().toString());
+		assertEquals(plain.headers().get("ETag"), compatible.headers().get("ETag"),
+				"the ETag must not vary with the number representation");
+
+		Response counted = call("GET", "/Product", Map.of("$count", "true"),
+				"application/json;IEEE754Compatible=true", null, Map.of());
+		assertTrue(counted.body().contains("\"@odata.count\":\"1\""),
+				"@odata.count is Edm.Int64 → a string: " + counted.body());
+
+		// write path: a declared IEEE754Compatible payload carries decimals as strings
+		Response created = callWrite("POST", "/Product",
+				"{\"id\":\"p9\",\"name\":\"Butter\",\"price\":\"2.35\"}",
+				"application/json;IEEE754Compatible=true");
+		assertEquals(201, created.status(), created.body());
+		EObject written = lastWritePayload.get();
+		assertEquals(0, new BigDecimal("2.35").compareTo((BigDecimal)
+				written.eGet(written.eClass().getEStructuralFeature("price"))),
+				"the string form decodes to the exact decimal");
+	}
+
+	@Test
 	@DisplayName("container singleton: GET /Me serves the backend instance; the service doc lists it")
 	void singleton() throws Exception {
 		singletonResult = product("me", "Me Product", "9.99", null);

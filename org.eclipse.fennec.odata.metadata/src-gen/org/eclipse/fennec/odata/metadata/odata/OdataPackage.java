@@ -625,67 +625,13 @@ public interface OdataPackage extends org.eclipse.emf.ecore.EPackage {
 	int ODATA_CLASS_PROFILE__ECLASS = MetadataPackage.CLASS_PROFILE__ECLASS;
 
 	/**
-	 * The feature id for the '<em><b>Kind</b></em>' attribute.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ODATA_CLASS_PROFILE__KIND = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 0;
-
-	/**
-	 * The feature id for the '<em><b>Qualified Name</b></em>' attribute.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ODATA_CLASS_PROFILE__QUALIFIED_NAME = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 1;
-
-	/**
-	 * The feature id for the '<em><b>Key Property Names</b></em>' attribute list.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ODATA_CLASS_PROFILE__KEY_PROPERTY_NAMES = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 2;
-
-	/**
-	 * The feature id for the '<em><b>Open Type</b></em>' attribute.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ODATA_CLASS_PROFILE__OPEN_TYPE = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 3;
-
-	/**
-	 * The feature id for the '<em><b>Has Stream</b></em>' attribute.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ODATA_CLASS_PROFILE__HAS_STREAM = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 4;
-
-	/**
-	 * The feature id for the '<em><b>Base Type Qualified Name</b></em>' attribute.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ODATA_CLASS_PROFILE__BASE_TYPE_QUALIFIED_NAME = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 5;
-
-	/**
 	 * The feature id for the '<em><b>Odata Profile</b></em>' reference.
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
 	 * @generated
 	 * @ordered
 	 */
-	int ODATA_CLASS_PROFILE__ODATA_PROFILE = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 6;
+	int ODATA_CLASS_PROFILE__ODATA_PROFILE = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 0;
 
 	/**
 	 * The number of structural features of the '<em>OData Class Profile</em>' class.
@@ -694,7 +640,7 @@ public interface OdataPackage extends org.eclipse.emf.ecore.EPackage {
 	 * @generated
 	 * @ordered
 	 */
-	int ODATA_CLASS_PROFILE_FEATURE_COUNT = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 7;
+	int ODATA_CLASS_PROFILE_FEATURE_COUNT = MetadataPackage.CLASS_PROFILE_FEATURE_COUNT + 1;
 
 	/**
 	 * The number of operations of the '<em>OData Class Profile</em>' class.
@@ -997,72 +943,6 @@ public interface OdataPackage extends org.eclipse.emf.ecore.EPackage {
 	EClass getODataClassProfile();
 
 	/**
-	 * Returns the meta object for the attribute '{@link org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getKind <em>Kind</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for the attribute '<em>Kind</em>'.
-	 * @see org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getKind()
-	 * @see #getODataClassProfile()
-	 * @generated
-	 */
-	EAttribute getODataClassProfile_Kind();
-
-	/**
-	 * Returns the meta object for the attribute '{@link org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getQualifiedName <em>Qualified Name</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for the attribute '<em>Qualified Name</em>'.
-	 * @see org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getQualifiedName()
-	 * @see #getODataClassProfile()
-	 * @generated
-	 */
-	EAttribute getODataClassProfile_QualifiedName();
-
-	/**
-	 * Returns the meta object for the attribute list '{@link org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getKeyPropertyNames <em>Key Property Names</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for the attribute list '<em>Key Property Names</em>'.
-	 * @see org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getKeyPropertyNames()
-	 * @see #getODataClassProfile()
-	 * @generated
-	 */
-	EAttribute getODataClassProfile_KeyPropertyNames();
-
-	/**
-	 * Returns the meta object for the attribute '{@link org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#isOpenType <em>Open Type</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for the attribute '<em>Open Type</em>'.
-	 * @see org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#isOpenType()
-	 * @see #getODataClassProfile()
-	 * @generated
-	 */
-	EAttribute getODataClassProfile_OpenType();
-
-	/**
-	 * Returns the meta object for the attribute '{@link org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#isHasStream <em>Has Stream</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for the attribute '<em>Has Stream</em>'.
-	 * @see org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#isHasStream()
-	 * @see #getODataClassProfile()
-	 * @generated
-	 */
-	EAttribute getODataClassProfile_HasStream();
-
-	/**
-	 * Returns the meta object for the attribute '{@link org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getBaseTypeQualifiedName <em>Base Type Qualified Name</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for the attribute '<em>Base Type Qualified Name</em>'.
-	 * @see org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getBaseTypeQualifiedName()
-	 * @see #getODataClassProfile()
-	 * @generated
-	 */
-	EAttribute getODataClassProfile_BaseTypeQualifiedName();
-
-	/**
 	 * Returns the meta object for the reference '{@link org.eclipse.fennec.odata.metadata.odata.ODataClassProfile#getOdataProfile <em>Odata Profile</em>}'.
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
@@ -1325,54 +1205,6 @@ public interface OdataPackage extends org.eclipse.emf.ecore.EPackage {
 		 * @generated
 		 */
 		EClass ODATA_CLASS_PROFILE = eINSTANCE.getODataClassProfile();
-
-		/**
-		 * The meta object literal for the '<em><b>Kind</b></em>' attribute feature.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @generated
-		 */
-		EAttribute ODATA_CLASS_PROFILE__KIND = eINSTANCE.getODataClassProfile_Kind();
-
-		/**
-		 * The meta object literal for the '<em><b>Qualified Name</b></em>' attribute feature.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @generated
-		 */
-		EAttribute ODATA_CLASS_PROFILE__QUALIFIED_NAME = eINSTANCE.getODataClassProfile_QualifiedName();
-
-		/**
-		 * The meta object literal for the '<em><b>Key Property Names</b></em>' attribute list feature.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @generated
-		 */
-		EAttribute ODATA_CLASS_PROFILE__KEY_PROPERTY_NAMES = eINSTANCE.getODataClassProfile_KeyPropertyNames();
-
-		/**
-		 * The meta object literal for the '<em><b>Open Type</b></em>' attribute feature.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @generated
-		 */
-		EAttribute ODATA_CLASS_PROFILE__OPEN_TYPE = eINSTANCE.getODataClassProfile_OpenType();
-
-		/**
-		 * The meta object literal for the '<em><b>Has Stream</b></em>' attribute feature.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @generated
-		 */
-		EAttribute ODATA_CLASS_PROFILE__HAS_STREAM = eINSTANCE.getODataClassProfile_HasStream();
-
-		/**
-		 * The meta object literal for the '<em><b>Base Type Qualified Name</b></em>' attribute feature.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @generated
-		 */
-		EAttribute ODATA_CLASS_PROFILE__BASE_TYPE_QUALIFIED_NAME = eINSTANCE.getODataClassProfile_BaseTypeQualifiedName();
 
 		/**
 		 * The meta object literal for the '<em><b>Odata Profile</b></em>' reference feature.

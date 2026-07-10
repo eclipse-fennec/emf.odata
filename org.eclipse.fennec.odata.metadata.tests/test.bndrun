@@ -3,7 +3,9 @@
 -runrequires: \
 	bnd.identity;id='org.eclipse.fennec.odata.metadata.tests',\
 	bnd.identity;id='org.eclipse.fennec.odata.metadata',\
-	bnd.identity;id='org.eclipse.fennec.model.metadata'
+	bnd.identity;id='org.eclipse.fennec.model.metadata',\
+	bnd.identity;id='org.eclipse.fennec.odata.codec.json',\
+	bnd.identity;id='org.eclipse.fennec.odata.vocabularies'
 
 -runbundles.test: \
 	org.eclipse.fennec.odata.metadata.tests;version=snapshot

@@ -35,35 +35,31 @@ import org.junit.jupiter.api.TestFactory;
  * {@code testdata/odata-aggregation-testcases.yaml}, source: oasis-tcs/odata-abnf — the
  * CURRENT TC-maintained set). All {@code $apply=} cases run SYNTAX-ONLY against our
  * {@code apply} grammar rule; positives must parse, negatives must be rejected. Constructs
- * outside the v1 pipeline subset (groupby/aggregate/filter/compute) are skipped via
- * assumption — the shrinking skip count tracks the aggregation backlog (BottomTop, Concat,
- * expand/nest, rollup, {@code from}, custom aggregation functions).
+ * outside the pipeline submodel are skipped via assumption — the shrinking skip count tracks
+ * the aggregation backlog (search, expand/nest/addnested, join/outerjoin, ancestors/
+ * descendants/traverse, rolluprecursive, {@code $these}/{@code $root}, type casts in
+ * aggregation paths, custom aggregation FUNCTIONS).
  */
 class AggregationAbnfAcceptanceTest {
 
 	/** Negatives that hinge on model categories (collection/primitive classes), not syntax. */
 	private static final Pattern SEMANTIC_NEGATIVE = Pattern.compile(
-			"forbidden|requires method|no two consecutive|collection-valued");
+			"forbidden|requires method|requires with|no two consecutive|collection-valued");
 
-	/** Aggregation constructs the v1 $apply subset deliberately does not cover yet. */
+	/** Aggregation constructs the $apply submodel deliberately does not cover yet. */
 	private static final List<Pattern> UNSUPPORTED = List.of(
-			Pattern.compile("\\b(topcount|topsum|toppercent|bottomcount|bottomsum|bottompercent"
-					+ "|concat|expand|search|nest|addnested|join|outerjoin|traverse"
-					+ "|ancestors|descendants|skip|top|orderby|identity)\\s*\\("),
-			Pattern.compile("\\brollup\\s*\\(|\\$all"),          // rollup/$all grouping
-			Pattern.compile("\\$it|\\$root|\\$count\\s+"),        // instance refs / $count paths
-			Pattern.compile("\\bfrom\\b"),                        // aggregate ... from ...
-			Pattern.compile("\\."),                               // qualified/custom functions, casts
+			Pattern.compile("\\b(expand|search|nest|addnested|join|outerjoin|traverse"
+					+ "|ancestors|descendants|rolluprecursive)\\s*\\("),
+			Pattern.compile("\\$all"),                            // $all grouping
+			Pattern.compile("\\$it|\\$root|\\$these"),            // instance refs
+			Pattern.compile("[A-Za-z_]\\w*\\.[A-Za-z_]\\w*\\s*\\("), // qualified custom FUNCTIONS
+			// qualified names OUTSIDE 'with' clauses = type casts in paths (aggrCastPath)
+			Pattern.compile("(?<!with )\\b[A-Za-z_]\\w*\\.[A-Za-z_]"),
 			Pattern.compile("@"),                                 // annotations/aliases
 			Pattern.compile("&"),                                 // combined query options (URL layer)
 			Pattern.compile("%[0-9A-Fa-f]{2}"),                   // percent-encoding (URL layer)
-			Pattern.compile("\\baggregate\\s*\\(\\s*\\$count\\b"),// $count WITHOUT alias variants
 			Pattern.compile("\\(\\s*\\)"),                        // empty argument lists
-			Pattern.compile("aggregate\\((?![^()]*\\bwith\\b)"),    // custom aggregates (no method)
-			Pattern.compile("as\\s+\\w+\\s*,\\s*\\w+\\s*\\)"),   // custom aggregate as extra item
-			Pattern.compile("\\$these"),                            // 4.01 $these instance ref
-			Pattern.compile("\\bidentity\\b"),                     // identity transformation
-			Pattern.compile("\\w\\('"));                           // keyed path segments in expressions
+			Pattern.compile("\\w\\('"));                          // keyed path segments in expressions
 
 	@TestFactory
 	List<DynamicTest> oasisAggregationCases() throws Exception {

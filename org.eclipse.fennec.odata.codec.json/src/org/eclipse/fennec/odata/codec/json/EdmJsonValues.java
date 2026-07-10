@@ -13,6 +13,8 @@
 package org.eclipse.fennec.odata.codec.json;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -38,16 +40,29 @@ import org.eclipse.fennec.codec.value.CodecWriterContext;
  * string attribute via {@code @OData.Type}) and always emit the spec string form; readers convert
  * back to the attribute's instance class.
  *
- * <p>{@code Edm.Guid}, {@code Edm.Duration} and {@code Edm.Decimal} need no custom codec: guid and
- * duration live on string attributes (pass through), decimals serialize as JSON numbers.
+ * <p>{@code Edm.Guid} and {@code Edm.Duration} need no custom codec: they live on string
+ * attributes (pass through). {@code Edm.Decimal} gets an explicit NUMBER writer — the base
+ * codec would render {@code BigDecimal} as a string, but [OData-JSON] 7.1 wants numbers by
+ * default. The exception is {@code IEEE754Compatible=true} ([OData-JSON] 8.1), which
+ * serializes {@code Edm.Int64} and {@code Edm.Decimal} as STRINGS so JavaScript clients do
+ * not lose precision to IEEE 754 doubles.
  */
 final class EdmJsonValues {
+
+	/** {@code IEEE754Compatible=true}: Int64/Decimal in their exact lexical string form. */
+	private static final CodecValueWriter<Object, EAttribute> IEEE754_WRITER =
+			writer("odataIeee754", value -> value instanceof BigDecimal decimal
+					? decimal.toPlainString() : String.valueOf(value));
+
+	private static final CodecValueReader<Object, EAttribute> IEEE754_READER =
+			reader("odataIeee754", EdmJsonValues::readIeee754);
 
 	private static final Map<String, CodecValueWriter<Object, EAttribute>> WRITERS = Map.of(
 			"Edm.Date", writer("odataDate", EdmJsonValues::writeDate),
 			"Edm.TimeOfDay", writer("odataTimeOfDay", EdmJsonValues::writeTimeOfDay),
 			"Edm.DateTimeOffset", writer("odataDateTimeOffset", EdmJsonValues::writeDateTimeOffset),
-			"Edm.Binary", writer("odataBinary", EdmJsonValues::writeBinary));
+			"Edm.Binary", writer("odataBinary", EdmJsonValues::writeBinary),
+			"Edm.Decimal", decimalNumberWriter());
 
 	private static final Map<String, CodecValueReader<Object, EAttribute>> READERS = Map.of(
 			"Edm.Date", reader("odataDate", EdmJsonValues::readDate),
@@ -56,13 +71,41 @@ final class EdmJsonValues {
 			"Edm.Binary", reader("odataBinary", EdmJsonValues::readBinary));
 
 	/** Writer for the (collection-unwrapped) Edm type name, or {@code null} if the default suffices. */
-	static CodecValueWriter<Object, EAttribute> writer(String edmType) {
+	static CodecValueWriter<Object, EAttribute> writer(String edmType, boolean ieee754Compatible) {
+		if (ieee754Compatible && isIeee754Affected(edmType)) {
+			return IEEE754_WRITER;
+		}
 		return WRITERS.get(edmType);
 	}
 
 	/** Reader for the (collection-unwrapped) Edm type name, or {@code null} if the default suffices. */
-	static CodecValueReader<Object, EAttribute> reader(String edmType) {
+	static CodecValueReader<Object, EAttribute> reader(String edmType, boolean ieee754Compatible) {
+		if (ieee754Compatible && isIeee754Affected(edmType)) {
+			return IEEE754_READER;
+		}
 		return READERS.get(edmType);
+	}
+
+	private static boolean isIeee754Affected(String edmType) {
+		return "Edm.Int64".equals(edmType) || "Edm.Decimal".equals(edmType);
+	}
+
+	private static Object readIeee754(String raw, EAttribute attribute) {
+		Class<?> target = attribute.getEAttributeType().getInstanceClass();
+		try {
+			if (target == Long.class || target == long.class) {
+				return Long.parseLong(raw);
+			}
+			if (target != null && BigInteger.class.isAssignableFrom(target)) {
+				return new BigInteger(raw);
+			}
+			if (target != null && BigDecimal.class.isAssignableFrom(target)) {
+				return new BigDecimal(raw);
+			}
+			return raw; // @OData.Type forced onto a string attribute — keep the lexical form
+		} catch (NumberFormatException e) {
+			throw new IllegalArgumentException("invalid IEEE754Compatible number value", e);
+		}
 	}
 
 	// --- write: Java value → OData JSON string form ---
@@ -156,6 +199,32 @@ final class EdmJsonValues {
 
 	private interface ValueParse {
 		Object apply(String raw, EAttribute attribute);
+	}
+
+	/** {@code Edm.Decimal} as a JSON NUMBER ([OData-JSON] 7.1) — exact, no double detour. */
+	private static CodecValueWriter<Object, EAttribute> decimalNumberWriter() {
+		return new CodecValueWriter<>() {
+			@Override
+			public String getName() {
+				return "odataDecimal";
+			}
+
+			@Override
+			public void write(Object value, EAttribute feature, CodecWriterContext ctx) throws IOException {
+				switch (value) {
+					case null -> ctx.getGenerator().writeNull();
+					case BigDecimal decimal -> ctx.getGenerator().writeNumber(decimal);
+					case BigInteger integer -> ctx.getGenerator().writeNumber(integer);
+					default -> {
+						try { // @OData.Type on a string attribute — spec form is still a number
+							ctx.getGenerator().writeNumber(new BigDecimal(String.valueOf(value)));
+						} catch (NumberFormatException e) {
+							ctx.getGenerator().writeString(String.valueOf(value));
+						}
+					}
+				}
+			}
+		};
 	}
 
 	private static CodecValueWriter<Object, EAttribute> writer(String name, StringForm form) {

@@ -16,6 +16,16 @@
       <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/AVERAGE"/>
       <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/COUNT_DISTINCT"/>
       <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/COUNT"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/CUSTOM"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//AggregateMethod/CUSTOM_AGGREGATE"/>
+    </genEnums>
+    <genEnums typeSafeEnumCompatible="false" ecoreEnum="apply.ecore#//BottomTopMethod">
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//BottomTopMethod/TOP_COUNT"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//BottomTopMethod/TOP_SUM"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//BottomTopMethod/TOP_PERCENT"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//BottomTopMethod/BOTTOM_COUNT"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//BottomTopMethod/BOTTOM_SUM"/>
+      <genEnumLiterals ecoreEnumLiteral="apply.ecore#//BottomTopMethod/BOTTOM_PERCENT"/>
     </genEnums>
     <genClasses ecoreClass="apply.ecore#//ApplyPipeline">
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//ApplyPipeline/transformations"/>
@@ -27,6 +37,11 @@
     <genClasses ecoreClass="apply.ecore#//GroupByTransformation">
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//GroupByTransformation/groupingProperties"/>
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//GroupByTransformation/then"/>
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//GroupByTransformation/rollups"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//RollupHierarchy">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//RollupHierarchy/levels"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//RollupHierarchy/hierarchy"/>
     </genClasses>
     <genClasses ecoreClass="apply.ecore#//AggregateTransformation">
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//AggregateTransformation/aggregations"/>
@@ -35,6 +50,35 @@
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//AggregateExpression/expression"/>
       <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//AggregateExpression/method"/>
       <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//AggregateExpression/alias"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//AggregateExpression/customMethod"/>
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//AggregateExpression/from"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//AggregateFrom">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//AggregateFrom/groupingProperties"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//AggregateFrom/method"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//AggregateFrom/customMethod"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//BottomTopTransformation">
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//BottomTopTransformation/method"/>
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//BottomTopTransformation/threshold"/>
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//BottomTopTransformation/value"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//ConcatTransformation">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//ConcatTransformation/pipelines"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//TopTransformation">
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//TopTransformation/count"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//SkipTransformation">
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//SkipTransformation/count"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//IdentityTransformation"/>
+    <genClasses ecoreClass="apply.ecore#//OrderByTransformation">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//OrderByTransformation/items"/>
+    </genClasses>
+    <genClasses ecoreClass="apply.ecore#//OrderByExpression">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//OrderByExpression/expression"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute apply.ecore#//OrderByExpression/ascending"/>
     </genClasses>
     <genClasses ecoreClass="apply.ecore#//ComputeTransformation">
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference apply.ecore#//ComputeTransformation/computeExpressions"/>

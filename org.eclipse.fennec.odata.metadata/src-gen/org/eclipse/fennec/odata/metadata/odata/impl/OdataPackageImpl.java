@@ -420,68 +420,8 @@ public class OdataPackageImpl extends EPackageImpl implements OdataPackage {
 	 * @generated
 	 */
 	@Override
-	public EAttribute getODataClassProfile_Kind() {
-		return (EAttribute)oDataClassProfileEClass.getEStructuralFeatures().get(0);
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EAttribute getODataClassProfile_QualifiedName() {
-		return (EAttribute)oDataClassProfileEClass.getEStructuralFeatures().get(1);
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EAttribute getODataClassProfile_KeyPropertyNames() {
-		return (EAttribute)oDataClassProfileEClass.getEStructuralFeatures().get(2);
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EAttribute getODataClassProfile_OpenType() {
-		return (EAttribute)oDataClassProfileEClass.getEStructuralFeatures().get(3);
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EAttribute getODataClassProfile_HasStream() {
-		return (EAttribute)oDataClassProfileEClass.getEStructuralFeatures().get(4);
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EAttribute getODataClassProfile_BaseTypeQualifiedName() {
-		return (EAttribute)oDataClassProfileEClass.getEStructuralFeatures().get(5);
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
 	public EReference getODataClassProfile_OdataProfile() {
-		return (EReference)oDataClassProfileEClass.getEStructuralFeatures().get(6);
+		return (EReference)oDataClassProfileEClass.getEStructuralFeatures().get(0);
 	}
 
 	/**
@@ -554,12 +494,6 @@ public class OdataPackageImpl extends EPackageImpl implements OdataPackage {
 		createEReference(oDataPackageProfileEClass, ODATA_PACKAGE_PROFILE__ODATA_PROFILE);
 
 		oDataClassProfileEClass = createEClass(ODATA_CLASS_PROFILE);
-		createEAttribute(oDataClassProfileEClass, ODATA_CLASS_PROFILE__KIND);
-		createEAttribute(oDataClassProfileEClass, ODATA_CLASS_PROFILE__QUALIFIED_NAME);
-		createEAttribute(oDataClassProfileEClass, ODATA_CLASS_PROFILE__KEY_PROPERTY_NAMES);
-		createEAttribute(oDataClassProfileEClass, ODATA_CLASS_PROFILE__OPEN_TYPE);
-		createEAttribute(oDataClassProfileEClass, ODATA_CLASS_PROFILE__HAS_STREAM);
-		createEAttribute(oDataClassProfileEClass, ODATA_CLASS_PROFILE__BASE_TYPE_QUALIFIED_NAME);
 		createEReference(oDataClassProfileEClass, ODATA_CLASS_PROFILE__ODATA_PROFILE);
 
 		// Create enums
@@ -637,12 +571,6 @@ public class OdataPackageImpl extends EPackageImpl implements OdataPackage {
 		initEReference(getODataPackageProfile_OdataProfile(), theProfilePackage.getODataPackageProfile(), null, "odataProfile", null, 0, 1, ODataPackageProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 
 		initEClass(oDataClassProfileEClass, ODataClassProfile.class, "ODataClassProfile", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
-		initEAttribute(getODataClassProfile_Kind(), this.getODataTypeKind(), "kind", null, 0, 1, ODataClassProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
-		initEAttribute(getODataClassProfile_QualifiedName(), ecorePackage.getEString(), "qualifiedName", null, 0, 1, ODataClassProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
-		initEAttribute(getODataClassProfile_KeyPropertyNames(), ecorePackage.getEString(), "keyPropertyNames", null, 0, -1, ODataClassProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
-		initEAttribute(getODataClassProfile_OpenType(), ecorePackage.getEBoolean(), "openType", null, 0, 1, ODataClassProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
-		initEAttribute(getODataClassProfile_HasStream(), ecorePackage.getEBoolean(), "hasStream", null, 0, 1, ODataClassProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
-		initEAttribute(getODataClassProfile_BaseTypeQualifiedName(), ecorePackage.getEString(), "baseTypeQualifiedName", null, 0, 1, ODataClassProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 		initEReference(getODataClassProfile_OdataProfile(), theProfilePackage.getODataClassProfile(), null, "odataProfile", null, 0, 1, ODataClassProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_COMPOSITE, IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 
 		// Initialize enums and add enum literals

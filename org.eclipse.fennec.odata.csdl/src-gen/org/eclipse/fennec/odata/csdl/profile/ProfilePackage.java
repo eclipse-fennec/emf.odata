@@ -478,13 +478,31 @@ public interface ProfilePackage extends org.eclipse.emf.ecore.EPackage {
 	int ODATA_PROPERTY_PROFILE__DEFAULT_VALUE = 8;
 
 	/**
+	 * The feature id for the '<em><b>Srid</b></em>' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 * @ordered
+	 */
+	int ODATA_PROPERTY_PROFILE__SRID = 9;
+
+	/**
+	 * The feature id for the '<em><b>Unicode</b></em>' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 * @ordered
+	 */
+	int ODATA_PROPERTY_PROFILE__UNICODE = 10;
+
+	/**
 	 * The feature id for the '<em><b>Annotations</b></em>' containment reference list.
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
 	 * @generated
 	 * @ordered
 	 */
-	int ODATA_PROPERTY_PROFILE__ANNOTATIONS = 9;
+	int ODATA_PROPERTY_PROFILE__ANNOTATIONS = 11;
 
 	/**
 	 * The number of structural features of the '<em>OData Property Profile</em>' class.
@@ -493,7 +511,7 @@ public interface ProfilePackage extends org.eclipse.emf.ecore.EPackage {
 	 * @generated
 	 * @ordered
 	 */
-	int ODATA_PROPERTY_PROFILE_FEATURE_COUNT = 10;
+	int ODATA_PROPERTY_PROFILE_FEATURE_COUNT = 12;
 
 	/**
 	 * The number of operations of the '<em>OData Property Profile</em>' class.
@@ -1273,6 +1291,28 @@ public interface ProfilePackage extends org.eclipse.emf.ecore.EPackage {
 	EAttribute getODataPropertyProfile_DefaultValue();
 
 	/**
+	 * Returns the meta object for the attribute '{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getSrid <em>Srid</em>}'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return the meta object for the attribute '<em>Srid</em>'.
+	 * @see org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getSrid()
+	 * @see #getODataPropertyProfile()
+	 * @generated
+	 */
+	EAttribute getODataPropertyProfile_Srid();
+
+	/**
+	 * Returns the meta object for the attribute '{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getUnicode <em>Unicode</em>}'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return the meta object for the attribute '<em>Unicode</em>'.
+	 * @see org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getUnicode()
+	 * @see #getODataPropertyProfile()
+	 * @generated
+	 */
+	EAttribute getODataPropertyProfile_Unicode();
+
+	/**
 	 * Returns the meta object for the containment reference list '{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getAnnotations <em>Annotations</em>}'.
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
@@ -1937,6 +1977,22 @@ public interface ProfilePackage extends org.eclipse.emf.ecore.EPackage {
 		 * @generated
 		 */
 		EAttribute ODATA_PROPERTY_PROFILE__DEFAULT_VALUE = eINSTANCE.getODataPropertyProfile_DefaultValue();
+
+		/**
+		 * The meta object literal for the '<em><b>Srid</b></em>' attribute feature.
+		 * <!-- begin-user-doc -->
+		 * <!-- end-user-doc -->
+		 * @generated
+		 */
+		EAttribute ODATA_PROPERTY_PROFILE__SRID = eINSTANCE.getODataPropertyProfile_Srid();
+
+		/**
+		 * The meta object literal for the '<em><b>Unicode</b></em>' attribute feature.
+		 * <!-- begin-user-doc -->
+		 * <!-- end-user-doc -->
+		 * @generated
+		 */
+		EAttribute ODATA_PROPERTY_PROFILE__UNICODE = eINSTANCE.getODataPropertyProfile_Unicode();
 
 		/**
 		 * The meta object literal for the '<em><b>Annotations</b></em>' containment reference list feature.

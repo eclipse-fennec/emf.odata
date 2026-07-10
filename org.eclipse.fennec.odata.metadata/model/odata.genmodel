@@ -45,12 +45,6 @@
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference odata.ecore#//ODataPackageProfile/odataProfile"/>
     </genClasses>
     <genClasses ecoreClass="odata.ecore#//ODataClassProfile">
-      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata.ecore#//ODataClassProfile/kind"/>
-      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata.ecore#//ODataClassProfile/qualifiedName"/>
-      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata.ecore#//ODataClassProfile/keyPropertyNames"/>
-      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata.ecore#//ODataClassProfile/openType"/>
-      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata.ecore#//ODataClassProfile/hasStream"/>
-      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata.ecore#//ODataClassProfile/baseTypeQualifiedName"/>
       <genFeatures property="None" notify="false" createChild="false" propertySortChoices="true"
           ecoreFeature="ecore:EReference odata.ecore#//ODataClassProfile/odataProfile"/>
     </genClasses>

@@ -36,9 +36,12 @@ import javax.xml.validation.Validator;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EAnnotation;
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EReference;
+import org.eclipse.emf.ecore.EcoreFactory;
+import org.eclipse.emf.ecore.EcorePackage;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
@@ -232,6 +235,144 @@ class OdataAnnotationResolutionTest {
 				.getEAnnotation(ODataAnnotationConstants.ANNOTATIONS_SOURCE);
 		assertEquals("A stored document", readDoc.getDetails().get("Org.OData.Core.V1.Description"));
 		assertEquals("42", readDoc.getDetails().get("My.Custom.Rank"));
+	}
+
+	@Test
+	void richExpressionAnnotationsRoundTrip() throws Exception {
+		// rich values in their CSDL-JSON encoding as annotation details (AP-5 rest)
+		String budget = "{\"@type\":\"My.Custom.BudgetType\",\"Amount\":3000,"
+				+ "\"Currency\":\"USD\",\"Approved\":true}";
+		String tags = "[\"a\",\"b\",2.5]";
+		String permissions = "{\"$EnumMember\":\"Org.OData.Core.V1.Permission/Read\"}";
+		String titlePath = "{\"$Path\":\"title\"}";
+		String paths = "[{\"$PropertyPath\":\"title\"},{\"$PropertyPath\":\"createdAt\"}]";
+		EClass documentClass = (EClass) model.getEClassifier("Document");
+		EAnnotation holder = documentClass.getEAnnotation(ODataAnnotationConstants.ANNOTATIONS_SOURCE);
+		holder.getDetails().put("My.Custom.Budget", budget);
+		holder.getDetails().put("My.Custom.Tags", tags);
+		holder.getDetails().put("Org.OData.Core.V1.Permissions", permissions);
+		holder.getDetails().put("My.Custom.TitlePath", titlePath);
+		holder.getDetails().put("My.Custom.Paths", paths);
+
+		// write: the JSON encoding becomes structural EDM expressions
+		SchemaType schema = new EcoreToEdmConverter().toSchema(model);
+		TEntityType docType = byName(schema.getEntityType(), TEntityType::getName, "Document");
+		AnnotationType record = byName(docType.getAnnotation(), AnnotationType::getTerm, "My.Custom.Budget");
+		assertEquals("My.Custom.BudgetType", record.getRecord().get(0).getType());
+		assertEquals(3, record.getRecord().get(0).getPropertyValue().size());
+		AnnotationType collection = byName(docType.getAnnotation(), AnnotationType::getTerm, "My.Custom.Tags");
+		assertEquals(2, collection.getCollection().get(0).getString().size());
+		assertEquals(1, collection.getCollection().get(0).getDecimal().size());
+		assertEquals(List.of("Org.OData.Core.V1.Permission/Read"),
+				byName(docType.getAnnotation(), AnnotationType::getTerm, "Org.OData.Core.V1.Permissions")
+						.getEnumMember1());
+		assertEquals("title",
+				byName(docType.getAnnotation(), AnnotationType::getTerm, "My.Custom.TitlePath").getPath1());
+		assertValidCsdl(serialize(new EcoreToEdmConverter().toEdmx(model)));
+
+		// read: back to the SAME canonical JSON detail strings (round-trip fidelity)
+		EPackage read = new EdmToEcoreConverter().toEPackage(schema);
+		EAnnotation readDoc = ((EClass) read.getEClassifier("Document"))
+				.getEAnnotation(ODataAnnotationConstants.ANNOTATIONS_SOURCE);
+		assertEquals(budget, readDoc.getDetails().get("My.Custom.Budget"));
+		assertEquals(tags, readDoc.getDetails().get("My.Custom.Tags"));
+		assertEquals(permissions, readDoc.getDetails().get("Org.OData.Core.V1.Permissions"));
+		assertEquals(titlePath, readDoc.getDetails().get("My.Custom.TitlePath"));
+		assertEquals(paths, readDoc.getDetails().get("My.Custom.Paths"));
+
+		// the CSDL JSON wire form carries the same value nodes (writer ∘ reader fixpoint)
+		String json = CsdlJsonWriter.write(new EcoreToEdmConverter().toEdmx(model));
+		assertTrue(json.replaceAll("\\s", "").contains("\"@My.Custom.Budget\":"
+				+ budget.replaceAll("\\s", "")), json);
+		EPackage viaJson = new EdmToEcoreConverter().toEPackages(
+				new CsdlJsonReader().read(json).getEdmx()).get(0);
+		assertEquals(budget, ((EClass) viaJson.getEClassifier("Document"))
+				.getEAnnotation(ODataAnnotationConstants.ANNOTATIONS_SOURCE)
+				.getDetails().get("My.Custom.Budget"));
+	}
+
+	@Test
+	void sridAndUnicodeFacetsRoundTrip() throws Exception {
+		EClass documentClass = (EClass) model.getEClassifier("Document");
+		EAttribute title = (EAttribute) documentClass.getEStructuralFeature("title");
+		EAnnotation odata = title.getEAnnotation(ODataAnnotationConstants.SOURCE);
+		odata.getDetails().put(ODataAnnotationConstants.SRID, "variable");
+		odata.getDetails().put(ODataAnnotationConstants.UNICODE, "false");
+
+		ODataPackageProfile profile = new OdataResolver().resolve(model);
+		ODataPropertyProfile titleProfile = byName(
+				byName(profile.getClasses(), ODataClassProfile::getName, "Document").getProperties(),
+				ODataPropertyProfile::getName, "title");
+		assertEquals("variable", titleProfile.getSrid(), "symbolic SRID kept verbatim");
+		assertEquals(Boolean.FALSE, titleProfile.getUnicode());
+
+		SchemaType schema = new EcoreToEdmConverter().toSchema(model);
+		TProperty titleProperty = byName(
+				byName(schema.getEntityType(), TEntityType::getName, "Document").getProperty(),
+				TProperty::getName, "title");
+		assertEquals("variable", String.valueOf(titleProperty.getSRID()));
+		assertTrue(titleProperty.isSetUnicode());
+		assertFalse(titleProperty.isUnicode());
+		assertValidCsdl(serialize(new EcoreToEdmConverter().toEdmx(model)));
+
+		// read path: ALL facets come back as @OData annotation details (AP-4 closure)
+		EPackage read = new EdmToEcoreConverter().toEPackage(schema);
+		EAnnotation readAnnotation = ((EClass) read.getEClassifier("Document"))
+				.getEStructuralFeature("title").getEAnnotation(ODataAnnotationConstants.SOURCE);
+		assertEquals("variable", readAnnotation.getDetails().get(ODataAnnotationConstants.SRID));
+		assertEquals("false", readAnnotation.getDetails().get(ODataAnnotationConstants.UNICODE));
+		assertEquals("200", readAnnotation.getDetails().get(ODataAnnotationConstants.MAX_LENGTH),
+				"MaxLength survives the read now too");
+	}
+
+	@Test
+	void crossPackageTypeReferences() {
+		EcoreFactory ecore = EcoreFactory.eINSTANCE;
+		EPackage basePkg = ecore.createEPackage();
+		basePkg.setName("base");
+		basePkg.setNsPrefix("base");
+		basePkg.setNsURI("http://example.org/base");
+		EClass root = ecore.createEClass();
+		root.setName("Root");
+		EAttribute rootId = ecore.createEAttribute();
+		rootId.setName("id");
+		rootId.setID(true);
+		rootId.setLowerBound(1);
+		rootId.setEType(EcorePackage.Literals.ESTRING);
+		root.getEStructuralFeatures().add(rootId);
+		basePkg.getEClassifiers().add(root);
+
+		EPackage extPkg = ecore.createEPackage();
+		extPkg.setName("ext");
+		extPkg.setNsPrefix("ext");
+		extPkg.setNsURI("http://example.org/ext");
+		EClass sub = ecore.createEClass();
+		sub.setName("Sub");
+		sub.getESuperTypes().add(root);
+		extPkg.getEClassifiers().add(sub);
+		EClass holder = ecore.createEClass();
+		holder.setName("Holder");
+		EAttribute holderId = ecore.createEAttribute();
+		holderId.setName("id");
+		holderId.setID(true);
+		holderId.setLowerBound(1);
+		holderId.setEType(EcorePackage.Literals.ESTRING);
+		holder.getEStructuralFeatures().add(holderId);
+		EReference navigation = ecore.createEReference();
+		navigation.setName("root");
+		navigation.setEType(root);
+		holder.getEStructuralFeatures().add(navigation);
+		extPkg.getEClassifiers().add(holder);
+
+		// AP-6 write path: types from ANOTHER package qualify with THAT package's namespace
+		ODataPackageProfile profile = new OdataResolver().resolve(extPkg);
+		assertEquals("base.Root",
+				byName(profile.getClasses(), ODataClassProfile::getName, "Sub")
+						.getBaseTypeQualifiedName());
+		assertEquals("base.Root",
+				byName(byName(profile.getClasses(), ODataClassProfile::getName, "Holder")
+						.getNavigationProperties(), ODataNavigationProfile::getName, "root")
+						.getTypeName());
 	}
 
 	// === helpers ===

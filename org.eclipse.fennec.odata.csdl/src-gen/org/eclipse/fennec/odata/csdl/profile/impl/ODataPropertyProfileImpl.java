@@ -49,6 +49,8 @@ import org.eclipse.fennec.odata.csdl.profile.ProfilePackage;
  *   <li>{@link org.eclipse.fennec.odata.csdl.profile.impl.ODataPropertyProfileImpl#getPrecision <em>Precision</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.csdl.profile.impl.ODataPropertyProfileImpl#getScale <em>Scale</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.csdl.profile.impl.ODataPropertyProfileImpl#getDefaultValue <em>Default Value</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.csdl.profile.impl.ODataPropertyProfileImpl#getSrid <em>Srid</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.csdl.profile.impl.ODataPropertyProfileImpl#getUnicode <em>Unicode</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.csdl.profile.impl.ODataPropertyProfileImpl#getAnnotations <em>Annotations</em>}</li>
  * </ul>
  *
@@ -234,6 +236,46 @@ public class ODataPropertyProfileImpl extends MinimalEObjectImpl.Container imple
 	 * @ordered
 	 */
 	protected String defaultValue = DEFAULT_VALUE_EDEFAULT;
+
+	/**
+	 * The default value of the '{@link #getSrid() <em>Srid</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getSrid()
+	 * @generated
+	 * @ordered
+	 */
+	protected static final String SRID_EDEFAULT = null;
+
+	/**
+	 * The cached value of the '{@link #getSrid() <em>Srid</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getSrid()
+	 * @generated
+	 * @ordered
+	 */
+	protected String srid = SRID_EDEFAULT;
+
+	/**
+	 * The default value of the '{@link #getUnicode() <em>Unicode</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getUnicode()
+	 * @generated
+	 * @ordered
+	 */
+	protected static final Boolean UNICODE_EDEFAULT = null;
+
+	/**
+	 * The cached value of the '{@link #getUnicode() <em>Unicode</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getUnicode()
+	 * @generated
+	 * @ordered
+	 */
+	protected Boolean unicode = UNICODE_EDEFAULT;
 
 	/**
 	 * The cached value of the '{@link #getAnnotations() <em>Annotations</em>}' containment reference list.
@@ -477,6 +519,52 @@ public class ODataPropertyProfileImpl extends MinimalEObjectImpl.Container imple
 	 * @generated
 	 */
 	@Override
+	public String getSrid() {
+		return srid;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public void setSrid(String newSrid) {
+		String oldSrid = srid;
+		srid = newSrid;
+		if (eNotificationRequired())
+			eNotify(new ENotificationImpl(this, Notification.SET, ProfilePackage.ODATA_PROPERTY_PROFILE__SRID, oldSrid, srid));
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public Boolean getUnicode() {
+		return unicode;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public void setUnicode(Boolean newUnicode) {
+		Boolean oldUnicode = unicode;
+		unicode = newUnicode;
+		if (eNotificationRequired())
+			eNotify(new ENotificationImpl(this, Notification.SET, ProfilePackage.ODATA_PROPERTY_PROFILE__UNICODE, oldUnicode, unicode));
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
 	public EList<ODataAnnotation> getAnnotations() {
 		if (annotations == null) {
 			annotations = new EObjectContainmentEList<ODataAnnotation>(ODataAnnotation.class, this, ProfilePackage.ODATA_PROPERTY_PROFILE__ANNOTATIONS);
@@ -524,6 +612,10 @@ public class ODataPropertyProfileImpl extends MinimalEObjectImpl.Container imple
 				return getScale();
 			case ProfilePackage.ODATA_PROPERTY_PROFILE__DEFAULT_VALUE:
 				return getDefaultValue();
+			case ProfilePackage.ODATA_PROPERTY_PROFILE__SRID:
+				return getSrid();
+			case ProfilePackage.ODATA_PROPERTY_PROFILE__UNICODE:
+				return getUnicode();
 			case ProfilePackage.ODATA_PROPERTY_PROFILE__ANNOTATIONS:
 				return getAnnotations();
 		}
@@ -565,6 +657,12 @@ public class ODataPropertyProfileImpl extends MinimalEObjectImpl.Container imple
 				return;
 			case ProfilePackage.ODATA_PROPERTY_PROFILE__DEFAULT_VALUE:
 				setDefaultValue((String)newValue);
+				return;
+			case ProfilePackage.ODATA_PROPERTY_PROFILE__SRID:
+				setSrid((String)newValue);
+				return;
+			case ProfilePackage.ODATA_PROPERTY_PROFILE__UNICODE:
+				setUnicode((Boolean)newValue);
 				return;
 			case ProfilePackage.ODATA_PROPERTY_PROFILE__ANNOTATIONS:
 				getAnnotations().clear();
@@ -609,6 +707,12 @@ public class ODataPropertyProfileImpl extends MinimalEObjectImpl.Container imple
 			case ProfilePackage.ODATA_PROPERTY_PROFILE__DEFAULT_VALUE:
 				setDefaultValue(DEFAULT_VALUE_EDEFAULT);
 				return;
+			case ProfilePackage.ODATA_PROPERTY_PROFILE__SRID:
+				setSrid(SRID_EDEFAULT);
+				return;
+			case ProfilePackage.ODATA_PROPERTY_PROFILE__UNICODE:
+				setUnicode(UNICODE_EDEFAULT);
+				return;
 			case ProfilePackage.ODATA_PROPERTY_PROFILE__ANNOTATIONS:
 				getAnnotations().clear();
 				return;
@@ -642,6 +746,10 @@ public class ODataPropertyProfileImpl extends MinimalEObjectImpl.Container imple
 				return scale != SCALE_EDEFAULT;
 			case ProfilePackage.ODATA_PROPERTY_PROFILE__DEFAULT_VALUE:
 				return DEFAULT_VALUE_EDEFAULT == null ? defaultValue != null : !DEFAULT_VALUE_EDEFAULT.equals(defaultValue);
+			case ProfilePackage.ODATA_PROPERTY_PROFILE__SRID:
+				return SRID_EDEFAULT == null ? srid != null : !SRID_EDEFAULT.equals(srid);
+			case ProfilePackage.ODATA_PROPERTY_PROFILE__UNICODE:
+				return UNICODE_EDEFAULT == null ? unicode != null : !UNICODE_EDEFAULT.equals(unicode);
 			case ProfilePackage.ODATA_PROPERTY_PROFILE__ANNOTATIONS:
 				return annotations != null && !annotations.isEmpty();
 		}
@@ -676,6 +784,10 @@ public class ODataPropertyProfileImpl extends MinimalEObjectImpl.Container imple
 		result.append(scale);
 		result.append(", defaultValue: ");
 		result.append(defaultValue);
+		result.append(", srid: ");
+		result.append(srid);
+		result.append(", unicode: ");
+		result.append(unicode);
 		result.append(')');
 		return result.toString();
 	}

@@ -57,6 +57,8 @@
       <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata-profile.ecore#//ODataPropertyProfile/precision"/>
       <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata-profile.ecore#//ODataPropertyProfile/scale"/>
       <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata-profile.ecore#//ODataPropertyProfile/defaultValue"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata-profile.ecore#//ODataPropertyProfile/srid"/>
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute odata-profile.ecore#//ODataPropertyProfile/unicode"/>
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference odata-profile.ecore#//ODataPropertyProfile/annotations"/>
     </genClasses>
     <genClasses ecoreClass="odata-profile.ecore#//ODataNavigationProfile">

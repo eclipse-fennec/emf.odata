@@ -116,7 +116,8 @@ public class OdataResolver {
 		resolveAnnotations(cl, c.getAnnotations());
 
 		cl.getESuperTypes().stream().filter(s -> !s.isInterface()).findFirst()
-				.ifPresent(s -> c.setBaseTypeQualifiedName(ns + "." + s.getName())); // TODO cross-package
+				.ifPresent(s -> c.setBaseTypeQualifiedName(
+						typeNamespace(s, ns) + "." + s.getName())); // cross-package aware (AP-6)
 
 		// key: declared ID attributes, or attributes flagged @OData.Key (subtype inherits the root key)
 		cl.getEAttributes().stream().filter(this::isKey)
@@ -155,6 +156,14 @@ public class OdataResolver {
 		String def = ann(a, ODataAnnotationConstants.DEFAULT_VALUE);
 		if (def != null) {
 			p.setDefaultValue(def);
+		}
+		String srid = ann(a, ODataAnnotationConstants.SRID);
+		if (srid != null) {
+			p.setSrid(srid);
+		}
+		String unicode = ann(a, ODataAnnotationConstants.UNICODE);
+		if (unicode != null) {
+			p.setUnicode(Boolean.valueOf(unicode));
 		}
 		resolveAnnotations(a, p.getAnnotations());
 		return p;
@@ -245,15 +254,26 @@ public class OdataResolver {
 	private String typeName(EClassifier type, boolean many, String ns) {
 		String base;
 		if (type instanceof EEnum en) {
-			base = ns + "." + en.getName();
+			base = typeNamespace(en, ns) + "." + en.getName();
 		} else if (type instanceof EDataType dt) {
 			base = EdmTypes.edm(dt);
 		} else if (type != null) {
-			base = ns + "." + type.getName(); // EClass used as a complex property type
+			// EClass used as a complex/entity type — qualified with ITS OWN package's
+			// namespace, so cross-package references write correctly (AP-6)
+			base = typeNamespace(type, ns) + "." + type.getName();
 		} else {
 			base = "Edm.String";
 		}
 		return collection(base, many);
+	}
+
+	/** The schema namespace of the classifier's OWN package (override-aware), {@code ns} as fallback. */
+	private String typeNamespace(EClassifier type, String ns) {
+		EPackage pkg = type.getEPackage();
+		if (pkg == null) {
+			return ns;
+		}
+		return annOr(pkg, ODataAnnotationConstants.NAMESPACE, namespace(pkg));
 	}
 
 	private static String collection(String base, boolean many) {

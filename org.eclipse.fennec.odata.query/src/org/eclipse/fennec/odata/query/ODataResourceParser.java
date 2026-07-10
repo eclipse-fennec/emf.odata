@@ -24,6 +24,7 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.RecognitionException;
 import org.antlr.v4.runtime.Recognizer;
 import org.eclipse.fennec.odata.query.ResourcePath.CountSegment;
+import org.eclipse.fennec.odata.query.ResourcePath.KeySegment;
 import org.eclipse.fennec.odata.query.ResourcePath.PropertySegment;
 import org.eclipse.fennec.odata.query.ResourcePath.RefSegment;
 import org.eclipse.fennec.odata.query.ResourcePath.Segment;
@@ -89,7 +90,8 @@ public class ODataResourceParser {
 		for (ODataFilterParser.ResourceSegmentContext segment : resource.resourceSegment()) {
 			// $count/$value/$ref close the path (ABNF: they are terminal alternatives)
 			if (!segments.isEmpty() && !(segments.get(segments.size() - 1) instanceof PropertySegment
-					|| segments.get(segments.size() - 1) instanceof TypeCastSegment)) {
+					|| segments.get(segments.size() - 1) instanceof TypeCastSegment
+					|| segments.get(segments.size() - 1) instanceof KeySegment)) {
 				throw new ODataQueryParseException(
 						"no segment allowed after $count/$value/$ref: " + path);
 			}
@@ -103,6 +105,8 @@ public class ODataResourceParser {
 					new TypeCastSegment(cast.castName().getText(), keyText(cast.keyPredicate()));
 				case ODataFilterParser.PropertySegmentContext property ->
 					new PropertySegment(property.IDENT().getText(), keyText(property.keyPredicate()));
+				case ODataFilterParser.KeyValueSegmentContext key ->
+					new KeySegment(key.keyLiteral().getText());
 				case ODataFilterParser.CountSegmentContext c -> new CountSegment();
 				case ODataFilterParser.ValueSegmentContext v -> new ValueSegment();
 				case ODataFilterParser.RefSegmentContext r -> new RefSegment();

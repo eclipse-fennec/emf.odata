@@ -1,5 +1,13 @@
 def resolveTask = tasks.named("resolve.test") {
 	outputBndrun = layout.buildDirectory.file("test.bndrun")
+	// the resolver needs the runrequires workspace bundles' jars; they are only part of the
+	// build when gradle included them (full builds) — single-task runs use existing jars
+	dependsOn([
+		":org.eclipse.fennec.odata.metadata",
+		":org.eclipse.fennec.odata.csdl",
+		":org.eclipse.fennec.odata.codec.json",
+		":org.eclipse.fennec.odata.vocabularies"
+	].findAll { rootProject.findProject(it) != null }.collect { it + ":jar" })
 }
 
 tasks.named("testOSGi") {

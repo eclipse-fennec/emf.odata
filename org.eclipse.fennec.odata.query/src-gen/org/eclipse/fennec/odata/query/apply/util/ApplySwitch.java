@@ -102,6 +102,12 @@ public class ApplySwitch<T> extends Switch<T> {
 				if (result == null) result = defaultCase(theEObject);
 				return result;
 			}
+			case ApplyPackage.ROLLUP_HIERARCHY: {
+				RollupHierarchy rollupHierarchy = (RollupHierarchy)theEObject;
+				T result = caseRollupHierarchy(rollupHierarchy);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
 			case ApplyPackage.AGGREGATE_TRANSFORMATION: {
 				AggregateTransformation aggregateTransformation = (AggregateTransformation)theEObject;
 				T result = caseAggregateTransformation(aggregateTransformation);
@@ -112,6 +118,60 @@ public class ApplySwitch<T> extends Switch<T> {
 			case ApplyPackage.AGGREGATE_EXPRESSION: {
 				AggregateExpression aggregateExpression = (AggregateExpression)theEObject;
 				T result = caseAggregateExpression(aggregateExpression);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
+			case ApplyPackage.AGGREGATE_FROM: {
+				AggregateFrom aggregateFrom = (AggregateFrom)theEObject;
+				T result = caseAggregateFrom(aggregateFrom);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
+			case ApplyPackage.BOTTOM_TOP_TRANSFORMATION: {
+				BottomTopTransformation bottomTopTransformation = (BottomTopTransformation)theEObject;
+				T result = caseBottomTopTransformation(bottomTopTransformation);
+				if (result == null) result = caseApplyTransformation(bottomTopTransformation);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
+			case ApplyPackage.CONCAT_TRANSFORMATION: {
+				ConcatTransformation concatTransformation = (ConcatTransformation)theEObject;
+				T result = caseConcatTransformation(concatTransformation);
+				if (result == null) result = caseApplyTransformation(concatTransformation);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
+			case ApplyPackage.TOP_TRANSFORMATION: {
+				TopTransformation topTransformation = (TopTransformation)theEObject;
+				T result = caseTopTransformation(topTransformation);
+				if (result == null) result = caseApplyTransformation(topTransformation);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
+			case ApplyPackage.SKIP_TRANSFORMATION: {
+				SkipTransformation skipTransformation = (SkipTransformation)theEObject;
+				T result = caseSkipTransformation(skipTransformation);
+				if (result == null) result = caseApplyTransformation(skipTransformation);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
+			case ApplyPackage.IDENTITY_TRANSFORMATION: {
+				IdentityTransformation identityTransformation = (IdentityTransformation)theEObject;
+				T result = caseIdentityTransformation(identityTransformation);
+				if (result == null) result = caseApplyTransformation(identityTransformation);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
+			case ApplyPackage.ORDER_BY_TRANSFORMATION: {
+				OrderByTransformation orderByTransformation = (OrderByTransformation)theEObject;
+				T result = caseOrderByTransformation(orderByTransformation);
+				if (result == null) result = caseApplyTransformation(orderByTransformation);
+				if (result == null) result = defaultCase(theEObject);
+				return result;
+			}
+			case ApplyPackage.ORDER_BY_EXPRESSION: {
+				OrderByExpression orderByExpression = (OrderByExpression)theEObject;
+				T result = caseOrderByExpression(orderByExpression);
 				if (result == null) result = defaultCase(theEObject);
 				return result;
 			}
@@ -193,6 +253,21 @@ public class ApplySwitch<T> extends Switch<T> {
 	}
 
 	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Rollup Hierarchy</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Rollup Hierarchy</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseRollupHierarchy(RollupHierarchy object) {
+		return null;
+	}
+
+	/**
 	 * Returns the result of interpreting the object as an instance of '<em>Aggregate Transformation</em>'.
 	 * <!-- begin-user-doc -->
 	 * This implementation returns null;
@@ -219,6 +294,126 @@ public class ApplySwitch<T> extends Switch<T> {
 	 * @generated
 	 */
 	public T caseAggregateExpression(AggregateExpression object) {
+		return null;
+	}
+
+	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Aggregate From</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Aggregate From</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseAggregateFrom(AggregateFrom object) {
+		return null;
+	}
+
+	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Bottom Top Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Bottom Top Transformation</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseBottomTopTransformation(BottomTopTransformation object) {
+		return null;
+	}
+
+	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Concat Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Concat Transformation</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseConcatTransformation(ConcatTransformation object) {
+		return null;
+	}
+
+	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Top Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Top Transformation</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseTopTransformation(TopTransformation object) {
+		return null;
+	}
+
+	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Skip Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Skip Transformation</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseSkipTransformation(SkipTransformation object) {
+		return null;
+	}
+
+	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Identity Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Identity Transformation</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseIdentityTransformation(IdentityTransformation object) {
+		return null;
+	}
+
+	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Order By Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Order By Transformation</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseOrderByTransformation(OrderByTransformation object) {
+		return null;
+	}
+
+	/**
+	 * Returns the result of interpreting the object as an instance of '<em>Order By Expression</em>'.
+	 * <!-- begin-user-doc -->
+	 * This implementation returns null;
+	 * returning a non-null result will terminate the switch.
+	 * <!-- end-user-doc -->
+	 * @param object the target of the switch.
+	 * @return the result of interpreting the object as an instance of '<em>Order By Expression</em>'.
+	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
+	 * @generated
+	 */
+	public T caseOrderByExpression(OrderByExpression object) {
 		return null;
 	}
 

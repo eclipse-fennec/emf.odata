@@ -94,12 +94,48 @@ public class ApplyAdapterFactory extends AdapterFactoryImpl {
 				return createGroupByTransformationAdapter();
 			}
 			@Override
+			public Adapter caseRollupHierarchy(RollupHierarchy object) {
+				return createRollupHierarchyAdapter();
+			}
+			@Override
 			public Adapter caseAggregateTransformation(AggregateTransformation object) {
 				return createAggregateTransformationAdapter();
 			}
 			@Override
 			public Adapter caseAggregateExpression(AggregateExpression object) {
 				return createAggregateExpressionAdapter();
+			}
+			@Override
+			public Adapter caseAggregateFrom(AggregateFrom object) {
+				return createAggregateFromAdapter();
+			}
+			@Override
+			public Adapter caseBottomTopTransformation(BottomTopTransformation object) {
+				return createBottomTopTransformationAdapter();
+			}
+			@Override
+			public Adapter caseConcatTransformation(ConcatTransformation object) {
+				return createConcatTransformationAdapter();
+			}
+			@Override
+			public Adapter caseTopTransformation(TopTransformation object) {
+				return createTopTransformationAdapter();
+			}
+			@Override
+			public Adapter caseSkipTransformation(SkipTransformation object) {
+				return createSkipTransformationAdapter();
+			}
+			@Override
+			public Adapter caseIdentityTransformation(IdentityTransformation object) {
+				return createIdentityTransformationAdapter();
+			}
+			@Override
+			public Adapter caseOrderByTransformation(OrderByTransformation object) {
+				return createOrderByTransformationAdapter();
+			}
+			@Override
+			public Adapter caseOrderByExpression(OrderByExpression object) {
+				return createOrderByExpressionAdapter();
 			}
 			@Override
 			public Adapter caseComputeTransformation(ComputeTransformation object) {
@@ -186,6 +222,20 @@ public class ApplyAdapterFactory extends AdapterFactoryImpl {
 	}
 
 	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.RollupHierarchy <em>Rollup Hierarchy</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.RollupHierarchy
+	 * @generated
+	 */
+	public Adapter createRollupHierarchyAdapter() {
+		return null;
+	}
+
+	/**
 	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.AggregateTransformation <em>Aggregate Transformation</em>}'.
 	 * <!-- begin-user-doc -->
 	 * This default implementation returns null so that we can easily ignore cases;
@@ -210,6 +260,118 @@ public class ApplyAdapterFactory extends AdapterFactoryImpl {
 	 * @generated
 	 */
 	public Adapter createAggregateExpressionAdapter() {
+		return null;
+	}
+
+	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.AggregateFrom <em>Aggregate From</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.AggregateFrom
+	 * @generated
+	 */
+	public Adapter createAggregateFromAdapter() {
+		return null;
+	}
+
+	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.BottomTopTransformation <em>Bottom Top Transformation</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.BottomTopTransformation
+	 * @generated
+	 */
+	public Adapter createBottomTopTransformationAdapter() {
+		return null;
+	}
+
+	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.ConcatTransformation <em>Concat Transformation</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.ConcatTransformation
+	 * @generated
+	 */
+	public Adapter createConcatTransformationAdapter() {
+		return null;
+	}
+
+	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.TopTransformation <em>Top Transformation</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.TopTransformation
+	 * @generated
+	 */
+	public Adapter createTopTransformationAdapter() {
+		return null;
+	}
+
+	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.SkipTransformation <em>Skip Transformation</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.SkipTransformation
+	 * @generated
+	 */
+	public Adapter createSkipTransformationAdapter() {
+		return null;
+	}
+
+	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.IdentityTransformation <em>Identity Transformation</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.IdentityTransformation
+	 * @generated
+	 */
+	public Adapter createIdentityTransformationAdapter() {
+		return null;
+	}
+
+	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.OrderByTransformation <em>Order By Transformation</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.OrderByTransformation
+	 * @generated
+	 */
+	public Adapter createOrderByTransformationAdapter() {
+		return null;
+	}
+
+	/**
+	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.query.apply.OrderByExpression <em>Order By Expression</em>}'.
+	 * <!-- begin-user-doc -->
+	 * This default implementation returns null so that we can easily ignore cases;
+	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
+	 * <!-- end-user-doc -->
+	 * @return the new adapter.
+	 * @see org.eclipse.fennec.odata.query.apply.OrderByExpression
+	 * @generated
+	 */
+	public Adapter createOrderByExpressionAdapter() {
 		return null;
 	}
 

@@ -53,6 +53,14 @@ subprojects {
         testImplementation 'org.assertj:assertj-core:3.27.7'
     }
 
+    // The bnd 'generate' step (and IDE builds) can remove generated/buildfiles — the marker the
+    // workspace REPOSITORY uses to see a project's bundles. When that happens while the jar task
+    // is gradle-up-to-date, the bundle silently vanishes from every resolve.test. Guard: the jar
+    // only counts as up-to-date while its marker exists, so it rewrites the marker otherwise.
+    tasks.matching { it.name == 'jar' }.configureEach {
+        outputs.upToDateWhen { project.file('generated/buildfiles').exists() }
+    }
+
     // Coverage floor: a catastrophic-regression tripwire (e.g. a bundle's tests deleted) wired
     // into `check`. Conservative baseline of 30% instructions on the hand-written code of the
     // library bundles that carry plain-JUnit tests — generated code and test-only/OSGi-covered
@@ -71,7 +79,8 @@ subprojects {
         if (project.name in coverageFloorBundles) {
             tasks.named('jacocoTestCoverageVerification') {
                 // exclude generated code (ANTLR parser, EMF src-gen models/profiles)
-                def generated = ['**/antlr/**', '**/profile/**', 'org/open/oasis/**']
+                def generated = ['**/antlr/**', '**/profile/**', 'org/open/oasis/**',
+                                 'org/eclipse/fennec/odata/query/apply/**']
                 classDirectories.setFrom(files(classDirectories.files.collect {
                     fileTree(dir: it, exclude: generated)
                 }))

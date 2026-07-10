@@ -102,13 +102,24 @@ public class EdmToEcoreConverter {
 			}
 		}
 		for (EPackage pkg : packages) {
-			for (EClassifier classifier : pkg.getEClassifiers()) {
-				if (classifier instanceof EClass eClass) {
-					resolvePendingTargets(eClass, byNamespace);
-				}
-			}
+			resolveReferences(pkg, byNamespace);
 		}
 		return packages;
+	}
+
+	/**
+	 * Resolves the pending cross-schema targets of ONE converted package against known
+	 * packages (keyed by namespace AND alias); whatever stays unresolved is REMOVED — an
+	 * {@link org.eclipse.emf.ecore.EReference} without a type is invalid Ecore and breaks
+	 * downstream consumers (metadata whiteboard registration). Used by {@link #toEPackages}
+	 * and by single-schema bootstrap paths such as the vocabulary supply.
+	 */
+	public void resolveReferences(EPackage pkg, Map<String, EPackage> byNamespace) {
+		for (EClassifier classifier : pkg.getEClassifiers()) {
+			if (classifier instanceof EClass eClass) {
+				resolvePendingTargets(eClass, byNamespace);
+			}
+		}
 	}
 
 	private void resolvePendingTargets(EClass eClass, Map<String, EPackage> byNamespace) {
@@ -249,12 +260,16 @@ public class EdmToEcoreConverter {
 
 	/**
 	 * Generic {@code <Annotation>} elements (AP-5) → the {@code @…/annotations} EAnnotation on
-	 * the corresponding Ecore element. Only the constant-expression subset is mapped; rich
-	 * expressions (Record/Collection/Path) are skipped.
+	 * the corresponding Ecore element. Constants map to their lexical form; rich expressions
+	 * (Record/Collection/path forms/EnumMember) map to their [OData-CSDL-JSON] value encoding
+	 * as the detail string. Expression kinds outside that subset are skipped.
 	 */
 	private void mapAnnotations(List<AnnotationType> annotations, EModelElement target) {
 		for (AnnotationType annotation : annotations) {
 			String value = constantValue(annotation);
+			if (value == null && JacksonSupport.PRESENT) { // rich encoding needs Jackson
+				value = CsdlAnnotationExpressions.richText(annotation);
+			}
 			if (annotation.getTerm() == null || value == null) {
 				continue;
 			}
@@ -367,6 +382,7 @@ public class EdmToEcoreConverter {
 					a.setID(true);
 					a.setLowerBound(1);
 				}
+				mapFacets(p, a);
 				mapAnnotations(p.getAnnotation(), a);
 				cl.getEStructuralFeatures().add(a);
 			}
@@ -402,6 +418,35 @@ public class EdmToEcoreConverter {
 			mapAnnotations(n.getAnnotation(), r);
 			cl.getEStructuralFeatures().add(r);
 		}
+	}
+
+	/**
+	 * Facets (AP-4) → {@code @OData.*} annotation details on the attribute, so a later write
+	 * emits them again (round-trip fidelity — the same pattern as referential constraints).
+	 * SRID keeps symbolic values ({@code variable}) verbatim.
+	 */
+	private void mapFacets(TProperty p, EAttribute a) {
+		putFacet(a, ODataAnnotationConstants.MAX_LENGTH, p.getMaxLength());
+		putFacet(a, ODataAnnotationConstants.PRECISION, p.getPrecision());
+		putFacet(a, ODataAnnotationConstants.SCALE, p.getScale());
+		putFacet(a, ODataAnnotationConstants.DEFAULT_VALUE, p.getDefaultValue());
+		putFacet(a, ODataAnnotationConstants.SRID, p.getSRID());
+		if (p.isSetUnicode()) {
+			putFacet(a, ODataAnnotationConstants.UNICODE, p.isUnicode());
+		}
+	}
+
+	private void putFacet(EAttribute a, String key, Object value) {
+		if (value == null) {
+			return;
+		}
+		EAnnotation holder = a.getEAnnotation(ODataAnnotationConstants.SOURCE);
+		if (holder == null) {
+			holder = ecore.createEAnnotation();
+			holder.setSource(ODataAnnotationConstants.SOURCE);
+			a.getEAnnotations().add(holder);
+		}
+		holder.getDetails().put(key, String.valueOf(value));
 	}
 
 	private void applyBounds(EStructuralFeature f, boolean many, boolean nullable) {
