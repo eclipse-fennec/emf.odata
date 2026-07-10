@@ -40,11 +40,16 @@ import org.junit.jupiter.api.TestFactory;
  *
  * <p>Beyond the XML harness this also exercises the URL layer the ADR-0005 URI parser owns:
  * {@code odataRelativeUri} (path?query splitting) and {@code queryOptions} ($filter/$orderby
- * values through the grammar; other options are outside the query bundle and skipped).
- * Constructs outside the v1 subset are SKIPPED via assumption — the shrinking skip count is
- * the E4/ADR-0005 backlog radar. Rules without a v1 entry point (literals, headers,
- * preferences, context fragments, select/expand trees, $search, geo) are not generated at all;
- * they join once the owning layer exists.
+ * values through the grammar).
+ *
+ * <p>Two kinds of omission, deliberately distinct: cases whose subject belongs to ANOTHER
+ * layer (percent-encoding = URL decoding, non-expression options and function-call routing =
+ * servlet, model-category negatives = not judgeable syntax-only) are NOT GENERATED at all —
+ * they can never become green here and would only blur the numbers. Cases for PLANNED parser
+ * features ({@code OUT_OF_SCOPE} vs {@code BACKLOG} lists below) are skipped via assumption —
+ * that shrinking skip count IS the E4/ADR-0005 backlog radar. Rules without a v1 entry point
+ * (literals, headers, preferences, context fragments, select/expand trees, $search, geo) are
+ * not generated either; they join once the owning layer exists.
  */
 class CoreYamlAbnfAcceptanceTest {
 
@@ -53,8 +58,8 @@ class CoreYamlAbnfAcceptanceTest {
 			"filter", "boolCommonExpr", "boolcommonExpr", "commonExpr",
 			"firstMemberExpr", "propertyPathExpr", "isofExpr", "notExpr", "orderby");
 
-	/** Constructs the v1 grammar subset deliberately does not cover yet (E4 backlog). */
-	private static final List<Pattern> UNSUPPORTED = List.of(
+	/** Expression constructs the grammar deliberately does not cover YET (E4 backlog). */
+	private static final List<Pattern> BACKLOG = List.of(
 			Pattern.compile("\\$(it|this|root|these)"),              // instance refs
 			Pattern.compile("\\$count\\(|\\$filter\\("),             // filtered $count / inline $filter segments
 			Pattern.compile("@\\w+\\."),                             // @Ns.Term annotation refs (plain @alias parses)
@@ -65,25 +70,33 @@ class CoreYamlAbnfAcceptanceTest {
 			Pattern.compile("[A-Za-z_][\\w.]*'[^']*,"),              // enum FLAG combinations (comma list)
 			Pattern.compile("[Nn][Aa][Nn]|INF"),                     // nanInfinity literals
 			Pattern.compile("\\bdiv\\s+by\\b"),                      // spaced "div by" (only divby is one keyword)
-			Pattern.compile("\\.[\\w.]*\\("),                        // namespace-qualified function calls
 			Pattern.compile("(^|/)[A-Za-z_]\\w*\\.[A-Za-z_][\\w.]*(/|$| )"), // type-cast path segments
-			Pattern.compile("\"|\\{|\\["),                           // JSON-ish / string-with-quote forms
-			Pattern.compile("%[0-9A-Fa-f]{2}"),                      // percent-encoding = URL layer (URI parser)
-			Pattern.compile("/(?!any\\(|all\\()[A-Za-z_]\\w*\\("));  // bound/composed functions in paths (not lambdas)
+			Pattern.compile("\"|\\{|\\["));                          // JSON-ish / string-with-quote forms
 
-	/** v1 resource-path subset gaps (ADR-0005 backlog): functions, multi-part keys, ... */
-	private static final List<Pattern> UNSUPPORTED_PATHS = List.of(
-			Pattern.compile("\\.[\\w.]*\\("),          // qualified function/action calls (casts parse)
-			Pattern.compile("\\(\\s*\\w+\\s*="),       // named/multi-part key predicates (ID=1)
-			Pattern.compile("\\([^)]*,"),              // multi-part keys / function parameters
-			Pattern.compile("\\(\\s*\\)"),             // parameterless function/action call segments
+	/** Expression cases owned by ANOTHER layer — never judgeable here, not generated. */
+	private static final List<Pattern> OUT_OF_SCOPE = List.of(
+			Pattern.compile("%[0-9A-Fa-f]{2}"));                     // percent-encoding = URL decoding
+
+	/** Resource-path gaps of the parser itself (ADR-0005 backlog). */
+	private static final List<Pattern> BACKLOG_PATHS = List.of(
 			Pattern.compile("@"),                      // key aliases
-			Pattern.compile("\\$(all|crossjoin|entity|metadata|batch|root|filter|each|query)"),
+			Pattern.compile("\\$(all|crossjoin|entity)"), // advanced URL forms (backlog package)
+			Pattern.compile("/[A-Za-z_]\\w*'"),        // key-as-segment with a RAW apostrophe (O'Neil)
+			Pattern.compile("\\{"));                   // JSON values in key predicates
+
+	/**
+	 * Path cases owned by ANOTHER layer, not generated: function-call segments are routed by
+	 * the SERVLET before the resource parser runs (ADR-0005: the parser deliberately does not
+	 * model them), {@code $metadata}/{@code $batch}/… are servlet routes, slashes inside
+	 * string keys and percent-encoding are URL-decoding concerns.
+	 */
+	private static final List<Pattern> OUT_OF_SCOPE_PATHS = List.of(
+			Pattern.compile("\\.[\\w.]*\\("),          // qualified function/action call segments
+			Pattern.compile("\\(\\s*\\)"),             // parameterless function/action call segments
+			Pattern.compile("\\)\\s*\\("),             // composed function calls Fn(...)(key)
+			Pattern.compile("\\$(metadata|batch|root|filter|each|query)"),
 			Pattern.compile("'[^']*/"),                // slash inside string key (URL-decoding layer)
-			Pattern.compile("%[0-9A-Fa-f]{2}"),        // percent-encoding = URL-decoding layer
-			Pattern.compile("/-?\\d"),                 // Key-as-Segment / ordered-collection index
-			Pattern.compile("/[^/()]*'"),              // Key-as-Segment with string key
-			Pattern.compile("=|\\{"));                 // parameter assignments / JSON in path
+			Pattern.compile("%[0-9A-Fa-f]{2}"));       // percent-encoding = URL-decoding layer
 
 	/**
 	 * Path negatives that hinge on model categories from the TC {@code Constraints} block
@@ -100,26 +113,37 @@ class CoreYamlAbnfAcceptanceTest {
 	@TestFactory
 	List<DynamicTest> expressionCases() throws Exception {
 		List<DynamicTest> tests = new ArrayList<>();
+		int omitted = 0;
 		for (Case c : cases()) {
 			if (!EXPRESSION_RULES.contains(c.rule())) {
 				continue;
 			}
+			if (outOfScope(OUT_OF_SCOPE, c.input()) || queryOptionLevelNegative(c)) {
+				omitted++;
+				continue;
+			}
 			tests.add(DynamicTest.dynamicTest(label(c), () -> runExpressionCase(c)));
 		}
+		omitted("expression", omitted);
 		return tests;
 	}
 
 	@TestFactory
 	List<DynamicTest> resourcePathCases() throws Exception {
 		List<DynamicTest> tests = new ArrayList<>();
+		int omitted = 0;
 		for (Case c : cases()) {
 			if (!"resourcePath".equals(c.rule())) {
+				continue;
+			}
+			if (outOfScope(OUT_OF_SCOPE_PATHS, c.input())
+					|| (c.negative() && SEMANTIC_NEGATIVE_PATH.matcher(c.name()).find())) {
+				omitted++;
 				continue;
 			}
 			tests.add(DynamicTest.dynamicTest(label(c), () -> {
 				assumePathJudgeable(c.input());
 				if (c.negative()) {
-					assumePathNegativeJudgeable(c);
 					assertThrows(ODataQueryParseException.class, () -> resourceParser.parse(c.input()),
 							"parser must reject: " + c.input());
 				} else {
@@ -127,14 +151,23 @@ class CoreYamlAbnfAcceptanceTest {
 				}
 			}));
 		}
+		omitted("resourcePath", omitted);
 		return tests;
 	}
 
 	@TestFactory
 	List<DynamicTest> queryOptionsCases() throws Exception {
 		List<DynamicTest> tests = new ArrayList<>();
+		int omitted = 0;
 		for (Case c : cases()) {
 			if (!"queryOptions".equals(c.rule())) {
+				continue;
+			}
+			boolean judgeable = c.negative()
+					? judgeableOption(optionAt(c.input(), c.failAt()))
+					: hasJudgeableOption(c.input());
+			if (!judgeable) {
+				omitted++; // non-expression options ($top, $search, $expand trees, …) = servlet layer
 				continue;
 			}
 			tests.add(DynamicTest.dynamicTest(label(c), () -> {
@@ -145,19 +178,77 @@ class CoreYamlAbnfAcceptanceTest {
 				}
 			}));
 		}
+		omitted("queryOptions", omitted);
 		return tests;
 	}
 
 	@TestFactory
 	List<DynamicTest> relativeUriCases() throws Exception {
 		List<DynamicTest> tests = new ArrayList<>();
+		int omitted = 0;
 		for (Case c : cases()) {
 			if (!"odataRelativeUri".equals(c.rule())) {
 				continue;
 			}
+			String uri = c.input();
+			int q = uri.indexOf('?');
+			String path = q < 0 ? uri : uri.substring(0, q);
+			boolean pathOut = outOfScope(OUT_OF_SCOPE_PATHS, path);
+			boolean judgeable;
+			if (!c.negative()) {
+				judgeable = !pathOut;
+			} else if (q < 0 || c.failAt() <= q) {
+				judgeable = !pathOut && !SEMANTIC_NEGATIVE_PATH.matcher(c.name()).find();
+			} else {
+				judgeable = judgeableOption(optionAt(uri.substring(q + 1), c.failAt() - q - 1));
+			}
+			if (!judgeable) {
+				omitted++;
+				continue;
+			}
 			tests.add(DynamicTest.dynamicTest(label(c), () -> runRelativeUri(c)));
 		}
+		omitted("odataRelativeUri", omitted);
 		return tests;
+	}
+
+	// --- generation-time scoping (documented omission, never a hidden gap) ---
+
+	private static boolean outOfScope(List<Pattern> patterns, String input) {
+		return patterns.stream().anyMatch(p -> p.matcher(input).find());
+	}
+
+	/**
+	 * Negatives whose defect is the OPTION SYNTAX itself ({@code $filter =…} with a space):
+	 * that is URL-layer syntax the URI parser owns, not the expression grammar's.
+	 */
+	private static boolean queryOptionLevelNegative(Case c) {
+		return c.negative() && QUERY_OPTION_PREFIX.matcher(c.input()).lookingAt()
+				&& Pattern.compile("=\\s").matcher(c.input()).find();
+	}
+
+	/** An option this bundle can judge: $filter/$orderby with a value we own (no URL escapes). */
+	private static boolean judgeableOption(String option) {
+		int eq = option.indexOf('=');
+		return eq > 0 && SUPPORTED_OPTION.matcher(option.substring(0, eq)).matches()
+				&& !outOfScope(OUT_OF_SCOPE, option.substring(eq + 1));
+	}
+
+	private static boolean hasJudgeableOption(String query) {
+		for (String option : query.split("&", -1)) {
+			if (judgeableOption(option)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Documents how many cases a factory left out because another layer owns them. */
+	private static void omitted(String factory, int count) {
+		if (count > 0) {
+			System.out.println("[CoreYamlAbnf] " + factory + ": " + count
+					+ " cases not generated — owned by the URL/servlet layer or not judgeable syntax-only");
+		}
 	}
 
 	// --- odataRelativeUri: the '?' split is the URI parser's URL-layer contract ---
@@ -169,13 +260,14 @@ class CoreYamlAbnfAcceptanceTest {
 		if (!c.negative()) {
 			assumePathJudgeable(path);
 			resourceParser.parse(path);
-			if (q >= 0) {
+			// the query part only participates when it carries an option we own — a foreign
+			// option ($top, $search, …) is the servlet's subject, the parsed PATH still counts
+			if (q >= 0 && hasJudgeableOption(uri.substring(q + 1))) {
 				runOptionsPositive(uri.substring(q + 1));
 			}
 		} else if (q < 0 || c.failAt() <= q) {
 			// invalid portion starts in the resource path
 			assumePathJudgeable(path);
-			assumePathNegativeJudgeable(c);
 			assertThrows(ODataQueryParseException.class, () -> resourceParser.parse(path),
 					"parser must reject: " + path);
 		} else {
@@ -186,13 +278,8 @@ class CoreYamlAbnfAcceptanceTest {
 
 	private void assumePathJudgeable(String path) {
 		Assumptions.assumeTrue(!path.isBlank()
-				&& UNSUPPORTED_PATHS.stream().noneMatch(p -> p.matcher(path).find()),
-				"outside the v1 resource-path subset (ADR-0005 backlog)");
-	}
-
-	private void assumePathNegativeJudgeable(Case c) {
-		Assumptions.assumeFalse(SEMANTIC_NEGATIVE_PATH.matcher(c.name()).find(),
-				"model-category negative — not judgeable syntax-only");
+				&& BACKLOG_PATHS.stream().noneMatch(p -> p.matcher(path).find()),
+				"resource-path parser backlog (ADR-0005)");
 	}
 
 	// --- queryOptions: name=value pairs, expression-bearing values through the grammar ---
@@ -236,11 +323,6 @@ class CoreYamlAbnfAcceptanceTest {
 	// --- expression rules ---
 
 	private void runExpressionCase(Case c) {
-		// the query-option name itself ($ optional, case-insensitive, no space before the value)
-		// is URL-layer syntax — the URI parser's job, not the expression grammar's
-		Assumptions.assumeFalse(c.negative() && QUERY_OPTION_PREFIX.matcher(c.input()).lookingAt()
-				&& Pattern.compile("=\\s").matcher(c.input()).find(),
-				"query-option-level case (URI parser layer)");
 		String input = QUERY_OPTION_PREFIX.matcher(c.input()).replaceFirst("");
 		assumeExpressionJudgeable(input);
 		if (c.negative()) {
@@ -252,8 +334,8 @@ class CoreYamlAbnfAcceptanceTest {
 	}
 
 	private void assumeExpressionJudgeable(String input) {
-		Assumptions.assumeTrue(UNSUPPORTED.stream().noneMatch(p -> p.matcher(input).find()),
-				"outside the v1 grammar subset (E4 backlog)");
+		Assumptions.assumeTrue(BACKLOG.stream().noneMatch(p -> p.matcher(input).find()),
+				"expression grammar backlog (E4)");
 	}
 
 	private static final Pattern QUERY_OPTION_PREFIX =

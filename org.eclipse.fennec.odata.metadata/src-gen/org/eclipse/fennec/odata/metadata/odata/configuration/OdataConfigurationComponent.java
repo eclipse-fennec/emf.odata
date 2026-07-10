@@ -51,10 +51,6 @@ import org.osgi.service.condition.Condition;
 @Capability( namespace = "osgi.service", attribute = { "objectClass:List<String>=\"org.eclipse.fennec.odata.metadata.odata.OdataFactory, org.eclipse.emf.ecore.EFactory\"" , "uses:=\"org.eclipse.emf.ecore,org.eclipse.fennec.odata.metadata.odata\"" })
 @Capability( namespace = "osgi.service", attribute = { "objectClass:List<String>=\"org.eclipse.fennec.odata.metadata.odata.OdataPackage, org.eclipse.emf.ecore.EPackage\"" , "uses:=\"org.eclipse.emf.ecore,org.eclipse.fennec.odata.metadata.odata\"" })
 @Capability( namespace = "osgi.service", attribute = { "objectClass:List<String>=\"org.eclipse.fennec.emf.osgi.configurator.EPackageConfigurator\"" , "uses:=\"org.eclipse.emf.ecore,org.eclipse.fennec.odata.metadata.odata\"" })
-@Capability( namespace = "osgi.service", attribute = { "objectClass:List<String>=\"org.eclipse.fennec.odata.metadata.odata.util.OdataResourceFactoryImpl, org.eclipse.emf.ecore.resource.Resource$Factory\"" , "uses:=\"org.eclipse.emf.ecore.resource,org.eclipse.fennec.odata.metadata.odata.util\"" })
-@Capability( namespace = "osgi.service", attribute = { "objectClass:List<String>=\"org.eclipse.fennec.odata.metadata.odata.OdataFactory, org.eclipse.emf.ecore.EFactory\"" , "uses:=\"org.eclipse.emf.ecore,org.eclipse.fennec.odata.metadata.odata\"" })
-@Capability( namespace = "osgi.service", attribute = { "objectClass:List<String>=\"org.eclipse.fennec.odata.metadata.odata.OdataPackage, org.eclipse.emf.ecore.EPackage\"" , "uses:=\"org.eclipse.emf.ecore,org.eclipse.fennec.odata.metadata.odata\"" })
-@Capability( namespace = "osgi.service", attribute = { "objectClass:List<String>=\"org.eclipse.fennec.emf.osgi.configurator.EPackageConfigurator\"" , "uses:=\"org.eclipse.emf.ecore,org.eclipse.fennec.odata.metadata.odata\"" })
 @Capability( namespace = "osgi.service", attribute = { "objectClass:List<String>=\"org.osgi.service.condition.Condition\"" , "uses:=org.osgi.service.condition" })
 public class OdataConfigurationComponent {
 	

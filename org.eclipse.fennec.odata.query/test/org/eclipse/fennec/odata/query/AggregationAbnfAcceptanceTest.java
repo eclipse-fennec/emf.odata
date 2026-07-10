@@ -46,8 +46,8 @@ class AggregationAbnfAcceptanceTest {
 	private static final Pattern SEMANTIC_NEGATIVE = Pattern.compile(
 			"forbidden|requires method|requires with|no two consecutive|collection-valued");
 
-	/** Aggregation constructs the $apply submodel deliberately does not cover yet. */
-	private static final List<Pattern> UNSUPPORTED = List.of(
+	/** Aggregation constructs the $apply submodel deliberately does not cover YET (backlog). */
+	private static final List<Pattern> BACKLOG = List.of(
 			Pattern.compile("\\b(expand|search|nest|addnested|join|outerjoin|traverse"
 					+ "|ancestors|descendants|rolluprecursive)\\s*\\("),
 			Pattern.compile("\\$all"),                            // $all grouping
@@ -55,15 +55,18 @@ class AggregationAbnfAcceptanceTest {
 			Pattern.compile("[A-Za-z_]\\w*\\.[A-Za-z_]\\w*\\s*\\("), // qualified custom FUNCTIONS
 			// qualified names OUTSIDE 'with' clauses = type casts in paths (aggrCastPath)
 			Pattern.compile("(?<!with )\\b[A-Za-z_]\\w*\\.[A-Za-z_]"),
-			Pattern.compile("@"),                                 // annotations/aliases
-			Pattern.compile("&"),                                 // combined query options (URL layer)
-			Pattern.compile("%[0-9A-Fa-f]{2}"),                   // percent-encoding (URL layer)
-			Pattern.compile("\\(\\s*\\)"),                        // empty argument lists
+			Pattern.compile("@"),                                 // annotations / parameter aliases
 			Pattern.compile("\\w\\('"));                          // keyed path segments in expressions
+
+	/** Cases owned by ANOTHER layer — never judgeable here, not generated. */
+	private static final List<Pattern> OUT_OF_SCOPE = List.of(
+			Pattern.compile("&"),                                 // combined query options (URL layer)
+			Pattern.compile("%[0-9A-Fa-f]{2}"));                  // percent-encoding (URL layer)
 
 	@TestFactory
 	List<DynamicTest> oasisAggregationCases() throws Exception {
 		List<DynamicTest> tests = new ArrayList<>();
+		int omitted = 0;
 		for (Case testCase : OasisAbnfYaml.load(OasisAbnfYaml.findResource(
 				"testdata/odata-aggregation-testcases.yaml",
 				"org.eclipse.fennec.odata.query/testdata/odata-aggregation-testcases.yaml"))) {
@@ -71,17 +74,20 @@ class AggregationAbnfAcceptanceTest {
 				continue;
 			}
 			String expression = testCase.input().substring("$apply=".length());
+			// another layer's subject (combined options, percent-encoding) or a MODEL-category
+			// negative (the aggregation ABNF encodes collection/primitive property classes in
+			// rule names) — never judgeable in this syntax-only harness, so not generated
+			if (OUT_OF_SCOPE.stream().anyMatch(p -> p.matcher(expression).find())
+					|| (testCase.negative() && SEMANTIC_NEGATIVE.matcher(testCase.name()).find())) {
+				omitted++;
+				continue;
+			}
 			String label = "$apply " + (testCase.negative() ? "x " : "ok ") + expression
 					+ " [" + testCase.name() + "]";
 			tests.add(DynamicTest.dynamicTest(label, () -> {
 				Assumptions.assumeTrue(
-						UNSUPPORTED.stream().noneMatch(p -> p.matcher(expression).find()),
-						"outside the v1 $apply subset (E4 aggregation backlog)");
-				// the aggregation ABNF encodes MODEL categories (collection vs primitive
-				// property classes) — negatives depending on them are semantic, not syntactic
-				Assumptions.assumeFalse(testCase.negative()
-						&& SEMANTIC_NEGATIVE.matcher(testCase.name()).find(),
-						"model-category negative — not judgeable syntax-only");
+						BACKLOG.stream().noneMatch(p -> p.matcher(expression).find()),
+						"$apply submodel backlog (E4 aggregation)");
 				if (testCase.negative()) {
 					assertThrows(ODataQueryParseException.class, () -> parse(expression),
 							"grammar must reject: " + expression);
@@ -89,6 +95,10 @@ class AggregationAbnfAcceptanceTest {
 					parse(expression);
 				}
 			}));
+		}
+		if (omitted > 0) {
+			System.out.println("[AggregationAbnf] " + omitted
+					+ " cases not generated — URL layer or model-category negatives");
 		}
 		return tests;
 	}

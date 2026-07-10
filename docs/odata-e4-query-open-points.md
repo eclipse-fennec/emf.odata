@@ -91,3 +91,36 @@ kein Olingo-Expression-Parsing), §3.6.1 (Caching am Metadata-Service).
   weiterhin die canonical functions (unqualifizierte Calls dort = functionCall).
   Ausführung: Evaluator/Backends kennen die Operationen nicht → ehrlicher Fehler, kein
   stilles Raten. XML-ABNF-Harness: 161 aktiv (vorher 126).
+
+---
+
+## Priorisierung der Rest-Lücken (Plan, 2026-07-10)
+
+Die 211 Harness-Skips = exakt diese Features. Vorschlag in drei Wellen (strategisch bleiben
+Delta/Change-Tracking und der Release-Weg auf `main` VOR Welle 2/3 einsortiert):
+
+**Welle 1 — Quick Wins (~1–2 Tage, ≈40 Skips):**
+1. Typ-Casts in AUSDRUCKS-Pfaden `…/Ns.SubType/prop` (18) — Grammatik-Segment + Builder
+   (Kontext-EClass-Wechsel wie im Resource-Parser), Evaluator = instanceof-Filter, JPA =
+   `cb.treat()` auf dem Join (Root-Cast-Pushdown existiert schon). Rundet Derived-Types ab.
+2. Gefiltertes `$count($filter=…)` + Inline-`$filter(…)`-Segmente (6) — OCL
+   `select(...)->size()`; JPA korrelierte Count-Subquery.
+3. Literal-Reste (≈12): Enum-FLAGS (`'Read,Write'` → Set von EnumLiteralExp), unäres Minus,
+   NaN/INF, `binary'…'`; dazu die Lexer-Randfälle (roher Apostroph im Key-Segment,
+   keyed Segmente in Aggregat-Pfaden).
+
+**Welle 2 — mittlere Pakete (je 1–2 Tage, ≈85 Skips):**
+4. `$it`/`$this` (implizite Variable ist im AST schon da) und `$these` im $apply-Kontext;
+   `$root` braucht Backend-Semantik (Cross-Ressourcen-Zugriff) → ggf. splitten (34).
+5. JSON-Literale als Funktions-/Key-Argumente (51) — Lexer/Grammatik für Objekt/Array-
+   Literale; Hauptnutzen: Collection-Parameter für bound functions.
+6. Parameter-/Key-Aliase in Pfaden (3, fällt bei 4/5 quasi mit ab).
+
+**Welle 3 — Advanced (eigene Arbeitspakete, ≈74 Skips):**
+7. `$apply`-Hierarchie-/Struktur-Trafos: search, nest/addnested, join/outerjoin,
+   ancestors/descendants/traverse, rolluprecursive (41) + Custom-Functions als Trafo (27) —
+   braucht RecHier-Modelle bzw. Operations-Dispatch; Praxisnutzen prüfen, bevor gebaut wird.
+8. `$crossjoin`/`$all`/`$entity` (6) — zusammen mit async/`$skiptoken`/`$levels` als
+   Advanced-URL-Paket (Next-Steps Punkt 5).
+9. `@Ns.Term`-Annotations-Auswertung in Ausdrücken (12) — braucht Vokabular-Werte zur
+   Laufzeit; niedriger Praxisnutzen, ans Ende.

@@ -423,3 +423,20 @@ gradle-up-to-date, wird der Marker nie neu geschrieben → Bundle unsichtbar →
 schlägt mit wechselnden „cannot be resolved“ fehl. Guard im Root-`build.gradle`:
 `jar` gilt nur als up-to-date, solange `generated/buildfiles` existiert. Parallel laufende
 Eclipse-IDE auf demselben Workspace verschärft das (baut Jars ohne Marker).
+
+### Harness-Bereinigung: Skip-Semantik geschärft (2026-07-10, Nachtrag)
+
+Die drei ABNF-Harnesses unterscheiden jetzt ZWEI Auslassungs-Arten mit klarer Semantik:
+`OUT_OF_SCOPE` = das Thema gehört einer ANDEREN Schicht (Percent-Encoding = URL-Decoding,
+Nicht-Expression-Options/$search/Funktions-Routing = Servlet, Modell-Kategorie-Negative =
+syntax-only nicht beurteilbar) → diese Fälle werden GAR NICHT mehr generiert (dokumentierte
+Auslassung, `System.out`-Zeile pro Factory). `BACKLOG` = geplante Parser-Features →
+weiterhin Assumption-Skip als Radar. Dabei die im Core-YAML-Harness STALE gewordenen Skips
+freigeschaltet (Key-as-Segment, Compound-Keys, AP-10-Funktionen in Pfaden, positive
+odataRelativeUri deren Query-Teil fremd ist — der geprüfte PFAD zählt jetzt).
+
+Stand: 716 generierte ABNF-Fälle, 505 verifiziert (vorher 437), 211 Skips — und JEDER
+verbleibende Skip ist echtes Backlog: 111 Expression-Grammatik (E4: $it/$root, Casts in
+Pfaden, JSON-Literale, Geo/Binary/NaN, Enum-Flags, unäres Minus, @Ns.Term), 73 $apply-
+Submodell (search/nest/join/traverse/rolluprecursive, Custom-Functions, $these), 27
+Resource-Path-Parser (Key-Aliase, $crossjoin/$all/$entity, roher Apostroph im Key-Segment).

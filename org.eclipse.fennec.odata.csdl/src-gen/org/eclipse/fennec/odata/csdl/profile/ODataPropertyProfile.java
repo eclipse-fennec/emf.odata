@@ -258,7 +258,7 @@ public interface ODataPropertyProfile extends EObject {
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
 	 * <!-- begin-model-doc -->
-	 * SRID facet — numeric or the symbolic "variable"; null when absent.
+	 * SRID facet — numeric or the symbolic symbolic "variable"quot;Variablesymbolic "variable"quot;; null when absent.
 	 * <!-- end-model-doc -->
 	 * @return the value of the '<em>Srid</em>' attribute.
 	 * @see #setSrid(String)
