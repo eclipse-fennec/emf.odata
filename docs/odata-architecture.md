@@ -365,3 +365,61 @@ Nächste Schritte (Priorität, Intermediate-Plan 2026-07-06):
 6. CSDL-JSON (Q9) — Validierungsbasis `csdl.schema.json` liegt in `reference/specs/`.
 7. OSGi-Tests für codec.json/vocabularies; E4 AP-10 (bound functions); E2 AP-2/4/6.
 8. `$search` zuletzt (Intermediate-SHOULD), erst mit echter Pushdown-Story.
+
+## Backlog-Block „Punkte 2+6“ (2026-07-10)
+
+Zehn verschobene Kleinpakete geschlossen (alles grün: `build testOSGi`, 16 Bundles):
+
+1. **$apply-Erweiterungen (E4):** Grammatik jetzt prädikat-gesteuert (Soft-Keywords via
+   `_input.LT(1)`), Submodell + In-Memory-Ausführung für `topcount/topsum/toppercent`
+   (+bottom-Spiegel), `concat`, `top/skip`, `orderby`, `identity` und `rollup`-Grouping-Sets;
+   `aggregate … from`, Custom-Methoden (`with Ns.Method`), Custom-Aggregates und benannte
+   Hierarchien parsen ins Modell und werden in BEIDEN Backends ehrlich mit 501 beantwortet.
+   `path/$count`-Aggregate (Summe der Größen) in-memory. Aggregation-ABNF: 82 statt 31
+   verifiziert (84 Skips = Radar). JPA: rollup/from/custom → UOE.
+2. **Echtes `odata.metadata=none`:** alle Envelope-Stellen über `envelopeHead()/withContext()`
+   — kein `@odata.context`, kein Typ-Diskriminator; `@odata.count`/`@odata.nextLink` bleiben.
+   ETag ist jetzt auf die kanonische (minimal-)Serialisierung GEPINNT, variiert also nicht
+   mehr mit dem angefragten Level.
+3. **IEEE754Compatible:** Codec-Opt-in (`ODataJsonResourceImpl.ieee754Compatible(true)`),
+   Server verhandelt über Accept/`$format`, echot den Content-Type-Parameter, `@odata.count`
+   und $apply-Zeilen als Strings, Write-Payloads mit deklariertem Parameter dekodieren exakt.
+   Nebenfund: der Codec schrieb `Edm.Decimal` IMMER als String — jetzt default JSON-Zahl
+   ([OData-JSON] 7.1), Strings nur unter IEEE754Compatible.
+4. **Key-as-Segment ([OData-URL] 4.3.3, Graph-Stil):** Grammatik-`KeySegment` für Literale,
+   Servlet-Normalisierung `keyAsSegment()` (deklarierte Properties GEWINNEN die Ambiguität,
+   unbekannte Namen auf Collections falten als String-Key, quotiert zum Backend). Gilt für
+   GET und Writes. Nebenfix: `contextRoot()` = RequestURI minus PathInfo (Context-URLs auf
+   mehrsegmentigen Pfaden waren schief).
+5. **Rich-Expression-Annotations (E2 AP-5-Rest):** `CsdlAnnotationExpressions` mappt
+   `<Record>`/`<Collection>`/Path-Formen/`<EnumMember>` ↔ kompaktes [OData-CSDL-JSON]-
+   Value-Encoding als EAnnotation-Detail-String — dieselben Knoten speisen CSDL-XML UND
+   CSDL-JSON (Writer/Reader). Jackson bleibt optional (`JacksonSupport.PRESENT`-Gate).
+6. **`ODataRequestFilter` (req §5.1.1):** Whiteboard-Servlet-Filter vor dem Servlet,
+   erzwingt die RequestLimits (Expression-Länge/-Tiefe aller Options + @Aliase, Pfadlänge)
+   als 400 VOR jeder Dispatch-Arbeit; Servlet-Guards bleiben (Defence in depth).
+7. **OSGi-Tests codec.json + vocabularies** (in `metadata.tests`): odatajson-Factory über
+   Whiteboard + Vocabulary-EPackage-Services. FUND dabei: Vocabulary-Bootstrap ließ
+   Cross-Vocabulary-Referenzen (Capabilities→Core) unaufgelöst → NPE in der Metadata-
+   Registrierung. Fix: Abhängigkeits-geordnetes `loadAll()` + öffentliches
+   `EdmToEcoreConverter.resolveReferences(pkg, byNamespace)` (Rest wird entfernt, wie E8).
+8. **E4 AP-10 Bound Functions in Member-Pfaden:** `boundCall`-Segmente (qualifiziert ODER
+   unqualifiziert, named/positional Args) → `OperationCallExp` mit qualifiziertem Namen,
+   eager gegen `EClass.getEAllOperations()` aufgelöst, Args in Deklarationsreihenfolge;
+   `/$count`- und Lambda-Tails auf Operations-Ergebnissen. XML-ABNF: 161 statt 126 verifiziert.
+9. **E2 AP-4/6-Reste:** SRID- (`OData.SRID`, numerisch oder symbolisch `variable` →
+   TVariable-Enumerator!) und Unicode-Facette beidseitig; ALLE Facetten kommen beim Read
+   jetzt als `@OData.*`-Details zurück (Round-Trip statt verlustbehaftet). Cross-Package:
+   `typeName`/`baseType` qualifizieren mit dem Namespace des ZIEL-Pakets (`typeNamespace()`).
+   Profile-Modell-Kopien in emf.odata.metadata synchronisiert.
+10. **AP-1c-Bereinigung:** die nie befüllten resolved-Felder (`kind`, `qualifiedName`,
+    `keyPropertyNames`, `openType`, `hasStream`, `baseTypeQualifiedName`) am metadata-seitigen
+    `ODataClassProfile` entfernt — Single Source ist der csdl-Profil-Cross-Ref.
+
+**BUILD-GOTCHA (Ursache der „zufälligen“ resolve.test-Fehler, bestand schon vor dem Block):**
+bnd-`-generate` (und IDE-Builds) löschen `generated/buildfiles` — den Marker, über den das
+Workspace-Repository die Bundles eines Projekts sieht. Ist das jar-Task gleichzeitig
+gradle-up-to-date, wird der Marker nie neu geschrieben → Bundle unsichtbar → Resolution
+schlägt mit wechselnden „cannot be resolved“ fehl. Guard im Root-`build.gradle`:
+`jar` gilt nur als up-to-date, solange `generated/buildfiles` existiert. Parallel laufende
+Eclipse-IDE auf demselben Workspace verschärft das (baut Jars ohne Marker).

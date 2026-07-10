@@ -40,6 +40,7 @@ import org.open.oasis.docs.odata.ns.edmx.TEdmx;
 import org.open.oasis.docs.odata.ns.edmx.TInclude;
 import org.open.oasis.docs.odata.ns.edmx.TReference;
 
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
@@ -338,6 +339,11 @@ public final class CsdlJsonWriter {
 				node.put(member, a.getString1());
 			} else if (a.getEnumMember1() != null && !a.getEnumMember1().isEmpty()) {
 				node.put(member, String.join(" ", a.getEnumMember1()));
+			} else {
+				JsonNode rich = CsdlAnnotationExpressions.richNode(a);
+				if (rich != null) { // Record/Collection/path-flavoured values
+					node.set(member, rich);
+				}
 			}
 		}
 	}

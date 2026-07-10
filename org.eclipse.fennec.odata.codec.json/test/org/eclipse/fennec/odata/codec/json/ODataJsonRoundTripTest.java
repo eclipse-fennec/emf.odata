@@ -109,7 +109,7 @@ class ODataJsonRoundTripTest {
 		assertTrue(json.contains("\"releaseDate\":\"2024-05-03\""), "Edm.Date = ISO date without time: " + json);
 		assertTrue(json.contains("\"modified\":\"2024-05-03T10:15:30Z\""), "Edm.DateTimeOffset = ISO instant: " + json);
 		assertTrue(json.contains("\"photo\":\"-_A\""), "Edm.Binary = base64url without padding: " + json);
-		assertTrue(json.contains("19.99"), "Edm.Decimal stays a JSON number: " + json);
+		assertTrue(json.contains("\"price\":19.99"), "Edm.Decimal is a JSON number: " + json);
 		assertTrue(json.contains("\"guid\":\"f89dee73-af9f-4cd4-b330-db93c25ff3c7\""), "Edm.Guid passthrough: " + json);
 	}
 
@@ -183,8 +183,8 @@ class ODataJsonRoundTripTest {
 		assertTrue(json.contains("\"openingTime\":\"08:30\""), "Edm.TimeOfDay (seconds omitted): " + json);
 		assertTrue(json.contains("\"tags\":[\"a\",\"b\"]"), "collection of primitives: " + json);
 		assertTrue(json.contains("\"color\":\"Green\""), "enum by member NAME, not ordinal: " + json);
-		// Int64: currently a bare JSON number. Exact for a Java/long client; a JavaScript/double
-		// client loses precision above 2^53 — the IEEE754Compatible string form is a known gap.
+		// Int64 default wire form: a bare JSON number (exact for a Java/long client). Clients
+		// whose numbers are IEEE754 doubles opt into the string form — see ieee754Compatible().
 		assertTrue(json.contains("\"serial\":9007199254740993"), "Int64 wire form: " + json);
 
 		EObject loaded = load(json);
@@ -194,6 +194,34 @@ class ODataJsonRoundTripTest {
 		assertEquals("P1Y6M", loaded.eGet(feature("warranty")));
 		assertEquals(java.util.List.of("a", "b"), loaded.eGet(feature("tags")));
 		assertEquals("Green", String.valueOf(loaded.eGet(feature("color"))));
+	}
+
+	@Test
+	@DisplayName("IEEE754Compatible=true: Edm.Int64/Edm.Decimal travel as strings, exactly")
+	void ieee754Compatible() throws IOException {
+		EObject product = pkg.getEFactoryInstance().create(productClass);
+		product.eSet(idAttr, "p11");
+		product.eSet(priceAttr, new BigDecimal("19.99"));
+		long bigSerial = 9007199254740993L; // 2^53 + 1 — the value doubles cannot hold
+		product.eSet(feature("serial"), bigSerial);
+
+		ODataJsonResourceImpl resource = new ODataJsonResourceImpl(
+				URI.createURI("test://ieee754.odatajson"), metadataService).ieee754Compatible(true);
+		resource.getContents().add(product);
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		resource.save(out, null);
+		String json = out.toString(StandardCharsets.UTF_8);
+		assertTrue(json.contains("\"serial\":\"9007199254740993\""), "Int64 as string: " + json);
+		assertTrue(json.contains("\"price\":\"19.99\""), "Decimal as string: " + json);
+
+		ODataJsonResourceImpl loadResource = new ODataJsonResourceImpl(
+				URI.createURI("test://ieee754-load.odatajson"), metadataService).ieee754Compatible(true);
+		Map<Object, Object> options = new HashMap<>();
+		options.put(CodecResource.CODEC_ROOT_TYPE, productClass);
+		loadResource.load(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), options);
+		EObject loaded = loadResource.getContents().get(0);
+		assertEquals(bigSerial, ((Number) loaded.eGet(feature("serial"))).longValue());
+		assertEquals(0, new BigDecimal("19.99").compareTo((BigDecimal) loaded.eGet(priceAttr)));
 	}
 
 	@Test

@@ -29,6 +29,7 @@ import org.osgi.annotation.versioning.ProviderType;
  * <ul>
  *   <li>{@link org.eclipse.fennec.odata.query.apply.GroupByTransformation#getGroupingProperties <em>Grouping Properties</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.query.apply.GroupByTransformation#getThen <em>Then</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.query.apply.GroupByTransformation#getRollups <em>Rollups</em>}</li>
  * </ul>
  *
  * @see org.eclipse.fennec.odata.query.apply.ApplyPackage#getGroupByTransformation()
@@ -73,5 +74,20 @@ public interface GroupByTransformation extends ApplyTransformation {
 	 * @generated
 	 */
 	void setThen(ApplyTransformation value);
+
+	/**
+	 * Returns the value of the '<em><b>Rollups</b></em>' containment reference list.
+	 * The list contents are of type {@link org.eclipse.fennec.odata.query.apply.RollupHierarchy}.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * rollup(...) grouping elements: each hierarchy contributes its level prefixes as additional grouping sets (leveled hierarchies; rolluprecursive is not covered).
+	 * <!-- end-model-doc -->
+	 * @return the value of the '<em>Rollups</em>' containment reference list.
+	 * @see org.eclipse.fennec.odata.query.apply.ApplyPackage#getGroupByTransformation_Rollups()
+	 * @model containment="true"
+	 * @generated
+	 */
+	EList<RollupHierarchy> getRollups();
 
 } // GroupByTransformation

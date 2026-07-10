@@ -68,11 +68,9 @@ class AbnfAcceptanceTest {
 			Pattern.compile("[A-Za-z_][\\w.]*'[^']*,"),              // enum FLAG combinations (comma list)
 			Pattern.compile("[Nn][Aa][Nn]|INF"),                     // nanInfinity literals
 			Pattern.compile("\\bdiv\\s+by\\b"),                      // spaced "div by" (only divby is one keyword)
-			Pattern.compile("\\.[\\w.]*\\("),                        // namespace-qualified function calls
 			Pattern.compile("(^|/)[A-Za-z_]\\w*\\.[A-Za-z_][\\w.]*(/|$| )"), // type-cast path segments
 			Pattern.compile("\"|\\{|\\["),                           // JSON-ish / string-with-quote forms
-			Pattern.compile("%[0-9A-Fa-f]{2}"),                      // percent-encoding = URL layer (URI parser)
-			Pattern.compile("/(?!any\\(|all\\()[A-Za-z_]\\w*\\("));  // bound/composed functions in paths (not lambdas)
+			Pattern.compile("%[0-9A-Fa-f]{2}"));                     // percent-encoding = URL layer (URI parser)
 
 	/** v1 resource-path subset gaps (ADR-0005 backlog): functions, key aliases, ... —
 	 * named/multi-part key predicates parse since the compound-key grammar landed. */
@@ -82,8 +80,7 @@ class AbnfAcceptanceTest {
 			Pattern.compile("\\$(all|crossjoin|entity|metadata|batch|root|filter|each|query)"),
 			Pattern.compile("'[^']*/"),                // slash inside string key (URL-decoding layer)
 			Pattern.compile("%[0-9A-Fa-f]{2}"),        // percent-encoding = URL-decoding layer
-			Pattern.compile("/-?\\d"),                 // Key-as-Segment / ordered-collection index
-			Pattern.compile("/[^/()]*'"),              // Key-as-Segment with string key
+			Pattern.compile("/[A-Za-z_]\\w*'"),        // key-as-segment with a RAW apostrophe (O'Neil)
 			Pattern.compile("\\{"));                   // JSON in path
 
 	@TestFactory

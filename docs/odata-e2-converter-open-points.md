@@ -93,10 +93,13 @@ Offen:
   qualifizierte Binding-Pfade für derived types; Read-Pfad ignoriert Bindings (kein
   Ecore-Gegenstück, deterministisch regenerierbar).
 
-### AP-4 — Facets: MaxLength / Precision / Scale / SRID / Unicode
-Verlustbehaftet in beiden Richtungen. Quelle auf Ecore-Seite offen (EAnnotation am Feature
-oder eigener EDataType?). Hängt teils an AP-1 (Profile).
-- **Umfang:** mittel.
+### AP-4 — Facets: MaxLength / Precision / Scale / SRID / Unicode ✅ erledigt (2026-07-10)
+Quelle = `@OData.*`-EAnnotations am Feature (AP-1-Muster). NEU: `OData.SRID` (numerisch oder
+symbolisch `variable` → TVariable-Enumerator im EDM-Union-Typ) und `OData.Unicode`; Profile
+(`srid`/`unicode`, Kopien in emf.odata.metadata synchron). Read-Pfad schreibt jetzt ALLE
+Facetten (MaxLength/Precision/Scale/DefaultValue/SRID/Unicode) als `@OData.*`-Details zurück
+— Facetten sind nicht mehr verlustbehaftet. Symbolisches `Scale="Variable"` bleibt beim
+Rückschreiben lenient (annInt überspringt).
 
 ### AP-5 — Annotations (Vocabulary Terms): `EAnnotation` ↔ CSDL `Annotation` — TEILWEISE erledigt (2026-07-03)
 - **✅ Write (Core-Terms):** `Computed`/`Immutable` aus dem Profile → `<Annotation
@@ -117,16 +120,21 @@ oder eigener EDataType?). Hängt teils an AP-1 (Profile).
   dezimal→Decimal, sonst String); Read extrahiert alle Attribut-Konstantenformen (String/Bool/Int/
   Decimal/Float/Guid/Date/DateTimeOffset/Duration/TimeOfDay/Binary). Getestet: catalog.ecore
   Round-Trip inkl. XSD + TripPin-Read (`Trip.Concurrency` → Core.Computed).
-- **Offen:** Rich Expressions (`<Record>`, `<Collection>`, Path-Formen — z. B. `Trip.Budget`-artige
-  strukturierte Werte, TripPin `Permissions` EnumMember) werden bewusst übersprungen;
-  `<Annotations Target="…">`-Blöcke (external targeting) und Container-Level-Annotations fehlen;
-  automatische `edmx:Reference`-Emission gibt es nur für Core (generische Terms müssten ihre
-  Vocabulary-Referenz deklarieren).
+- **✅ Rich Expressions (2026-07-10):** `<Record>`/`<Collection>`/Path-Formen (`Path`,
+  `PropertyPath`, `NavigationPropertyPath`, `AnnotationPath`)/`<EnumMember>` round-trippen
+  über `CsdlAnnotationExpressions` — Ecore-seitig als kompaktes [OData-CSDL-JSON]-Value-
+  Encoding im Detail-String, EDM-seitig strukturell; dieselben Knoten speisen CSDL-XML und
+  CSDL-JSON. Jackson bleibt OPTIONAL (ohne Jackson werden rich values wie früher übersprungen).
+- **Offen:** Ausdrucks-Arten außerhalb des Subsets (`Apply`/`If`/Casts/LabeledElement/UrlRef),
+  `<Annotations Target="…">`-Blöcke (external targeting) und Container-Level-Annotations;
+  automatische `edmx:Reference`-Emission gibt es nur für Core.
 
-### AP-6 — Cross-Package / Cross-Schema Typreferenzen
-`typeName`/`baseType` nehmen heute denselben Namespace an. Für EPackage-Composition (req-doc §3.3)
-und mehrere Schemas pro Dokument nötig: qualifizierte Namen über Paketgrenzen, Aliase, Imports.
-- **Umfang:** mittel.
+### AP-6 — Cross-Package / Cross-Schema Typreferenzen ✅ erledigt (2026-07-10)
+Read-Seite (Multi-Schema, Alias-Auflösung, Entfernen unauflösbarer Navs) seit E8
+(`toEPackages(TEdmx)` + jetzt öffentliches `resolveReferences(pkg, byNamespace)` — auch vom
+Vocabulary-Bootstrap genutzt). Write-Seite: `OdataResolver.typeName`/`baseType` qualifizieren
+mit dem Namespace des ZIEL-Pakets (`typeNamespace()`, `@OData.Namespace`-override-aware) —
+Supertypen und Navigationen über Paketgrenzen schreiben korrekt.
 
 ### AP-7 — OpenType / HasStream
 `isOpenType`/`isHasStream` werden gelesen (read-path), aber nicht erzeugt/zurückgeschrieben.

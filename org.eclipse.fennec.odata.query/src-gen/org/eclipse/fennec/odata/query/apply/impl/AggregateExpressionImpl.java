@@ -12,8 +12,12 @@
  */
 package org.eclipse.fennec.odata.query.apply.impl;
 
+import java.util.Collection;
+
 import org.eclipse.emf.common.notify.Notification;
 import org.eclipse.emf.common.notify.NotificationChain;
+
+import org.eclipse.emf.common.util.EList;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.InternalEObject;
@@ -21,9 +25,13 @@ import org.eclipse.emf.ecore.InternalEObject;
 import org.eclipse.emf.ecore.impl.ENotificationImpl;
 import org.eclipse.emf.ecore.impl.MinimalEObjectImpl;
 
+import org.eclipse.emf.ecore.util.EObjectContainmentEList;
+import org.eclipse.emf.ecore.util.InternalEList;
+
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 
 import org.eclipse.fennec.odata.query.apply.AggregateExpression;
+import org.eclipse.fennec.odata.query.apply.AggregateFrom;
 import org.eclipse.fennec.odata.query.apply.AggregateMethod;
 import org.eclipse.fennec.odata.query.apply.ApplyPackage;
 
@@ -38,6 +46,8 @@ import org.eclipse.fennec.odata.query.apply.ApplyPackage;
  *   <li>{@link org.eclipse.fennec.odata.query.apply.impl.AggregateExpressionImpl#getExpression <em>Expression</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.query.apply.impl.AggregateExpressionImpl#getMethod <em>Method</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.query.apply.impl.AggregateExpressionImpl#getAlias <em>Alias</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.query.apply.impl.AggregateExpressionImpl#getCustomMethod <em>Custom Method</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.query.apply.impl.AggregateExpressionImpl#getFrom <em>From</em>}</li>
  * </ul>
  *
  * @generated
@@ -92,6 +102,36 @@ public class AggregateExpressionImpl extends MinimalEObjectImpl.Container implem
 	 * @ordered
 	 */
 	protected String alias = ALIAS_EDEFAULT;
+
+	/**
+	 * The default value of the '{@link #getCustomMethod() <em>Custom Method</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getCustomMethod()
+	 * @generated
+	 * @ordered
+	 */
+	protected static final String CUSTOM_METHOD_EDEFAULT = null;
+
+	/**
+	 * The cached value of the '{@link #getCustomMethod() <em>Custom Method</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getCustomMethod()
+	 * @generated
+	 * @ordered
+	 */
+	protected String customMethod = CUSTOM_METHOD_EDEFAULT;
+
+	/**
+	 * The cached value of the '{@link #getFrom() <em>From</em>}' containment reference list.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getFrom()
+	 * @generated
+	 * @ordered
+	 */
+	protected EList<AggregateFrom> from;
 
 	/**
 	 * <!-- begin-user-doc -->
@@ -209,10 +249,48 @@ public class AggregateExpressionImpl extends MinimalEObjectImpl.Container implem
 	 * @generated
 	 */
 	@Override
+	public String getCustomMethod() {
+		return customMethod;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public void setCustomMethod(String newCustomMethod) {
+		String oldCustomMethod = customMethod;
+		customMethod = newCustomMethod;
+		if (eNotificationRequired())
+			eNotify(new ENotificationImpl(this, Notification.SET, ApplyPackage.AGGREGATE_EXPRESSION__CUSTOM_METHOD, oldCustomMethod, customMethod));
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EList<AggregateFrom> getFrom() {
+		if (from == null) {
+			from = new EObjectContainmentEList<AggregateFrom>(AggregateFrom.class, this, ApplyPackage.AGGREGATE_EXPRESSION__FROM);
+		}
+		return from;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
 	public NotificationChain eInverseRemove(InternalEObject otherEnd, int featureID, NotificationChain msgs) {
 		switch (featureID) {
 			case ApplyPackage.AGGREGATE_EXPRESSION__EXPRESSION:
 				return basicSetExpression(null, msgs);
+			case ApplyPackage.AGGREGATE_EXPRESSION__FROM:
+				return ((InternalEList<?>)getFrom()).basicRemove(otherEnd, msgs);
 		}
 		return super.eInverseRemove(otherEnd, featureID, msgs);
 	}
@@ -231,6 +309,10 @@ public class AggregateExpressionImpl extends MinimalEObjectImpl.Container implem
 				return getMethod();
 			case ApplyPackage.AGGREGATE_EXPRESSION__ALIAS:
 				return getAlias();
+			case ApplyPackage.AGGREGATE_EXPRESSION__CUSTOM_METHOD:
+				return getCustomMethod();
+			case ApplyPackage.AGGREGATE_EXPRESSION__FROM:
+				return getFrom();
 		}
 		return super.eGet(featureID, resolve, coreType);
 	}
@@ -240,6 +322,7 @@ public class AggregateExpressionImpl extends MinimalEObjectImpl.Container implem
 	 * <!-- end-user-doc -->
 	 * @generated
 	 */
+	@SuppressWarnings("unchecked")
 	@Override
 	public void eSet(int featureID, Object newValue) {
 		switch (featureID) {
@@ -251,6 +334,13 @@ public class AggregateExpressionImpl extends MinimalEObjectImpl.Container implem
 				return;
 			case ApplyPackage.AGGREGATE_EXPRESSION__ALIAS:
 				setAlias((String)newValue);
+				return;
+			case ApplyPackage.AGGREGATE_EXPRESSION__CUSTOM_METHOD:
+				setCustomMethod((String)newValue);
+				return;
+			case ApplyPackage.AGGREGATE_EXPRESSION__FROM:
+				getFrom().clear();
+				getFrom().addAll((Collection<? extends AggregateFrom>)newValue);
 				return;
 		}
 		super.eSet(featureID, newValue);
@@ -273,6 +363,12 @@ public class AggregateExpressionImpl extends MinimalEObjectImpl.Container implem
 			case ApplyPackage.AGGREGATE_EXPRESSION__ALIAS:
 				setAlias(ALIAS_EDEFAULT);
 				return;
+			case ApplyPackage.AGGREGATE_EXPRESSION__CUSTOM_METHOD:
+				setCustomMethod(CUSTOM_METHOD_EDEFAULT);
+				return;
+			case ApplyPackage.AGGREGATE_EXPRESSION__FROM:
+				getFrom().clear();
+				return;
 		}
 		super.eUnset(featureID);
 	}
@@ -291,6 +387,10 @@ public class AggregateExpressionImpl extends MinimalEObjectImpl.Container implem
 				return method != METHOD_EDEFAULT;
 			case ApplyPackage.AGGREGATE_EXPRESSION__ALIAS:
 				return ALIAS_EDEFAULT == null ? alias != null : !ALIAS_EDEFAULT.equals(alias);
+			case ApplyPackage.AGGREGATE_EXPRESSION__CUSTOM_METHOD:
+				return CUSTOM_METHOD_EDEFAULT == null ? customMethod != null : !CUSTOM_METHOD_EDEFAULT.equals(customMethod);
+			case ApplyPackage.AGGREGATE_EXPRESSION__FROM:
+				return from != null && !from.isEmpty();
 		}
 		return super.eIsSet(featureID);
 	}
@@ -309,6 +409,8 @@ public class AggregateExpressionImpl extends MinimalEObjectImpl.Container implem
 		result.append(method);
 		result.append(", alias: ");
 		result.append(alias);
+		result.append(", customMethod: ");
+		result.append(customMethod);
 		result.append(')');
 		return result.toString();
 	}

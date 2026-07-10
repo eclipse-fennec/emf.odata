@@ -3,7 +3,7 @@
     xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="apply" nsURI="https://eclipse.org/fennec/odata/apply/1.0.0"
     nsPrefix="odataapply">
   <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
-    <details key="documentation" value="OData $apply aggregation pipeline (req §3.5): pipeline semantics are deliberately NOT expressed in OCL — transformation stages are first-class objects, only their embedded expressions (filter predicates, grouping properties, aggregate/compute operands) are OclExpressions from the m2x OCL model (the shared predicate IR). v1 covers filter/groupby/aggregate/compute; bottom/top and concat follow (E4 backlog)."/>
+    <details key="documentation" value="OData $apply aggregation pipeline (req §3.5): pipeline semantics are deliberately NOT expressed in OCL — transformation stages are first-class objects, only their embedded expressions (filter predicates, grouping properties, aggregate/compute operands) are OclExpressions from the m2x OCL model (the shared predicate IR). Covers filter/groupby(+rollup)/aggregate(+from, custom methods/aggregates)/compute plus the preserving transformations topcount/topsum/toppercent (and their bottom mirrors), concat, top, skip, orderby and identity; still open: search, nest/addnested, join/outerjoin, ancestors/descendants/traverse, rolluprecursive (E4 backlog)."/>
     <details key="copyrightText" value="Copyright (c) 2026 Contributors to the Eclipse Foundation.&#xA;&#xA;This program and the accompanying materials are made&#xA;available under the terms of the Eclipse Public License 2.0&#xA;which is available at https://www.eclipse.org/legal/epl-2.0/&#xA;&#xA;SPDX-License-Identifier: EPL-2.0&#xA;&#xA;Contributors:&#xA;  Data In Motion Consulting - initial implementation"/>
     <details key="oSGiCompatible" value="true"/>
     <details key="basePackage" value="org.eclipse.fennec.odata.query"/>
@@ -17,9 +17,27 @@
     <eLiterals name="COUNT_DISTINCT" value="4"/>
     <eLiterals name="COUNT" value="5">
       <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
-        <details key="documentation" value="The $count virtual aggregate — has no operand expression."/>
+        <details key="documentation" value="The $count virtual aggregate — no operand for bare $count; the path/$count form keeps the size expression as operand."/>
       </eAnnotations>
     </eLiterals>
+    <eLiterals name="CUSTOM" value="6">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="Namespace-qualified custom aggregation method ('with Ns.Method') — the qualified name is in customMethod."/>
+      </eAnnotations>
+    </eLiterals>
+    <eLiterals name="CUSTOM_AGGREGATE" value="7">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="Model-declared custom aggregate referenced by bare name/path (no 'with') — the raw path text is in customMethod, there is no operand expression."/>
+      </eAnnotations>
+    </eLiterals>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="BottomTopMethod">
+    <eLiterals name="TOP_COUNT"/>
+    <eLiterals name="TOP_SUM" value="1"/>
+    <eLiterals name="TOP_PERCENT" value="2"/>
+    <eLiterals name="BOTTOM_COUNT" value="3"/>
+    <eLiterals name="BOTTOM_SUM" value="4"/>
+    <eLiterals name="BOTTOM_PERCENT" value="5"/>
   </eClassifiers>
   <eClassifiers xsi:type="ecore:EClass" name="ApplyPipeline">
     <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
@@ -44,6 +62,25 @@
         <details key="documentation" value="Optional nested transformation applied per group (typically an Aggregate)."/>
       </eAnnotations>
     </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="rollups" upperBound="-1"
+        eType="#//RollupHierarchy" containment="true">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="rollup(...) grouping elements: each hierarchy contributes its level prefixes as additional grouping sets (leveled hierarchies; rolluprecursive is not covered)."/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="RollupHierarchy">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="One rollup(...) element inside groupby: either the ordered levels of an unnamed leveled hierarchy (coarsest first) or the qualifier of a named Aggregation.LeveledHierarchy annotation."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="levels" upperBound="-1"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="hierarchy" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="Qualifier of a named leveled hierarchy (rollup(Name)); null for the unnamed levels form."/>
+      </eAnnotations>
+    </eStructuralFeatures>
   </eClassifiers>
   <eClassifiers xsi:type="ecore:EClass" name="AggregateTransformation" eSuperTypes="#//ApplyTransformation">
     <eStructuralFeatures xsi:type="ecore:EReference" name="aggregations" upperBound="-1"
@@ -59,6 +96,64 @@
     </eStructuralFeatures>
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="method" eType="#//AggregateMethod"/>
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="alias" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="customMethod" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="Qualified name of a CUSTOM aggregation method, or the raw path of a CUSTOM_AGGREGATE; null otherwise."/>
+      </eAnnotations>
+    </eStructuralFeatures>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="from" upperBound="-1"
+        eType="#//AggregateFrom" containment="true">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="'from' clauses (two-phase aggregation over intermediate groupings), outermost first."/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="AggregateFrom">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="One 'from &lt;groupingProperties&gt; [with &lt;method&gt;]' clause of an aggregate expression; the method may be absent for custom aggregates (customFrom)."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="groupingProperties" upperBound="-1"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="method" unsettable="true" eType="#//AggregateMethod"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="customMethod" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="BottomTopTransformation" eSuperTypes="#//ApplyTransformation">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="topcount/topsum/toppercent/bottomcount/bottomsum/bottompercent(threshold, value): keeps the subset with the highest/lowest values."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="method" eType="#//BottomTopMethod"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="threshold"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="value"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ConcatTransformation" eSuperTypes="#//ApplyTransformation">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="concat(pipeline, pipeline, ...): applies each pipeline to the input set and concatenates the results."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="pipelines" upperBound="-1"
+        eType="#//ApplyPipeline" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="TopTransformation" eSuperTypes="#//ApplyTransformation">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="count" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//ELong"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="SkipTransformation" eSuperTypes="#//ApplyTransformation">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="count" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//ELong"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="IdentityTransformation" eSuperTypes="#//ApplyTransformation"/>
+  <eClassifiers xsi:type="ecore:EClass" name="OrderByTransformation" eSuperTypes="#//ApplyTransformation">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="items" upperBound="-1"
+        eType="#//OrderByExpression" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="OrderByExpression">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="expression"
+        eType="ecore:EClass ../../org.eclipse.fennec.m2x.ocl.model/model/ocl.ecore#//OclExpression"
+        containment="true"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="ascending" defaultValueLiteral="true"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean"/>
   </eClassifiers>
   <eClassifiers xsi:type="ecore:EClass" name="ComputeTransformation" eSuperTypes="#//ApplyTransformation">
     <eStructuralFeatures xsi:type="ecore:EReference" name="computeExpressions" upperBound="-1"

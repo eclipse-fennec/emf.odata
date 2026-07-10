@@ -237,6 +237,10 @@ class JpaApplyExecutor {
 						throw new UnsupportedOperationException(
 								"only one grouping stage has a JPA pushdown");
 					}
+					if (!grouping.getRollups().isEmpty()) {
+						throw new UnsupportedOperationException(
+								"rollup grouping sets have no JPA pushdown");
+					}
 					groupBy = grouping;
 					if (grouping.getThen() != null) {
 						if (!(grouping.getThen() instanceof AggregateTransformation nested)) {
@@ -307,8 +311,20 @@ class JpaApplyExecutor {
 		if (aggregation.getMethod() == null) {
 			throw new UnsupportedOperationException("aggregate without a method");
 		}
+		if (!aggregation.getFrom().isEmpty()) {
+			throw new UnsupportedOperationException("aggregate 'from' clauses have no JPA pushdown");
+		}
 		return switch (aggregation.getMethod()) {
-			case COUNT -> cb.count(root); // $count virtual aggregate, no operand
+			case CUSTOM, CUSTOM_AGGREGATE -> throw new UnsupportedOperationException(
+					"custom aggregation methods/aggregates have no JPA pushdown: "
+							+ aggregation.getCustomMethod());
+			case COUNT -> {
+				if (aggregation.getExpression() != null) {
+					throw new UnsupportedOperationException(
+							"'path/$count' aggregates have no JPA pushdown");
+				}
+				yield cb.count(root); // $count virtual aggregate, no operand
+			}
 			case COUNT_DISTINCT -> cb.countDistinct(
 					translator.expression(aggregation.getExpression(), cb, cq, root, named));
 			case SUM -> cb.sum((Expression) translator

@@ -86,13 +86,39 @@ public enum AggregateMethod implements Enumerator {
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
 	 * <!-- begin-model-doc -->
-	 * The $count virtual aggregate — has no operand expression.
+	 * The $count virtual aggregate — no operand for bare $count; the path/$count form keeps the size expression as operand.
 	 * <!-- end-model-doc -->
 	 * @see #COUNT_VALUE
 	 * @generated
 	 * @ordered
 	 */
-	COUNT(5, "COUNT", "COUNT");
+	COUNT(5, "COUNT", "COUNT"),
+
+	/**
+	 * The '<em><b>CUSTOM</b></em>' literal object.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * Namespace-qualified custom aggregation method ('with Ns.Method') — the qualified name is in customMethod.
+	 * <!-- end-model-doc -->
+	 * @see #CUSTOM_VALUE
+	 * @generated
+	 * @ordered
+	 */
+	CUSTOM(6, "CUSTOM", "CUSTOM"),
+
+	/**
+	 * The '<em><b>CUSTOM AGGREGATE</b></em>' literal object.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * Model-declared custom aggregate referenced by bare name/path (no 'with') — the raw path text is in customMethod, there is no operand expression.
+	 * <!-- end-model-doc -->
+	 * @see #CUSTOM_AGGREGATE_VALUE
+	 * @generated
+	 * @ordered
+	 */
+	CUSTOM_AGGREGATE(7, "CUSTOM_AGGREGATE", "CUSTOM_AGGREGATE");
 
 	/**
 	 * The '<em><b>SUM</b></em>' literal value.
@@ -154,7 +180,7 @@ public enum AggregateMethod implements Enumerator {
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
 	 * <!-- begin-model-doc -->
-	 * The $count virtual aggregate — has no operand expression.
+	 * The $count virtual aggregate — no operand for bare $count; the path/$count form keeps the size expression as operand.
 	 * <!-- end-model-doc -->
 	 * @see #COUNT
 	 * @model
@@ -162,6 +188,34 @@ public enum AggregateMethod implements Enumerator {
 	 * @ordered
 	 */
 	public static final int COUNT_VALUE = 5;
+
+	/**
+	 * The '<em><b>CUSTOM</b></em>' literal value.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * Namespace-qualified custom aggregation method ('with Ns.Method') — the qualified name is in customMethod.
+	 * <!-- end-model-doc -->
+	 * @see #CUSTOM
+	 * @model
+	 * @generated
+	 * @ordered
+	 */
+	public static final int CUSTOM_VALUE = 6;
+
+	/**
+	 * The '<em><b>CUSTOM AGGREGATE</b></em>' literal value.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * Model-declared custom aggregate referenced by bare name/path (no 'with') — the raw path text is in customMethod, there is no operand expression.
+	 * <!-- end-model-doc -->
+	 * @see #CUSTOM_AGGREGATE
+	 * @model
+	 * @generated
+	 * @ordered
+	 */
+	public static final int CUSTOM_AGGREGATE_VALUE = 7;
 
 	/**
 	 * An array of all the '<em><b>Aggregate Method</b></em>' enumerators.
@@ -177,6 +231,8 @@ public enum AggregateMethod implements Enumerator {
 			AVERAGE,
 			COUNT_DISTINCT,
 			COUNT,
+			CUSTOM,
+			CUSTOM_AGGREGATE,
 		};
 
 	/**
@@ -239,6 +295,8 @@ public enum AggregateMethod implements Enumerator {
 			case AVERAGE_VALUE: return AVERAGE;
 			case COUNT_DISTINCT_VALUE: return COUNT_DISTINCT;
 			case COUNT_VALUE: return COUNT;
+			case CUSTOM_VALUE: return CUSTOM;
+			case CUSTOM_AGGREGATE_VALUE: return CUSTOM_AGGREGATE;
 		}
 		return null;
 	}

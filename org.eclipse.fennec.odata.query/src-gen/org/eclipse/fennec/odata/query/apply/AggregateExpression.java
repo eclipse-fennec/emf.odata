@@ -12,6 +12,8 @@
  */
 package org.eclipse.fennec.odata.query.apply;
 
+import org.eclipse.emf.common.util.EList;
+
 import org.eclipse.emf.ecore.EObject;
 
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
@@ -30,6 +32,8 @@ import org.osgi.annotation.versioning.ProviderType;
  *   <li>{@link org.eclipse.fennec.odata.query.apply.AggregateExpression#getExpression <em>Expression</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.query.apply.AggregateExpression#getMethod <em>Method</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.query.apply.AggregateExpression#getAlias <em>Alias</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.query.apply.AggregateExpression#getCustomMethod <em>Custom Method</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.query.apply.AggregateExpression#getFrom <em>From</em>}</li>
  * </ul>
  *
  * @see org.eclipse.fennec.odata.query.apply.ApplyPackage#getAggregateExpression()
@@ -109,5 +113,45 @@ public interface AggregateExpression extends EObject {
 	 * @generated
 	 */
 	void setAlias(String value);
+
+	/**
+	 * Returns the value of the '<em><b>Custom Method</b></em>' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * Qualified name of a CUSTOM aggregation method, or the raw path of a CUSTOM_AGGREGATE; null otherwise.
+	 * <!-- end-model-doc -->
+	 * @return the value of the '<em>Custom Method</em>' attribute.
+	 * @see #setCustomMethod(String)
+	 * @see org.eclipse.fennec.odata.query.apply.ApplyPackage#getAggregateExpression_CustomMethod()
+	 * @model
+	 * @generated
+	 */
+	String getCustomMethod();
+
+	/**
+	 * Sets the value of the '{@link org.eclipse.fennec.odata.query.apply.AggregateExpression#getCustomMethod <em>Custom Method</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @param value the new value of the '<em>Custom Method</em>' attribute.
+	 * @see #getCustomMethod()
+	 * @generated
+	 */
+	void setCustomMethod(String value);
+
+	/**
+	 * Returns the value of the '<em><b>From</b></em>' containment reference list.
+	 * The list contents are of type {@link org.eclipse.fennec.odata.query.apply.AggregateFrom}.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * 'from' clauses (two-phase aggregation over intermediate groupings), outermost first.
+	 * <!-- end-model-doc -->
+	 * @return the value of the '<em>From</em>' containment reference list.
+	 * @see org.eclipse.fennec.odata.query.apply.ApplyPackage#getAggregateExpression_From()
+	 * @model containment="true"
+	 * @generated
+	 */
+	EList<AggregateFrom> getFrom();
 
 } // AggregateExpression

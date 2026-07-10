@@ -46,9 +46,14 @@ kein Olingo-Expression-Parsing), §3.6.1 (Caching am Metadata-Service).
   (als `VariableExp` — Backend löst gegen den Stufen-Output auf). Caching in
   `CachingODataQueryParser`. WICHTIG: ANTLR-Parser lebt jetzt in `src-gen-parser` (eigener
   Source-Folder), weil fennecEMF `-generate` `src-gen` exklusiv besitzt und leert.
-  **Offen:** BottomTop/Concat/expand-Transformationen, `$compute` als eigene Query-Option
-  (Grammatik-Regel vorhanden via compute-Trafo), Keyword-Kollisionen (Properties namens
-  `with`/`as`/Transformationsnamen).
+  **Nachtrag 2026-07-10:** BottomTop (`topcount/topsum/toppercent` + bottom-Spiegel),
+  `concat`, `top`/`skip`, `orderby`, `identity` und `rollup`-Grouping-Sets sind im Submodell
+  UND in-memory ausführbar; `aggregate … from`, Custom-Methoden/-Aggregates und benannte
+  Hierarchien parsen ins Modell, Ausführung beidseitig ehrlich 501. Die Trafo-Namen sind
+  jetzt prädikat-gesteuerte Soft-Keywords (Shape-Ambiguität war mit Custom-Aggregates nicht
+  mehr auflösbar). **Offen:** search/nest/addnested/join/outerjoin/ancestors/descendants/
+  traverse/rolluprecursive, `$these`, `$compute` als eigene Query-Option, Keyword-Kollisionen
+  (Properties namens `with`/`as`/`from`/Transformationsnamen).
 - **E4-AP-5 ABNF-Akzeptanztests ✅ Harness erledigt (2026-07-03):** offizielle OASIS ABNF Test
   Cases 4.01 vendored (`testdata/odata-abnf-testcases.xml` im Query-Bundle; das vorbereitete
   `testdata/abnf-test-cases/` im Workspace-Root ist read-only und leer — Umzug dorthin wäre
@@ -78,5 +83,11 @@ kein Olingo-Expression-Parsing), §3.6.1 (Caching am Metadata-Service).
   Inline-`/$filter(…)`-Segmente.
 - **E4-AP-9 Query-Modell-Refactoring Stufe 1** (req §3.5): `QWhere` → `predicate: OclExpression`
   im Persistence-Query-Modell — Cross-Repo-Abstimmung nötig (emf.persistence-jpa).
-- **E4-AP-10 Bound/Composed Functions in Member-Pfaden:** `Products/BestProduct()/Name`
-  (aus den ABNF-Cases) — Grammatik + Builder-Anbindung an die E1-Operation-Profile.
+- **E4-AP-10 Bound/Composed Functions in Member-Pfaden ✅ erledigt (2026-07-10):**
+  `boundCall`-Pfadsegmente (qualifiziert oder unqualifiziert, named/positional Argumente)
+  → `OperationCallExp` mit qualifiziertem Namen (Backend-Dispatch), eager gegen
+  `EClass.getEAllOperations()` aufgelöst, Argumente in Deklarationsreihenfolge validiert;
+  `/$count`- und Lambda-Tails auf Operations-Ergebnissen. Am Expression-KOPF gewinnen
+  weiterhin die canonical functions (unqualifizierte Calls dort = functionCall).
+  Ausführung: Evaluator/Backends kennen die Operationen nicht → ehrlicher Fehler, kein
+  stilles Raten. XML-ABNF-Harness: 161 aktiv (vorher 126).

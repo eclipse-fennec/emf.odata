@@ -27,12 +27,20 @@ import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
+import org.eclipse.fennec.odata.query.apply.AggregateExpression;
 import org.eclipse.fennec.odata.query.apply.AggregateMethod;
 import org.eclipse.fennec.odata.query.apply.AggregateTransformation;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
+import org.eclipse.fennec.odata.query.apply.BottomTopMethod;
+import org.eclipse.fennec.odata.query.apply.BottomTopTransformation;
 import org.eclipse.fennec.odata.query.apply.ComputeTransformation;
+import org.eclipse.fennec.odata.query.apply.ConcatTransformation;
 import org.eclipse.fennec.odata.query.apply.FilterTransformation;
 import org.eclipse.fennec.odata.query.apply.GroupByTransformation;
+import org.eclipse.fennec.odata.query.apply.IdentityTransformation;
+import org.eclipse.fennec.odata.query.apply.OrderByTransformation;
+import org.eclipse.fennec.odata.query.apply.SkipTransformation;
+import org.eclipse.fennec.odata.query.apply.TopTransformation;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -131,6 +139,139 @@ class ODataApplyParserTest {
 		assertThrows(ODataQueryParseException.class,
 				() -> parser.parseApply("filter(Total gt 1)", productClass),
 				"alias unknown without a preceding aggregate");
+		assertThrows(ODataQueryParseException.class,
+				() -> parser.parseApply("top(-1)", productClass),
+				"top/skip need a non-negative integer");
+		assertThrows(ODataQueryParseException.class,
+				() -> parser.parseApply("groupby((rollup(category/name)))", productClass),
+				"a single rollup PATH is neither the named nor the unnamed hierarchy form");
+		assertThrows(UnsupportedOperationException.class,
+				() -> parser.parseApply(
+						"groupby((name),filter(price gt 1)/aggregate(price with sum as T))",
+						productClass),
+				"multi-stage nested groupby pipelines are syntactically valid but 501");
+	}
+
+	@Test
+	@DisplayName("preserving transformations: bottom/top, concat, top/skip, orderby, identity")
+	void preservingTransformations() {
+		ApplyPipeline pipeline = parser.parseApply(
+				"topcount(2,price)/identity/top(5)/skip(1)/orderby(price desc,name)", productClass);
+		assertEquals(5, pipeline.getTransformations().size());
+
+		BottomTopTransformation topCount = assertInstanceOf(BottomTopTransformation.class,
+				pipeline.getTransformations().get(0));
+		assertEquals(BottomTopMethod.TOP_COUNT, topCount.getMethod());
+		assertEquals("Integer", topCount.getThreshold().getType().getName());
+		assertInstanceOf(PropertyCallExp.class, topCount.getValue());
+
+		assertInstanceOf(IdentityTransformation.class, pipeline.getTransformations().get(1));
+		assertEquals(5, assertInstanceOf(TopTransformation.class,
+				pipeline.getTransformations().get(2)).getCount());
+		assertEquals(1, assertInstanceOf(SkipTransformation.class,
+				pipeline.getTransformations().get(3)).getCount());
+
+		OrderByTransformation orderBy = assertInstanceOf(OrderByTransformation.class,
+				pipeline.getTransformations().get(4));
+		assertEquals(2, orderBy.getItems().size());
+		assertEquals(false, orderBy.getItems().get(0).isAscending());
+		assertEquals(true, orderBy.getItems().get(1).isAscending());
+
+		ConcatTransformation concat = assertInstanceOf(ConcatTransformation.class,
+				parser.parseApply("concat(topcount(1,price),bottomcount(1,price)/identity)",
+						productClass).getTransformations().get(0));
+		assertEquals(2, concat.getPipelines().size());
+		assertEquals(2, concat.getPipelines().get(1).getTransformations().size());
+	}
+
+	@Test
+	@DisplayName("rollup grouping elements: unnamed levels and named hierarchies")
+	void rollup() {
+		GroupByTransformation groupBy = assertInstanceOf(GroupByTransformation.class,
+				parser.parseApply(
+						"groupby((rollup(category/name,name),active),aggregate(price with sum as T))",
+						productClass).getTransformations().get(0));
+		assertEquals(1, groupBy.getGroupingProperties().size(), "active stays a plain property");
+		assertEquals(1, groupBy.getRollups().size());
+		assertEquals(2, groupBy.getRollups().get(0).getLevels().size());
+		assertNull(groupBy.getRollups().get(0).getHierarchy());
+
+		GroupByTransformation named = assertInstanceOf(GroupByTransformation.class,
+				parser.parseApply("groupby((rollup(ProductHierarchy)))", productClass)
+						.getTransformations().get(0));
+		assertEquals("ProductHierarchy", named.getRollups().get(0).getHierarchy(),
+				"ONE simple identifier is a named hierarchy qualifier, not a property");
+		assertEquals(0, named.getRollups().get(0).getLevels().size());
+	}
+
+	@Test
+	@DisplayName("aggregate: from clauses, custom methods, custom aggregates, path/$count")
+	void aggregateExtensions() {
+		AggregateExpression from = firstAggregation(
+				"aggregate(price with sum from category/name with average as A)");
+		assertEquals(AggregateMethod.SUM, from.getMethod());
+		assertEquals("A", from.getAlias());
+		assertEquals(1, from.getFrom().size());
+		assertEquals(AggregateMethod.AVERAGE, from.getFrom().get(0).getMethod());
+		assertEquals(1, from.getFrom().get(0).getGroupingProperties().size());
+
+		AggregateExpression custom = firstAggregation("aggregate(price with Custom.median as M)");
+		assertEquals(AggregateMethod.CUSTOM, custom.getMethod());
+		assertEquals("Custom.median", custom.getCustomMethod());
+
+		AggregateExpression customAggregate = firstAggregation("aggregate(Forecast as F)");
+		assertEquals(AggregateMethod.CUSTOM_AGGREGATE, customAggregate.getMethod());
+		assertEquals("Forecast", customAggregate.getCustomMethod());
+		assertNull(customAggregate.getExpression(), "custom aggregates are deliberately unresolved");
+
+		AggregateExpression pathCount = firstAggregation("aggregate(reviews/$count as ReviewCount)");
+		assertEquals(AggregateMethod.COUNT, pathCount.getMethod());
+		assertInstanceOf(OperationCallExp.class, pathCount.getExpression(),
+				"path/$count keeps the size expression as operand");
+
+		// custom aggregate 'from' without a method (ABNF customFrom) parses too
+		AggregateExpression customFrom = firstAggregation("aggregate(Forecast from category/name as F)");
+		assertEquals(1, customFrom.getFrom().size());
+		assertEquals(false, customFrom.getFrom().get(0).isSetMethod());
+	}
+
+	@Test
+	@DisplayName("bound operations in member paths resolve against EOperations (AP-10)")
+	void boundOperationsInPaths() {
+		ODataQueryParser parser = new ODataQueryParser();
+		// single-valued result → property navigation continues after the call
+		OperationCallExp gt = assertInstanceOf(OperationCallExp.class,
+				parser.parseFilter("webshop.bestReview()/stars gt 3", productClass));
+		PropertyCallExp stars = assertInstanceOf(PropertyCallExp.class, gt.getOwnedSource());
+		OperationCallExp call = assertInstanceOf(OperationCallExp.class, stars.getOwnedSource());
+		assertEquals("webshop.bestReview", call.getName(),
+				"the qualified name travels for backend dispatch");
+		assertEquals(true, call.isIsImplicit(), "first segment binds to the implicit instance");
+
+		// collection-valued result: named argument, /$count and lambda tails work
+		OperationCallExp size = assertInstanceOf(OperationCallExp.class, ((OperationCallExp)
+				parser.parseFilter("webshop.topReviews(count=2)/$count gt 1", productClass))
+				.getOwnedSource());
+		assertEquals("size", size.getName());
+		assertEquals(1, ((OperationCallExp) size.getOwnedSource()).getOwnedArguments().size());
+		parser.parseFilter("webshop.topReviews(count=2)/any(r: r/stars gt 3)", productClass);
+		parser.parseFilter("webshop.topReviews(2)/$count gt 1", productClass);
+
+		// unknown operation / wrong parameters are client errors
+		assertThrows(ODataQueryParseException.class,
+				() -> parser.parseFilter("webshop.noSuchOp()/stars gt 3", productClass));
+		assertThrows(ODataQueryParseException.class,
+				() -> parser.parseFilter("webshop.topReviews(limit=2)/$count gt 1", productClass),
+				"unknown parameter name");
+		assertThrows(ODataQueryParseException.class,
+				() -> parser.parseFilter("webshop.topReviews()/$count gt 1", productClass),
+				"missing parameter");
+	}
+
+	private AggregateExpression firstAggregation(String apply) {
+		return assertInstanceOf(AggregateTransformation.class,
+				parser.parseApply(apply, productClass).getTransformations().get(0))
+				.getAggregations().get(0);
 	}
 
 	private static Path findResource(String... candidatesRelative) {

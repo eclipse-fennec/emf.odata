@@ -32,6 +32,7 @@ import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.odata.query.apply.ApplyPackage;
 import org.eclipse.fennec.odata.query.apply.ApplyTransformation;
 import org.eclipse.fennec.odata.query.apply.GroupByTransformation;
+import org.eclipse.fennec.odata.query.apply.RollupHierarchy;
 
 /**
  * <!-- begin-user-doc -->
@@ -43,6 +44,7 @@ import org.eclipse.fennec.odata.query.apply.GroupByTransformation;
  * <ul>
  *   <li>{@link org.eclipse.fennec.odata.query.apply.impl.GroupByTransformationImpl#getGroupingProperties <em>Grouping Properties</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.query.apply.impl.GroupByTransformationImpl#getThen <em>Then</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.query.apply.impl.GroupByTransformationImpl#getRollups <em>Rollups</em>}</li>
  * </ul>
  *
  * @generated
@@ -67,6 +69,16 @@ public class GroupByTransformationImpl extends ApplyTransformationImpl implement
 	 * @ordered
 	 */
 	protected ApplyTransformation then;
+
+	/**
+	 * The cached value of the '{@link #getRollups() <em>Rollups</em>}' containment reference list.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getRollups()
+	 * @generated
+	 * @ordered
+	 */
+	protected EList<RollupHierarchy> rollups;
 
 	/**
 	 * <!-- begin-user-doc -->
@@ -151,12 +163,27 @@ public class GroupByTransformationImpl extends ApplyTransformationImpl implement
 	 * @generated
 	 */
 	@Override
+	public EList<RollupHierarchy> getRollups() {
+		if (rollups == null) {
+			rollups = new EObjectContainmentEList<RollupHierarchy>(RollupHierarchy.class, this, ApplyPackage.GROUP_BY_TRANSFORMATION__ROLLUPS);
+		}
+		return rollups;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
 	public NotificationChain eInverseRemove(InternalEObject otherEnd, int featureID, NotificationChain msgs) {
 		switch (featureID) {
 			case ApplyPackage.GROUP_BY_TRANSFORMATION__GROUPING_PROPERTIES:
 				return ((InternalEList<?>)getGroupingProperties()).basicRemove(otherEnd, msgs);
 			case ApplyPackage.GROUP_BY_TRANSFORMATION__THEN:
 				return basicSetThen(null, msgs);
+			case ApplyPackage.GROUP_BY_TRANSFORMATION__ROLLUPS:
+				return ((InternalEList<?>)getRollups()).basicRemove(otherEnd, msgs);
 		}
 		return super.eInverseRemove(otherEnd, featureID, msgs);
 	}
@@ -173,6 +200,8 @@ public class GroupByTransformationImpl extends ApplyTransformationImpl implement
 				return getGroupingProperties();
 			case ApplyPackage.GROUP_BY_TRANSFORMATION__THEN:
 				return getThen();
+			case ApplyPackage.GROUP_BY_TRANSFORMATION__ROLLUPS:
+				return getRollups();
 		}
 		return super.eGet(featureID, resolve, coreType);
 	}
@@ -193,6 +222,10 @@ public class GroupByTransformationImpl extends ApplyTransformationImpl implement
 			case ApplyPackage.GROUP_BY_TRANSFORMATION__THEN:
 				setThen((ApplyTransformation)newValue);
 				return;
+			case ApplyPackage.GROUP_BY_TRANSFORMATION__ROLLUPS:
+				getRollups().clear();
+				getRollups().addAll((Collection<? extends RollupHierarchy>)newValue);
+				return;
 		}
 		super.eSet(featureID, newValue);
 	}
@@ -211,6 +244,9 @@ public class GroupByTransformationImpl extends ApplyTransformationImpl implement
 			case ApplyPackage.GROUP_BY_TRANSFORMATION__THEN:
 				setThen((ApplyTransformation)null);
 				return;
+			case ApplyPackage.GROUP_BY_TRANSFORMATION__ROLLUPS:
+				getRollups().clear();
+				return;
 		}
 		super.eUnset(featureID);
 	}
@@ -227,6 +263,8 @@ public class GroupByTransformationImpl extends ApplyTransformationImpl implement
 				return groupingProperties != null && !groupingProperties.isEmpty();
 			case ApplyPackage.GROUP_BY_TRANSFORMATION__THEN:
 				return then != null;
+			case ApplyPackage.GROUP_BY_TRANSFORMATION__ROLLUPS:
+				return rollups != null && !rollups.isEmpty();
 		}
 		return super.eIsSet(featureID);
 	}

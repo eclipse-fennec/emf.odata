@@ -23,16 +23,26 @@ import org.eclipse.emf.ecore.impl.EPackageImpl;
 import org.eclipse.fennec.m2x.model.ocl.OclPackage;
 
 import org.eclipse.fennec.odata.query.apply.AggregateExpression;
+import org.eclipse.fennec.odata.query.apply.AggregateFrom;
 import org.eclipse.fennec.odata.query.apply.AggregateMethod;
 import org.eclipse.fennec.odata.query.apply.AggregateTransformation;
 import org.eclipse.fennec.odata.query.apply.ApplyFactory;
 import org.eclipse.fennec.odata.query.apply.ApplyPackage;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 import org.eclipse.fennec.odata.query.apply.ApplyTransformation;
+import org.eclipse.fennec.odata.query.apply.BottomTopMethod;
+import org.eclipse.fennec.odata.query.apply.BottomTopTransformation;
 import org.eclipse.fennec.odata.query.apply.ComputeExpression;
 import org.eclipse.fennec.odata.query.apply.ComputeTransformation;
+import org.eclipse.fennec.odata.query.apply.ConcatTransformation;
 import org.eclipse.fennec.odata.query.apply.FilterTransformation;
 import org.eclipse.fennec.odata.query.apply.GroupByTransformation;
+import org.eclipse.fennec.odata.query.apply.IdentityTransformation;
+import org.eclipse.fennec.odata.query.apply.OrderByExpression;
+import org.eclipse.fennec.odata.query.apply.OrderByTransformation;
+import org.eclipse.fennec.odata.query.apply.RollupHierarchy;
+import org.eclipse.fennec.odata.query.apply.SkipTransformation;
+import org.eclipse.fennec.odata.query.apply.TopTransformation;
 
 /**
  * <!-- begin-user-doc -->
@@ -74,6 +84,13 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 	 * <!-- end-user-doc -->
 	 * @generated
 	 */
+	private EClass rollupHierarchyEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
 	private EClass aggregateTransformationEClass = null;
 
 	/**
@@ -82,6 +99,62 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 	 * @generated
 	 */
 	private EClass aggregateExpressionEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EClass aggregateFromEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EClass bottomTopTransformationEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EClass concatTransformationEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EClass topTransformationEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EClass skipTransformationEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EClass identityTransformationEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EClass orderByTransformationEClass = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EClass orderByExpressionEClass = null;
 
 	/**
 	 * <!-- begin-user-doc -->
@@ -103,6 +176,13 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 	 * @generated
 	 */
 	private EEnum aggregateMethodEEnum = null;
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	private EEnum bottomTopMethodEEnum = null;
 
 	/**
 	 * Creates an instance of the model <b>Package</b>, registered with
@@ -253,6 +333,46 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 	 * @generated
 	 */
 	@Override
+	public EReference getGroupByTransformation_Rollups() {
+		return (EReference)groupByTransformationEClass.getEStructuralFeatures().get(2);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getRollupHierarchy() {
+		return rollupHierarchyEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EReference getRollupHierarchy_Levels() {
+		return (EReference)rollupHierarchyEClass.getEStructuralFeatures().get(0);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getRollupHierarchy_Hierarchy() {
+		return (EAttribute)rollupHierarchyEClass.getEStructuralFeatures().get(1);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
 	public EClass getAggregateTransformation() {
 		return aggregateTransformationEClass;
 	}
@@ -305,6 +425,226 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 	@Override
 	public EAttribute getAggregateExpression_Alias() {
 		return (EAttribute)aggregateExpressionEClass.getEStructuralFeatures().get(2);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getAggregateExpression_CustomMethod() {
+		return (EAttribute)aggregateExpressionEClass.getEStructuralFeatures().get(3);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EReference getAggregateExpression_From() {
+		return (EReference)aggregateExpressionEClass.getEStructuralFeatures().get(4);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getAggregateFrom() {
+		return aggregateFromEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EReference getAggregateFrom_GroupingProperties() {
+		return (EReference)aggregateFromEClass.getEStructuralFeatures().get(0);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getAggregateFrom_Method() {
+		return (EAttribute)aggregateFromEClass.getEStructuralFeatures().get(1);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getAggregateFrom_CustomMethod() {
+		return (EAttribute)aggregateFromEClass.getEStructuralFeatures().get(2);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getBottomTopTransformation() {
+		return bottomTopTransformationEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getBottomTopTransformation_Method() {
+		return (EAttribute)bottomTopTransformationEClass.getEStructuralFeatures().get(0);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EReference getBottomTopTransformation_Threshold() {
+		return (EReference)bottomTopTransformationEClass.getEStructuralFeatures().get(1);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EReference getBottomTopTransformation_Value() {
+		return (EReference)bottomTopTransformationEClass.getEStructuralFeatures().get(2);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getConcatTransformation() {
+		return concatTransformationEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EReference getConcatTransformation_Pipelines() {
+		return (EReference)concatTransformationEClass.getEStructuralFeatures().get(0);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getTopTransformation() {
+		return topTransformationEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getTopTransformation_Count() {
+		return (EAttribute)topTransformationEClass.getEStructuralFeatures().get(0);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getSkipTransformation() {
+		return skipTransformationEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getSkipTransformation_Count() {
+		return (EAttribute)skipTransformationEClass.getEStructuralFeatures().get(0);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getIdentityTransformation() {
+		return identityTransformationEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getOrderByTransformation() {
+		return orderByTransformationEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EReference getOrderByTransformation_Items() {
+		return (EReference)orderByTransformationEClass.getEStructuralFeatures().get(0);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EClass getOrderByExpression() {
+		return orderByExpressionEClass;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EReference getOrderByExpression_Expression() {
+		return (EReference)orderByExpressionEClass.getEStructuralFeatures().get(0);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getOrderByExpression_Ascending() {
+		return (EAttribute)orderByExpressionEClass.getEStructuralFeatures().get(1);
 	}
 
 	/**
@@ -373,6 +713,16 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 	 * @generated
 	 */
 	@Override
+	public EEnum getBottomTopMethod() {
+		return bottomTopMethodEEnum;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
 	public ApplyFactory getApplyFactory() {
 		return (ApplyFactory)getEFactoryInstance();
 	}
@@ -407,6 +757,11 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 		groupByTransformationEClass = createEClass(GROUP_BY_TRANSFORMATION);
 		createEReference(groupByTransformationEClass, GROUP_BY_TRANSFORMATION__GROUPING_PROPERTIES);
 		createEReference(groupByTransformationEClass, GROUP_BY_TRANSFORMATION__THEN);
+		createEReference(groupByTransformationEClass, GROUP_BY_TRANSFORMATION__ROLLUPS);
+
+		rollupHierarchyEClass = createEClass(ROLLUP_HIERARCHY);
+		createEReference(rollupHierarchyEClass, ROLLUP_HIERARCHY__LEVELS);
+		createEAttribute(rollupHierarchyEClass, ROLLUP_HIERARCHY__HIERARCHY);
 
 		aggregateTransformationEClass = createEClass(AGGREGATE_TRANSFORMATION);
 		createEReference(aggregateTransformationEClass, AGGREGATE_TRANSFORMATION__AGGREGATIONS);
@@ -415,6 +770,36 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 		createEReference(aggregateExpressionEClass, AGGREGATE_EXPRESSION__EXPRESSION);
 		createEAttribute(aggregateExpressionEClass, AGGREGATE_EXPRESSION__METHOD);
 		createEAttribute(aggregateExpressionEClass, AGGREGATE_EXPRESSION__ALIAS);
+		createEAttribute(aggregateExpressionEClass, AGGREGATE_EXPRESSION__CUSTOM_METHOD);
+		createEReference(aggregateExpressionEClass, AGGREGATE_EXPRESSION__FROM);
+
+		aggregateFromEClass = createEClass(AGGREGATE_FROM);
+		createEReference(aggregateFromEClass, AGGREGATE_FROM__GROUPING_PROPERTIES);
+		createEAttribute(aggregateFromEClass, AGGREGATE_FROM__METHOD);
+		createEAttribute(aggregateFromEClass, AGGREGATE_FROM__CUSTOM_METHOD);
+
+		bottomTopTransformationEClass = createEClass(BOTTOM_TOP_TRANSFORMATION);
+		createEAttribute(bottomTopTransformationEClass, BOTTOM_TOP_TRANSFORMATION__METHOD);
+		createEReference(bottomTopTransformationEClass, BOTTOM_TOP_TRANSFORMATION__THRESHOLD);
+		createEReference(bottomTopTransformationEClass, BOTTOM_TOP_TRANSFORMATION__VALUE);
+
+		concatTransformationEClass = createEClass(CONCAT_TRANSFORMATION);
+		createEReference(concatTransformationEClass, CONCAT_TRANSFORMATION__PIPELINES);
+
+		topTransformationEClass = createEClass(TOP_TRANSFORMATION);
+		createEAttribute(topTransformationEClass, TOP_TRANSFORMATION__COUNT);
+
+		skipTransformationEClass = createEClass(SKIP_TRANSFORMATION);
+		createEAttribute(skipTransformationEClass, SKIP_TRANSFORMATION__COUNT);
+
+		identityTransformationEClass = createEClass(IDENTITY_TRANSFORMATION);
+
+		orderByTransformationEClass = createEClass(ORDER_BY_TRANSFORMATION);
+		createEReference(orderByTransformationEClass, ORDER_BY_TRANSFORMATION__ITEMS);
+
+		orderByExpressionEClass = createEClass(ORDER_BY_EXPRESSION);
+		createEReference(orderByExpressionEClass, ORDER_BY_EXPRESSION__EXPRESSION);
+		createEAttribute(orderByExpressionEClass, ORDER_BY_EXPRESSION__ASCENDING);
 
 		computeTransformationEClass = createEClass(COMPUTE_TRANSFORMATION);
 		createEReference(computeTransformationEClass, COMPUTE_TRANSFORMATION__COMPUTE_EXPRESSIONS);
@@ -425,6 +810,7 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 
 		// Create enums
 		aggregateMethodEEnum = createEEnum(AGGREGATE_METHOD);
+		bottomTopMethodEEnum = createEEnum(BOTTOM_TOP_METHOD);
 	}
 
 	/**
@@ -461,6 +847,12 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 		filterTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
 		groupByTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
 		aggregateTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
+		bottomTopTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
+		concatTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
+		topTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
+		skipTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
+		identityTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
+		orderByTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
 		computeTransformationEClass.getESuperTypes().add(this.getApplyTransformation());
 
 		// Initialize classes, features, and operations; add parameters
@@ -475,6 +867,11 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 		initEClass(groupByTransformationEClass, GroupByTransformation.class, "GroupByTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
 		initEReference(getGroupByTransformation_GroupingProperties(), theOclPackage.getOclExpression(), null, "groupingProperties", null, 0, -1, GroupByTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 		initEReference(getGroupByTransformation_Then(), this.getApplyTransformation(), null, "then", null, 0, 1, GroupByTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEReference(getGroupByTransformation_Rollups(), this.getRollupHierarchy(), null, "rollups", null, 0, -1, GroupByTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+
+		initEClass(rollupHierarchyEClass, RollupHierarchy.class, "RollupHierarchy", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEReference(getRollupHierarchy_Levels(), theOclPackage.getOclExpression(), null, "levels", null, 0, -1, RollupHierarchy.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEAttribute(getRollupHierarchy_Hierarchy(), ecorePackage.getEString(), "hierarchy", null, 0, 1, RollupHierarchy.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 
 		initEClass(aggregateTransformationEClass, AggregateTransformation.class, "AggregateTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
 		initEReference(getAggregateTransformation_Aggregations(), this.getAggregateExpression(), null, "aggregations", null, 0, -1, AggregateTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
@@ -483,6 +880,36 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 		initEReference(getAggregateExpression_Expression(), theOclPackage.getOclExpression(), null, "expression", null, 0, 1, AggregateExpression.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 		initEAttribute(getAggregateExpression_Method(), this.getAggregateMethod(), "method", null, 0, 1, AggregateExpression.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 		initEAttribute(getAggregateExpression_Alias(), ecorePackage.getEString(), "alias", null, 0, 1, AggregateExpression.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEAttribute(getAggregateExpression_CustomMethod(), ecorePackage.getEString(), "customMethod", null, 0, 1, AggregateExpression.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEReference(getAggregateExpression_From(), this.getAggregateFrom(), null, "from", null, 0, -1, AggregateExpression.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+
+		initEClass(aggregateFromEClass, AggregateFrom.class, "AggregateFrom", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEReference(getAggregateFrom_GroupingProperties(), theOclPackage.getOclExpression(), null, "groupingProperties", null, 0, -1, AggregateFrom.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEAttribute(getAggregateFrom_Method(), this.getAggregateMethod(), "method", null, 0, 1, AggregateFrom.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEAttribute(getAggregateFrom_CustomMethod(), ecorePackage.getEString(), "customMethod", null, 0, 1, AggregateFrom.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+
+		initEClass(bottomTopTransformationEClass, BottomTopTransformation.class, "BottomTopTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEAttribute(getBottomTopTransformation_Method(), this.getBottomTopMethod(), "method", null, 0, 1, BottomTopTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEReference(getBottomTopTransformation_Threshold(), theOclPackage.getOclExpression(), null, "threshold", null, 0, 1, BottomTopTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEReference(getBottomTopTransformation_Value(), theOclPackage.getOclExpression(), null, "value", null, 0, 1, BottomTopTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+
+		initEClass(concatTransformationEClass, ConcatTransformation.class, "ConcatTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEReference(getConcatTransformation_Pipelines(), this.getApplyPipeline(), null, "pipelines", null, 0, -1, ConcatTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+
+		initEClass(topTransformationEClass, TopTransformation.class, "TopTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEAttribute(getTopTransformation_Count(), ecorePackage.getELong(), "count", null, 0, 1, TopTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+
+		initEClass(skipTransformationEClass, SkipTransformation.class, "SkipTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEAttribute(getSkipTransformation_Count(), ecorePackage.getELong(), "count", null, 0, 1, SkipTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+
+		initEClass(identityTransformationEClass, IdentityTransformation.class, "IdentityTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+
+		initEClass(orderByTransformationEClass, OrderByTransformation.class, "OrderByTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEReference(getOrderByTransformation_Items(), this.getOrderByExpression(), null, "items", null, 0, -1, OrderByTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+
+		initEClass(orderByExpressionEClass, OrderByExpression.class, "OrderByExpression", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEReference(getOrderByExpression_Expression(), theOclPackage.getOclExpression(), null, "expression", null, 0, 1, OrderByExpression.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEAttribute(getOrderByExpression_Ascending(), ecorePackage.getEBoolean(), "ascending", "true", 0, 1, OrderByExpression.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 
 		initEClass(computeTransformationEClass, ComputeTransformation.class, "ComputeTransformation", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
 		initEReference(getComputeTransformation_ComputeExpressions(), this.getComputeExpression(), null, "computeExpressions", null, 0, -1, ComputeTransformation.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
@@ -499,6 +926,16 @@ public class ApplyPackageImpl extends EPackageImpl implements ApplyPackage {
 		addEEnumLiteral(aggregateMethodEEnum, AggregateMethod.AVERAGE);
 		addEEnumLiteral(aggregateMethodEEnum, AggregateMethod.COUNT_DISTINCT);
 		addEEnumLiteral(aggregateMethodEEnum, AggregateMethod.COUNT);
+		addEEnumLiteral(aggregateMethodEEnum, AggregateMethod.CUSTOM);
+		addEEnumLiteral(aggregateMethodEEnum, AggregateMethod.CUSTOM_AGGREGATE);
+
+		initEEnum(bottomTopMethodEEnum, BottomTopMethod.class, "BottomTopMethod");
+		addEEnumLiteral(bottomTopMethodEEnum, BottomTopMethod.TOP_COUNT);
+		addEEnumLiteral(bottomTopMethodEEnum, BottomTopMethod.TOP_SUM);
+		addEEnumLiteral(bottomTopMethodEEnum, BottomTopMethod.TOP_PERCENT);
+		addEEnumLiteral(bottomTopMethodEEnum, BottomTopMethod.BOTTOM_COUNT);
+		addEEnumLiteral(bottomTopMethodEEnum, BottomTopMethod.BOTTOM_SUM);
+		addEEnumLiteral(bottomTopMethodEEnum, BottomTopMethod.BOTTOM_PERCENT);
 
 		// Create resource
 		createResource(eNS_URI);

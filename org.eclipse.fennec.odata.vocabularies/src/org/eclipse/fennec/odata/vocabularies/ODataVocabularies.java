@@ -15,6 +15,7 @@ package org.eclipse.fennec.odata.vocabularies;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -61,7 +62,41 @@ public final class ODataVocabularies {
 
 	/** The vocabulary EPackage for one of the {@link #all()} namespaces. */
 	public static EPackage getEPackage(String namespace) {
-		return CACHE.computeIfAbsent(namespace, ODataVocabularies::load);
+		EPackage cached = CACHE.get(namespace);
+		if (cached != null) {
+			return cached;
+		}
+		loadAll();
+		EPackage pkg = CACHE.get(namespace);
+		if (pkg == null) {
+			throw new IllegalArgumentException("no vendored vocabulary for namespace " + namespace);
+		}
+		return pkg;
+	}
+
+	/**
+	 * Bootstraps ALL vocabularies in dependency order (Core first — the other vocabularies
+	 * type their terms and properties with Core types) and resolves each package's pending
+	 * cross-vocabulary references against the ones loaded before it. Whatever cannot be
+	 * resolved is removed by the converter — a feature without a type is invalid Ecore and
+	 * breaks the metadata whiteboard registration.
+	 */
+	private static synchronized void loadAll() {
+		if (CACHE.size() == all().size()) {
+			return;
+		}
+		EdmToEcoreConverter converter = new EdmToEcoreConverter();
+		Map<String, EPackage> known = new HashMap<>();
+		for (String namespace : List.of(CORE, MEASURES, VALIDATION, CAPABILITIES)) {
+			EPackage pkg = CACHE.get(namespace);
+			if (pkg == null) {
+				pkg = load(namespace);
+				converter.resolveReferences(pkg, known);
+				CACHE.put(namespace, pkg);
+			}
+			known.put(namespace, pkg);
+			known.put(pkg.getName(), pkg); // vocabulary refs use the ALIAS form (Core.Tag)
+		}
 	}
 
 	private static EPackage load(String namespace) {

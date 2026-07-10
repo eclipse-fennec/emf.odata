@@ -552,8 +552,28 @@ public class ProfilePackageImpl extends EPackageImpl implements ProfilePackage {
 	 * @generated
 	 */
 	@Override
+	public EAttribute getODataPropertyProfile_Srid() {
+		return (EAttribute)oDataPropertyProfileEClass.getEStructuralFeatures().get(9);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
+	public EAttribute getODataPropertyProfile_Unicode() {
+		return (EAttribute)oDataPropertyProfileEClass.getEStructuralFeatures().get(10);
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
 	public EReference getODataPropertyProfile_Annotations() {
-		return (EReference)oDataPropertyProfileEClass.getEStructuralFeatures().get(9);
+		return (EReference)oDataPropertyProfileEClass.getEStructuralFeatures().get(11);
 	}
 
 	/**
@@ -935,6 +955,8 @@ public class ProfilePackageImpl extends EPackageImpl implements ProfilePackage {
 		createEAttribute(oDataPropertyProfileEClass, ODATA_PROPERTY_PROFILE__PRECISION);
 		createEAttribute(oDataPropertyProfileEClass, ODATA_PROPERTY_PROFILE__SCALE);
 		createEAttribute(oDataPropertyProfileEClass, ODATA_PROPERTY_PROFILE__DEFAULT_VALUE);
+		createEAttribute(oDataPropertyProfileEClass, ODATA_PROPERTY_PROFILE__SRID);
+		createEAttribute(oDataPropertyProfileEClass, ODATA_PROPERTY_PROFILE__UNICODE);
 		createEReference(oDataPropertyProfileEClass, ODATA_PROPERTY_PROFILE__ANNOTATIONS);
 
 		oDataNavigationProfileEClass = createEClass(ODATA_NAVIGATION_PROFILE);
@@ -1046,6 +1068,8 @@ public class ProfilePackageImpl extends EPackageImpl implements ProfilePackage {
 		initEAttribute(getODataPropertyProfile_Precision(), ecorePackage.getEInt(), "precision", "-1", 0, 1, ODataPropertyProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 		initEAttribute(getODataPropertyProfile_Scale(), ecorePackage.getEInt(), "scale", "-1", 0, 1, ODataPropertyProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 		initEAttribute(getODataPropertyProfile_DefaultValue(), ecorePackage.getEString(), "defaultValue", null, 0, 1, ODataPropertyProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEAttribute(getODataPropertyProfile_Srid(), ecorePackage.getEString(), "srid", null, 0, 1, ODataPropertyProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEAttribute(getODataPropertyProfile_Unicode(), ecorePackage.getEBooleanObject(), "unicode", null, 0, 1, ODataPropertyProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 		initEReference(getODataPropertyProfile_Annotations(), this.getODataAnnotation(), null, "annotations", null, 0, -1, ODataPropertyProfile.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 
 		initEClass(oDataNavigationProfileEClass, ODataNavigationProfile.class, "ODataNavigationProfile", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);

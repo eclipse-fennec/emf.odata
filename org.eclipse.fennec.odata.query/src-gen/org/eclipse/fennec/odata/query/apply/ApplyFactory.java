@@ -62,6 +62,15 @@ public interface ApplyFactory extends EFactory {
 	GroupByTransformation createGroupByTransformation();
 
 	/**
+	 * Returns a new object of class '<em>Rollup Hierarchy</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Rollup Hierarchy</em>'.
+	 * @generated
+	 */
+	RollupHierarchy createRollupHierarchy();
+
+	/**
 	 * Returns a new object of class '<em>Aggregate Transformation</em>'.
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
@@ -78,6 +87,78 @@ public interface ApplyFactory extends EFactory {
 	 * @generated
 	 */
 	AggregateExpression createAggregateExpression();
+
+	/**
+	 * Returns a new object of class '<em>Aggregate From</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Aggregate From</em>'.
+	 * @generated
+	 */
+	AggregateFrom createAggregateFrom();
+
+	/**
+	 * Returns a new object of class '<em>Bottom Top Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Bottom Top Transformation</em>'.
+	 * @generated
+	 */
+	BottomTopTransformation createBottomTopTransformation();
+
+	/**
+	 * Returns a new object of class '<em>Concat Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Concat Transformation</em>'.
+	 * @generated
+	 */
+	ConcatTransformation createConcatTransformation();
+
+	/**
+	 * Returns a new object of class '<em>Top Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Top Transformation</em>'.
+	 * @generated
+	 */
+	TopTransformation createTopTransformation();
+
+	/**
+	 * Returns a new object of class '<em>Skip Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Skip Transformation</em>'.
+	 * @generated
+	 */
+	SkipTransformation createSkipTransformation();
+
+	/**
+	 * Returns a new object of class '<em>Identity Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Identity Transformation</em>'.
+	 * @generated
+	 */
+	IdentityTransformation createIdentityTransformation();
+
+	/**
+	 * Returns a new object of class '<em>Order By Transformation</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Order By Transformation</em>'.
+	 * @generated
+	 */
+	OrderByTransformation createOrderByTransformation();
+
+	/**
+	 * Returns a new object of class '<em>Order By Expression</em>'.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @return a new object of class '<em>Order By Expression</em>'.
+	 * @generated
+	 */
+	OrderByExpression createOrderByExpression();
 
 	/**
 	 * Returns a new object of class '<em>Compute Transformation</em>'.

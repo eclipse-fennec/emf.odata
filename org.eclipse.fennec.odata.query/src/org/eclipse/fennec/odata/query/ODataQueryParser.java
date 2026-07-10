@@ -15,7 +15,9 @@ package org.eclipse.fennec.odata.query;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.CharStreams;
@@ -27,15 +29,24 @@ import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.odata.query.antlr.ODataFilterLexer;
 import org.eclipse.fennec.odata.query.antlr.ODataFilterParser;
 import org.eclipse.fennec.odata.query.apply.AggregateExpression;
+import org.eclipse.fennec.odata.query.apply.AggregateFrom;
 import org.eclipse.fennec.odata.query.apply.AggregateMethod;
 import org.eclipse.fennec.odata.query.apply.AggregateTransformation;
 import org.eclipse.fennec.odata.query.apply.ApplyFactory;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 import org.eclipse.fennec.odata.query.apply.ApplyTransformation;
+import org.eclipse.fennec.odata.query.apply.BottomTopMethod;
+import org.eclipse.fennec.odata.query.apply.BottomTopTransformation;
 import org.eclipse.fennec.odata.query.apply.ComputeExpression;
 import org.eclipse.fennec.odata.query.apply.ComputeTransformation;
+import org.eclipse.fennec.odata.query.apply.ConcatTransformation;
 import org.eclipse.fennec.odata.query.apply.FilterTransformation;
 import org.eclipse.fennec.odata.query.apply.GroupByTransformation;
+import org.eclipse.fennec.odata.query.apply.OrderByExpression;
+import org.eclipse.fennec.odata.query.apply.OrderByTransformation;
+import org.eclipse.fennec.odata.query.apply.RollupHierarchy;
+import org.eclipse.fennec.odata.query.apply.SkipTransformation;
+import org.eclipse.fennec.odata.query.apply.TopTransformation;
 
 /**
  * E4 entry point: parses OData {@code $filter} and {@code $orderby} expressions with the own
@@ -193,83 +204,230 @@ public class ODataQueryParser {
 		return parsing(() -> {
 			ODataFilterParser parser = newParser(apply);
 			ODataToOclBuilder builder = new ODataToOclBuilder(context);
-			ApplyPipeline pipeline = ApplyFactory.eINSTANCE.createApplyPipeline();
-			for (ODataFilterParser.ApplyTrafoContext trafo : parser.apply().applyTrafo()) {
-				pipeline.getTransformations().add(transformation(trafo, builder));
-			}
-			return pipeline;
+			return pipeline(parser.apply().applySeq(), builder);
 		});
 	}
 
+	private ApplyPipeline pipeline(ODataFilterParser.ApplySeqContext seq, ODataToOclBuilder builder) {
+		ApplyPipeline pipeline = ApplyFactory.eINSTANCE.createApplyPipeline();
+		for (ODataFilterParser.ApplyTrafoContext trafo : seq.applyTrafo()) {
+			pipeline.getTransformations().add(transformation(trafo, builder));
+		}
+		return pipeline;
+	}
+
+	// The grammar gates each transformation shape by its (case-sensitive, ABNF %s) soft
+	// keyword, so the contexts arrive pre-dispatched; only value-level rules remain here.
 	private ApplyTransformation transformation(ODataFilterParser.ApplyTrafoContext ctx,
 			ODataToOclBuilder builder) {
-		if (ctx instanceof ODataFilterParser.GroupByTrafoContext groupBy) {
-			requireTransformation(groupBy.name.getText(), "groupby");
-			GroupByTransformation t = ApplyFactory.eINSTANCE.createGroupByTransformation();
-			for (ODataFilterParser.MemberPathContext property : groupBy.memberPath()) {
-				t.getGroupingProperties().add(typeResolver.resolve(builder.visit(property)));
+		return switch (ctx) {
+			case ODataFilterParser.GroupByTrafoContext groupBy -> groupBy(groupBy, builder);
+			case ODataFilterParser.AggregateTrafoContext aggregate -> {
+				AggregateTransformation t = ApplyFactory.eINSTANCE.createAggregateTransformation();
+				for (ODataFilterParser.AggregateItemContext item : aggregate.aggregateItem()) {
+					t.getAggregations().add(aggregation(item, builder));
+				}
+				yield t;
 			}
-			if (groupBy.applyTrafo() != null) {
-				t.setThen(transformation(groupBy.applyTrafo(), builder));
+			case ODataFilterParser.ComputeTrafoContext compute -> {
+				ComputeTransformation t = ApplyFactory.eINSTANCE.createComputeTransformation();
+				for (ODataFilterParser.ComputeItemContext item : compute.computeItem()) {
+					ComputeExpression ce = ApplyFactory.eINSTANCE.createComputeExpression();
+					ce.setExpression(typeResolver.resolve(builder.visit(item.expr())));
+					ce.setAlias(item.alias.getText());
+					t.getComputeExpressions().add(ce);
+					builder.registerAlias(ce.getAlias());
+				}
+				yield t;
 			}
-			return t;
+			case ODataFilterParser.ConcatTrafoContext concat -> {
+				ConcatTransformation t = ApplyFactory.eINSTANCE.createConcatTransformation();
+				for (ODataFilterParser.ApplySeqContext branch : concat.applySeq()) {
+					t.getPipelines().add(pipeline(branch, builder));
+				}
+				yield t;
+			}
+			case ODataFilterParser.FilterTrafoContext filter -> {
+				FilterTransformation t = ApplyFactory.eINSTANCE.createFilterTransformation();
+				t.setPredicate(typeResolver.resolve(builder.visit(filter.expr())));
+				yield t;
+			}
+			case ODataFilterParser.BottomTopTrafoContext bottomTop -> {
+				BottomTopTransformation t = ApplyFactory.eINSTANCE.createBottomTopTransformation();
+				t.setMethod(switch (bottomTop.name.getText()) {
+					case "topcount" -> BottomTopMethod.TOP_COUNT;
+					case "topsum" -> BottomTopMethod.TOP_SUM;
+					case "toppercent" -> BottomTopMethod.TOP_PERCENT;
+					case "bottomcount" -> BottomTopMethod.BOTTOM_COUNT;
+					case "bottomsum" -> BottomTopMethod.BOTTOM_SUM;
+					default -> BottomTopMethod.BOTTOM_PERCENT;
+				});
+				t.setThreshold(typeResolver.resolve(builder.visit(bottomTop.expr(0))));
+				t.setValue(typeResolver.resolve(builder.visit(bottomTop.expr(1))));
+				yield t;
+			}
+			case ODataFilterParser.OrderByTrafoContext orderBy -> {
+				OrderByTransformation t = ApplyFactory.eINSTANCE.createOrderByTransformation();
+				for (ODataFilterParser.OrderbyItemContext item : orderBy.orderbyItem()) {
+					OrderByExpression e = ApplyFactory.eINSTANCE.createOrderByExpression();
+					e.setExpression(typeResolver.resolve(builder.visit(item.expr())));
+					e.setAscending(item.direction == null
+							|| item.direction.getType() != ODataFilterLexer.DESC);
+					t.getItems().add(e);
+				}
+				yield t;
+			}
+			case ODataFilterParser.RowLimitTrafoContext rowLimit -> {
+				long count = Long.parseLong(rowLimit.INT().getText());
+				if (count < 0) {
+					throw new ODataQueryParseException(
+							"'" + rowLimit.name.getText() + "' requires a non-negative integer");
+				}
+				if ("top".equals(rowLimit.name.getText())) {
+					TopTransformation t = ApplyFactory.eINSTANCE.createTopTransformation();
+					t.setCount(count);
+					yield t;
+				}
+				SkipTransformation t = ApplyFactory.eINSTANCE.createSkipTransformation();
+				t.setCount(count);
+				yield t;
+			}
+			default -> ApplyFactory.eINSTANCE.createIdentityTransformation();
+		};
+	}
+
+	private GroupByTransformation groupBy(ODataFilterParser.GroupByTrafoContext ctx,
+			ODataToOclBuilder builder) {
+		GroupByTransformation t = ApplyFactory.eINSTANCE.createGroupByTransformation();
+		for (ODataFilterParser.GroupbyElementContext element : ctx.groupbyElement()) {
+			if (element instanceof ODataFilterParser.PathElementContext path) {
+				t.getGroupingProperties().add(typeResolver.resolve(builder.visit(path.memberPath())));
+			} else {
+				ODataFilterParser.RollupElementContext rollup =
+						(ODataFilterParser.RollupElementContext) element;
+				RollupHierarchy hierarchy = ApplyFactory.eINSTANCE.createRollupHierarchy();
+				List<ODataFilterParser.MemberPathContext> levels = rollup.memberPath();
+				if (levels.size() == 1) {
+					// ONE simple identifier = named leveled hierarchy (its qualifier, not a
+					// property — deliberately unresolved); a single PATH is neither form
+					String name = levels.get(0).getText();
+					if (name.indexOf('/') >= 0) {
+						throw new ODataQueryParseException(
+								"rollup needs two or more levels or a hierarchy name: " + name);
+					}
+					hierarchy.setHierarchy(name);
+				} else {
+					for (ODataFilterParser.MemberPathContext level : levels) {
+						hierarchy.getLevels().add(typeResolver.resolve(builder.visit(level)));
+					}
+				}
+				t.getRollups().add(hierarchy);
+			}
 		}
-		if (ctx instanceof ODataFilterParser.AggregateTrafoContext aggregate) {
-			requireTransformation(aggregate.name.getText(), "aggregate");
-			AggregateTransformation t = ApplyFactory.eINSTANCE.createAggregateTransformation();
-			for (ODataFilterParser.AggregateItemContext item : aggregate.aggregateItem()) {
-				t.getAggregations().add(aggregation(item, builder));
+		if (ctx.applySeq() != null) {
+			List<ODataFilterParser.ApplyTrafoContext> nested = ctx.applySeq().applyTrafo();
+			if (nested.size() > 1) {
+				// syntactically valid ([OData-Aggregation] groupbyTrafo takes an applyExpr),
+				// but the per-group pipeline execution only covers a single stage → 501
+				throw new UnsupportedOperationException(
+						"nested groupby pipelines with more than one transformation are not supported");
 			}
-			return t;
+			t.setThen(transformation(nested.get(0), builder));
 		}
-		if (ctx instanceof ODataFilterParser.ComputeTrafoContext compute) {
-			requireTransformation(compute.name.getText(), "compute");
-			ComputeTransformation t = ApplyFactory.eINSTANCE.createComputeTransformation();
-			for (ODataFilterParser.ComputeItemContext item : compute.computeItem()) {
-				ComputeExpression ce = ApplyFactory.eINSTANCE.createComputeExpression();
-				ce.setExpression(typeResolver.resolve(builder.visit(item.expr())));
-				ce.setAlias(item.alias.getText());
-				t.getComputeExpressions().add(ce);
-				builder.registerAlias(ce.getAlias());
-			}
-			return t;
-		}
-		ODataFilterParser.FilterTrafoContext filter = (ODataFilterParser.FilterTrafoContext) ctx;
-		requireTransformation(filter.name.getText(), "filter");
-		FilterTransformation t = ApplyFactory.eINSTANCE.createFilterTransformation();
-		t.setPredicate(typeResolver.resolve(builder.visit(filter.expr())));
 		return t;
 	}
+
+	/** Custom aggregates are bare identifier paths ([OData-Aggregation] aggregateCustom). */
+	private static final Pattern CUSTOM_AGGREGATE_PATH =
+			Pattern.compile("[A-Za-z_]\\w*(/[A-Za-z_]\\w*)*");
 
 	private AggregateExpression aggregation(ODataFilterParser.AggregateItemContext ctx,
 			ODataToOclBuilder builder) {
 		AggregateExpression aggregate = ApplyFactory.eINSTANCE.createAggregateExpression();
-		if (ctx instanceof ODataFilterParser.AggregateWithItemContext with) {
-			aggregate.setExpression(typeResolver.resolve(builder.visit(with.expr())));
-			aggregate.setMethod(switch (with.method.getText().toLowerCase()) {
-				case "sum" -> AggregateMethod.SUM;
-				case "min" -> AggregateMethod.MIN;
-				case "max" -> AggregateMethod.MAX;
-				case "average" -> AggregateMethod.AVERAGE;
-				case "countdistinct" -> AggregateMethod.COUNT_DISTINCT;
-				default -> throw new ODataQueryParseException(
-						"unknown aggregate method '" + with.method.getText() + "'");
-			});
-			aggregate.setAlias(with.alias.getText());
-		} else {
-			ODataFilterParser.AggregateCountItemContext count =
-					(ODataFilterParser.AggregateCountItemContext) ctx;
-			aggregate.setMethod(AggregateMethod.COUNT); // $count virtual aggregate, no operand
-			aggregate.setAlias(count.alias.getText());
+		switch (ctx) {
+			case ODataFilterParser.AggregateWithItemContext with -> {
+				aggregate.setExpression(typeResolver.resolve(builder.visit(with.expr())));
+				method(with.method.getText(), aggregate::setMethod, aggregate::setCustomMethod);
+				aggregate.setAlias(with.alias.getText());
+				for (ODataFilterParser.AggrFromContext from : with.aggrFrom()) {
+					aggregate.getFrom().add(fromClause(from.memberPath(), from.method.getText(), builder));
+				}
+			}
+			case ODataFilterParser.AggregateCountItemContext count -> {
+				aggregate.setMethod(AggregateMethod.COUNT); // $count virtual aggregate, no operand
+				aggregate.setAlias(count.alias.getText());
+				for (ODataFilterParser.AggrFromContext from : count.aggrFrom()) {
+					aggregate.getFrom().add(fromClause(from.memberPath(), from.method.getText(), builder));
+				}
+			}
+			case ODataFilterParser.AggregateCustomAliasedContext custom -> {
+				customOrCountPath(aggregate, custom.expr(), builder);
+				aggregate.setAlias(custom.alias.getText());
+				for (ODataFilterParser.CustomFromContext from : custom.customFrom()) {
+					aggregate.getFrom().add(fromClause(from.memberPath(),
+							from.method == null ? null : from.method.getText(), builder));
+				}
+			}
+			default -> {
+				ODataFilterParser.AggregateCustomBareContext bare =
+						(ODataFilterParser.AggregateCustomBareContext) ctx;
+				customOrCountPath(aggregate, bare.expr(), builder);
+				if (aggregate.getMethod() == AggregateMethod.COUNT) {
+					throw new ODataQueryParseException("'path/$count' aggregates require an alias");
+				}
+			}
 		}
-		builder.registerAlias(aggregate.getAlias());
+		if (aggregate.getAlias() != null) {
+			builder.registerAlias(aggregate.getAlias());
+		}
 		return aggregate;
 	}
 
-	private static void requireTransformation(String actual, String expected) {
-		if (!expected.equals(actual)) {
-			throw new ODataQueryParseException("unknown or malformed $apply transformation '" + actual + "'");
+	/** No 'with': either the {@code path/$count} form or a model-declared custom aggregate. */
+	private void customOrCountPath(AggregateExpression aggregate,
+			ODataFilterParser.ExprContext expr, ODataToOclBuilder builder) {
+		String text = expr.getText();
+		if (text.endsWith("/$count")) {
+			aggregate.setExpression(typeResolver.resolve(builder.visit(expr)));
+			aggregate.setMethod(AggregateMethod.COUNT);
+			return;
 		}
+		if (!CUSTOM_AGGREGATE_PATH.matcher(text).matches()) {
+			throw new ODataQueryParseException(
+					"aggregate expression without 'with' must be a custom aggregate path: " + text);
+		}
+		aggregate.setMethod(AggregateMethod.CUSTOM_AGGREGATE);
+		aggregate.setCustomMethod(text); // deliberately unresolved — not a model property
+	}
+
+	private AggregateFrom fromClause(List<ODataFilterParser.MemberPathContext> paths,
+			String methodText, ODataToOclBuilder builder) {
+		AggregateFrom from = ApplyFactory.eINSTANCE.createAggregateFrom();
+		for (ODataFilterParser.MemberPathContext path : paths) {
+			from.getGroupingProperties().add(typeResolver.resolve(builder.visit(path)));
+		}
+		if (methodText != null) {
+			method(methodText, from::setMethod, from::setCustomMethod);
+		}
+		return from;
+	}
+
+	/** Standard method name → enum; namespace-qualified → CUSTOM; anything else → 400. */
+	private static void method(String text, Consumer<AggregateMethod> setMethod,
+			Consumer<String> setCustomMethod) {
+		if (text.indexOf('.') >= 0) {
+			setMethod.accept(AggregateMethod.CUSTOM);
+			setCustomMethod.accept(text);
+			return;
+		}
+		setMethod.accept(switch (text.toLowerCase()) {
+			case "sum" -> AggregateMethod.SUM;
+			case "min" -> AggregateMethod.MIN;
+			case "max" -> AggregateMethod.MAX;
+			case "average" -> AggregateMethod.AVERAGE;
+			case "countdistinct" -> AggregateMethod.COUNT_DISTINCT;
+			default -> throw new ODataQueryParseException("unknown aggregate method '" + text + "'");
+		});
 	}
 
 	/**

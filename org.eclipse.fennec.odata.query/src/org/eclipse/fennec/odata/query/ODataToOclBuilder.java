@@ -25,6 +25,8 @@ import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EEnum;
 import org.eclipse.emf.ecore.EEnumLiteral;
+import org.eclipse.emf.ecore.EOperation;
+import org.eclipse.emf.ecore.EParameter;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
@@ -265,59 +267,72 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		return exp;
 	}
 
-	// --- member paths + lambdas ---
+	// --- member paths + lambdas + bound calls ---
 
 	@Override
 	public OclExpression visitMemberPath(ODataFilterParser.MemberPathContext ctx) {
 		OclExpression source = null;
 		EClass current = context;
-		EStructuralFeature lastFeature = null;
-		List<TerminalNode> segments = ctx.IDENT();
+		EClassifier valueType = null;
+		boolean many = false;
+		List<ODataFilterParser.PathSegmentContext> segments = ctx.pathSegment();
 		int start = 0;
 
-		LambdaScope scope = scopeOf(segments.get(0).getText());
-		if (scope != null) { // first segment is a lambda variable, not a property
-			VariableExp variable = FACTORY.createVariableExp();
-			variable.setReferredVariable(scope.variable());
-			source = variable;
-			current = scope.elementClass();
-			start = 1;
-		} else if (aliases.containsKey(segments.get(0).getText())) { // $apply alias reference
-			VariableExp variable = FACTORY.createVariableExp();
-			variable.setReferredVariable(aliases.get(segments.get(0).getText()));
-			source = variable;
-			current = null;
-			start = 1;
+		if (segments.get(0) instanceof ODataFilterParser.PropertyPathSegmentContext first) {
+			String name = first.IDENT().getText();
+			LambdaScope scope = scopeOf(name);
+			if (scope != null) { // first segment is a lambda variable, not a property
+				VariableExp variable = FACTORY.createVariableExp();
+				variable.setReferredVariable(scope.variable());
+				source = variable;
+				current = scope.elementClass();
+				start = 1;
+			} else if (aliases.containsKey(name)) { // $apply alias reference
+				VariableExp variable = FACTORY.createVariableExp();
+				variable.setReferredVariable(aliases.get(name));
+				source = variable;
+				current = null;
+				start = 1;
+			}
 		}
 
 		for (int i = start; i < segments.size(); i++) {
-			String name = segments.get(i).getText();
-			if (current == null) {
-				throw new ODataQueryParseException(
-						"cannot navigate into '" + name + "' — the previous segment is not a structured type");
-			}
-			EStructuralFeature feature = current.getEStructuralFeature(name);
-			if (feature == null) {
-				throw new ODataQueryParseException(
-						"unknown property '" + name + "' on " + current.getName());
-			}
-			PropertyCallExp call = FACTORY.createPropertyCallExp();
-			call.setReferredProperty(feature);
-			if (source == null) {
-				call.setIsImplicit(true); // source is the implicit iteration variable (self)
+			if (segments.get(i) instanceof ODataFilterParser.BoundCallSegmentContext bound) {
+				source = boundCall(bound.boundCall(), source, current);
+				EOperation operation = resolveOperation(bound.boundCall(), current);
+				valueType = operation.getEType();
+				many = operation.isMany();
 			} else {
-				call.setOwnedSource(source);
+				String name = ((ODataFilterParser.PropertyPathSegmentContext) segments.get(i))
+						.IDENT().getText();
+				if (current == null) {
+					throw new ODataQueryParseException("cannot navigate into '" + name
+							+ "' — the previous segment is not a structured type");
+				}
+				EStructuralFeature feature = current.getEStructuralFeature(name);
+				if (feature == null) {
+					throw new ODataQueryParseException(
+							"unknown property '" + name + "' on " + current.getName());
+				}
+				PropertyCallExp call = FACTORY.createPropertyCallExp();
+				call.setReferredProperty(feature);
+				if (source == null) {
+					call.setIsImplicit(true); // source is the implicit iteration variable (self)
+				} else {
+					call.setOwnedSource(source);
+				}
+				source = call;
+				valueType = feature.getEType();
+				many = feature.isMany();
 			}
-			source = call;
-			lastFeature = feature;
-			current = feature.getEType() instanceof EClass structured ? structured : null;
+			current = valueType instanceof EClass structured ? structured : null;
 		}
 
 		if (ctx.lambdaCall() != null) {
-			return lambda(ctx.lambdaCall(), source, lastFeature);
+			return lambda(ctx.lambdaCall(), source, valueType, many);
 		}
 		if (ctx.COUNT() != null) { // path/$count → size (E4-AP-8)
-			if (lastFeature == null || !lastFeature.isMany()) {
+			if (!many) {
 				throw new ODataQueryParseException("'$count' requires a collection-valued path");
 			}
 			OperationCallExp size = FACTORY.createOperationCallExp();
@@ -328,10 +343,79 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		return source;
 	}
 
+	/**
+	 * Bound/composed function call in a member path (E4-AP-10): resolved against the current
+	 * type's {@link EOperation}s (the same source the E1 operation profiles read), arguments
+	 * mapped into declaration order — named form for model operations, positional as sent.
+	 * The qualified name stays on the {@link OperationCallExp} for the backend dispatch.
+	 */
+	private OclExpression boundCall(ODataFilterParser.BoundCallContext ctx, OclExpression source,
+			EClass current) {
+		EOperation operation = resolveOperation(ctx, current);
+		OperationCallExp call = FACTORY.createOperationCallExp();
+		call.setName(qualifiedName(ctx));
+		if (source == null) {
+			call.setIsImplicit(true);
+		} else {
+			call.setOwnedSource(source);
+		}
+		ODataFilterParser.BoundCallArgsContext args = ctx.boundCallArgs();
+		if (args != null && !args.namedArg().isEmpty()) {
+			Map<String, ODataFilterParser.ExprContext> byName = new HashMap<>();
+			for (ODataFilterParser.NamedArgContext named : args.namedArg()) {
+				if (byName.put(named.IDENT().getText(), named.expr()) != null) {
+					throw new ODataQueryParseException(
+							"duplicate parameter '" + named.IDENT().getText() + "'");
+				}
+			}
+			for (EParameter parameter : operation.getEParameters()) {
+				ODataFilterParser.ExprContext expr = byName.remove(parameter.getName());
+				if (expr == null) {
+					throw new ODataQueryParseException("missing parameter '" + parameter.getName()
+							+ "' of operation " + operation.getName());
+				}
+				call.getOwnedArguments().add(visit(expr));
+			}
+			if (!byName.isEmpty()) {
+				throw new ODataQueryParseException("unknown parameter '"
+						+ byName.keySet().iterator().next() + "' of operation " + operation.getName());
+			}
+		} else {
+			List<ODataFilterParser.ExprContext> positional =
+					args == null ? List.of() : args.expr();
+			if (positional.size() != operation.getEParameters().size()) {
+				throw new ODataQueryParseException("operation " + operation.getName() + " takes "
+						+ operation.getEParameters().size() + " parameters");
+			}
+			for (ODataFilterParser.ExprContext expr : positional) {
+				call.getOwnedArguments().add(visit(expr));
+			}
+		}
+		return call;
+	}
+
+	private EOperation resolveOperation(ODataFilterParser.BoundCallContext ctx, EClass current) {
+		String qualified = qualifiedName(ctx);
+		String simple = qualified.substring(qualified.lastIndexOf('.') + 1);
+		if (current == null) {
+			throw new ODataQueryParseException("cannot call '" + qualified
+					+ "' — the previous segment is not a structured type");
+		}
+		return current.getEAllOperations().stream()
+				.filter(operation -> simple.equals(operation.getName())).findFirst()
+				.orElseThrow(() -> new ODataQueryParseException(
+						"unknown bound operation '" + qualified + "' on " + current.getName()));
+	}
+
+	private static String qualifiedName(ODataFilterParser.BoundCallContext ctx) {
+		return ctx.IDENT().stream().map(TerminalNode::getText)
+				.reduce((a, b) -> a + "." + b).orElseThrow();
+	}
+
 	/** OData lambda → OCL iterator: any(v: …) → exists, all(v: …) → forAll, any() → notEmpty. */
 	private OclExpression lambda(ODataFilterParser.LambdaCallContext ctx, OclExpression source,
-			EStructuralFeature collectionFeature) {
-		if (collectionFeature == null || !collectionFeature.isMany()) {
+			EClassifier elementType, boolean many) {
+		if (!many || elementType == null) {
 			throw new ODataQueryParseException(
 					"'" + ctx.op.getText() + "' requires a collection-valued path");
 		}
@@ -347,13 +431,13 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 
 		Variable variable = FACTORY.createVariable();
 		variable.setName(ctx.IDENT().getText());
-		var elementType = FACTORY.createClassifierType();
-		elementType.setReferredClassifier(collectionFeature.getEType());
-		elementType.setName(collectionFeature.getEType().getName());
-		variable.setType(elementType);
+		var variableType = FACTORY.createClassifierType();
+		variableType.setReferredClassifier(elementType);
+		variableType.setName(elementType.getName());
+		variable.setType(variableType);
 
 		scopes.push(new LambdaScope(variable.getName(), variable,
-				collectionFeature.getEType() instanceof EClass structured ? structured : null));
+				elementType instanceof EClass structured ? structured : null));
 		OclExpression body;
 		try {
 			body = visit(ctx.expr());

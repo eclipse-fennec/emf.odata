@@ -264,10 +264,9 @@ public class ODataServlet extends HttpServlet {
 	private static final ThreadLocal<String> METADATA_LEVEL = new ThreadLocal<>();
 
 	/**
-	 * The requested response metadata level ([OData-JSON] 3.1): {@code full} when the client asked
-	 * for it via {@code Accept: …;odata.metadata=full} or {@code $format}, else {@code minimal}
-	 * (the default; an explicit {@code none} is served as minimal — more control info than asked for
-	 * is harmless and still valid).
+	 * The requested response metadata level ([OData-JSON] 3.1): {@code full} or {@code none} when
+	 * the client asked for it via {@code Accept: …;odata.metadata=…} or {@code $format}, else
+	 * {@code minimal} (the default).
 	 */
 	private static String metadataLevel(HttpServletRequest request) {
 		String source = request.getParameter("$format");
@@ -276,8 +275,8 @@ public class ODataServlet extends HttpServlet {
 		}
 		if (source != null) {
 			java.util.regex.Matcher matcher = METADATA_PARAM.matcher(source);
-			if (matcher.find() && matcher.group(1).equalsIgnoreCase("full")) {
-				return "full";
+			if (matcher.find() && !matcher.group(1).equalsIgnoreCase("minimal")) {
+				return matcher.group(1).toLowerCase(java.util.Locale.ROOT);
 			}
 		}
 		return "minimal";
@@ -290,7 +289,71 @@ public class ODataServlet extends HttpServlet {
 
 	/** The JSON content type carrying the current request's metadata level. */
 	private static String contentTypeJson() {
-		return "application/json;odata.metadata=" + responseMetadataLevel() + ";charset=UTF-8";
+		return "application/json;odata.metadata=" + responseMetadataLevel()
+				+ (ieee754() ? ";IEEE754Compatible=true" : "") + ";charset=UTF-8";
+	}
+
+	/**
+	 * {@code odata.metadata=none} ([OData-JSON] 3.1.1): the payload MUST omit all control
+	 * information other than {@code @odata.nextLink} and {@code @odata.count} — no context URL,
+	 * no type discriminators.
+	 */
+	private static boolean omitContext() {
+		return "none".equals(responseMetadataLevel());
+	}
+
+	private static final java.util.regex.Pattern IEEE754_PARAM =
+			java.util.regex.Pattern.compile("IEEE754Compatible\\s*=\\s*(true|false)",
+					java.util.regex.Pattern.CASE_INSENSITIVE);
+
+	/** Whether the current response runs {@code IEEE754Compatible=true}; request-scoped like the metadata level. */
+	private static final ThreadLocal<Boolean> IEEE754 = new ThreadLocal<>();
+
+	/** {@code IEEE754Compatible=true} requested via {@code $format} or {@code Accept} ([OData-JSON] 8.1). */
+	private static boolean ieee754Requested(HttpServletRequest request) {
+		String source = request.getParameter("$format");
+		if (source == null || source.isBlank()) {
+			source = request.getHeader("Accept");
+		}
+		if (source == null) {
+			return false;
+		}
+		java.util.regex.Matcher matcher = IEEE754_PARAM.matcher(source);
+		return matcher.find() && "true".equalsIgnoreCase(matcher.group(1));
+	}
+
+	private static boolean ieee754() {
+		return Boolean.TRUE.equals(IEEE754.get());
+	}
+
+	/** {@code @odata.count} is Edm.Int64 — a string under {@code IEEE754Compatible=true}. */
+	private static String countValue(long count) {
+		return ieee754() ? "\"" + count + "\"" : Long.toString(count);
+	}
+
+	/** Weaves the context annotation into an entity object (single entities have no envelope). */
+	private static String withContext(String contextUrl, String entityJson) {
+		if (omitContext()) {
+			return entityJson;
+		}
+		return "{\"@odata.context\":\"" + contextUrl + "\"," + entityJson.substring(1);
+	}
+
+	/** Collection-envelope head: an opening brace plus the context property — context-free under metadata=none. */
+	private static StringBuilder envelopeHead(String contextUrl) {
+		StringBuilder head = new StringBuilder("{");
+		if (!omitContext()) {
+			head.append("\"@odata.context\":\"").append(contextUrl).append('"');
+		}
+		return head;
+	}
+
+	/** Separates the next top-level envelope property unless it is the first one. */
+	private static StringBuilder envelopeProperty(StringBuilder envelope) {
+		if (envelope.length() > 1) {
+			envelope.append(',');
+		}
+		return envelope;
 	}
 
 	@Override
@@ -360,7 +423,9 @@ public class ODataServlet extends HttpServlet {
 		// carry the requested metadata level request-scoped (save/restore keeps $batch sub-requests,
 		// which re-enter this method, from clobbering the outer request's level)
 		String previousLevel = METADATA_LEVEL.get();
+		Boolean previousIeee754 = IEEE754.get();
 		METADATA_LEVEL.set(metadataLevel(request));
+		IEEE754.set(ieee754Requested(request));
 		try {
 			if ("/$batch".equals(pathInfo)) {
 				batch(request, response);
@@ -380,6 +445,11 @@ public class ODataServlet extends HttpServlet {
 				METADATA_LEVEL.remove();
 			} else {
 				METADATA_LEVEL.set(previousLevel);
+			}
+			if (previousIeee754 == null) {
+				IEEE754.remove();
+			} else {
+				IEEE754.set(previousIeee754);
 			}
 		}
 	}
@@ -1097,6 +1167,7 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
 			return;
 		}
+		path = keyAsSegment(path);
 		EClass entityType = resolveEntityType(path.entitySet());
 		if (entityType == null) {
 			error(response, HttpServletResponse.SC_NOT_FOUND,
@@ -1490,8 +1561,17 @@ public class ODataServlet extends HttpServlet {
 		return true;
 	}
 
-	/** Weak ETag over the full serialized entity — stable per state, cheap to recompute. */
+	/**
+	 * Weak ETag over the full serialized entity — stable per state, cheap to recompute. Pinned
+	 * to the canonical (minimal-metadata) serialization so the tag does not vary with the
+	 * REQUESTED metadata level (a GET under {@code none}/{@code full} must yield an ETag a
+	 * later write with the default level can match).
+	 */
 	private String etagOf(EObject entity, EClass entityType) throws IOException {
+		String requestedLevel = METADATA_LEVEL.get();
+		Boolean requestedIeee754 = IEEE754.get();
+		METADATA_LEVEL.set("minimal");
+		IEEE754.set(Boolean.FALSE);
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-256").digest(
 					entityJson(entity, entityType, null, Set.of())
@@ -1499,6 +1579,17 @@ public class ODataServlet extends HttpServlet {
 			return "W/\"" + HexFormat.of().formatHex(digest, 0, 8) + "\"";
 		} catch (NoSuchAlgorithmException e) {
 			throw new IllegalStateException("SHA-256 unavailable", e);
+		} finally {
+			if (requestedLevel == null) {
+				METADATA_LEVEL.remove();
+			} else {
+				METADATA_LEVEL.set(requestedLevel);
+			}
+			if (requestedIeee754 == null) {
+				IEEE754.remove();
+			} else {
+				IEEE754.set(requestedIeee754);
+			}
 		}
 	}
 
@@ -1588,6 +1679,11 @@ public class ODataServlet extends HttpServlet {
 		}
 		ODataJsonResourceImpl resource = new ODataJsonResourceImpl(
 				URI.createURI("request.odatajson"), metadataService);
+		String payloadContentType = request.getContentType();
+		if (payloadContentType != null) { // IEEE754Compatible=true payloads carry Int64/Decimal as strings
+			java.util.regex.Matcher matcher = IEEE754_PARAM.matcher(payloadContentType);
+			resource.ieee754Compatible(matcher.find() && "true".equalsIgnoreCase(matcher.group(1)));
+		}
 		Map<Object, Object> options = new HashMap<>();
 		options.put(CodecResource.CODEC_ROOT_TYPE, entityType);
 		try {
@@ -1707,10 +1803,9 @@ public class ODataServlet extends HttpServlet {
 		}
 		response.setStatus(HttpServletResponse.SC_CREATED);
 		String json = entityJson(entity, entityType, null, Set.of());
-		String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
-				+ "/$entity\",";
 		response.setContentType(contentTypeJson());
-		response.getWriter().write("{" + context + json.substring(1));
+		response.getWriter().write(withContext(
+				contextRoot(request) + "/$metadata#" + setName + "/$entity", json));
 	}
 
 	/**
@@ -1724,10 +1819,9 @@ public class ODataServlet extends HttpServlet {
 			response.setHeader("Preference-Applied", "return=representation");
 			response.setStatus(HttpServletResponse.SC_OK);
 			String json = entityJson(entity, entityType, null, Set.of());
-			String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
-					+ "/$entity\",";
 			response.setContentType(contentTypeJson());
-			response.getWriter().write("{" + context + json.substring(1));
+			response.getWriter().write(withContext(
+					contextRoot(request) + "/$metadata#" + setName + "/$entity", json));
 			return;
 		}
 		if ("minimal".equals(returnPreference(request))) {
@@ -1805,8 +1899,9 @@ public class ODataServlet extends HttpServlet {
 				.collect(Collectors.joining(","));
 		String value = singletons.isEmpty() ? sets : sets.isEmpty() ? singletons : sets + "," + singletons;
 		response.setContentType("application/json;charset=UTF-8");
-		response.getWriter().write("{\"@odata.context\":\"" + request.getRequestURI()
-				+ "/$metadata\",\"value\":[" + value + "]}");
+		StringBuilder json = envelopeHead(request.getRequestURI() + "/$metadata");
+		envelopeProperty(json).append("\"value\":[").append(value).append("]}");
+		response.getWriter().write(json.toString());
 	}
 
 	/** Names of the container singletons declared across the registered packages ([OData-CSDL] 13.5). */
@@ -1873,9 +1968,9 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		String json = entityJson(entity, type, select, expand);
-		String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + name + "\",";
 		response.setContentType(contentTypeJson());
-		response.getWriter().write("{" + context + json.substring(1));
+		response.getWriter().write(withContext(
+				contextRoot(request) + "/$metadata#" + name, json));
 	}
 
 	/** Whether the client asked for the CSDL <b>JSON</b> representation of {@code $metadata} (4.01). */
@@ -2043,14 +2138,13 @@ public class ODataServlet extends HttpServlet {
 			writeXmi(response, copies);
 			return;
 		}
-		StringBuilder json = new StringBuilder("{\"@odata.context\":\"")
-				.append(contextRoot(request)).append("/$metadata#").append(setName)
-				.append(castName != null ? "/" + castName : "").append('"');
+		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata#" + setName
+				+ (castName != null ? "/" + castName : ""));
 		if (result.totalCount() >= 0) {
-			json.append(",\"@odata.count\":").append(result.totalCount());
+			envelopeProperty(json).append("\"@odata.count\":").append(countValue(result.totalCount()));
 		}
 		List<ComputeExpression> computes = selectedComputes(computePipeline, request, computeAliases);
-		json.append(",\"value\":[");
+		envelopeProperty(json).append("\"value\":[");
 		for (int i = 0; i < page.size(); i++) {
 			if (i > 0) {
 				json.append(',');
@@ -2102,6 +2196,7 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
 			return;
 		}
+		path = keyAsSegment(path);
 		if (path.key() == null && resolveSingleton(path.entitySet()) != null) {
 			singletonResource(path, request, response); // container singleton (GET /Me[/…])
 			return;
@@ -2265,6 +2360,7 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
 			return;
 		}
+		path = keyAsSegment(path);
 		if (path.key() == null || !path.segments().isEmpty()) {
 			error(response, HttpServletResponse.SC_NOT_FOUND,
 					"a bound function is invoked on a keyed entity");
@@ -2485,9 +2581,8 @@ public class ODataServlet extends HttpServlet {
 		response.setContentType(contentTypeJson());
 		if (result instanceof EObject entity) {
 			String json = entityJson(entity, entity.eClass(), null, Set.of());
-			String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#"
-					+ entity.eClass().getName() + "/$entity\",";
-			response.getWriter().write("{" + context + json.substring(1));
+			response.getWriter().write(withContext(contextRoot(request) + "/$metadata#"
+					+ entity.eClass().getName() + "/$entity", json));
 			return;
 		}
 		if (result instanceof java.util.Collection<?> collection) {
@@ -2582,6 +2677,95 @@ public class ODataServlet extends HttpServlet {
 			current = reference.getEReferenceType();
 		}
 		return path.isEmpty() ? Set.of() : Set.of(path.toString());
+	}
+
+	/**
+	 * Key-as-segment normalization ([OData-URL] 4.3.3, 4.01 MAY — the Microsoft Graph style):
+	 * folds bare key segments into their collection's key predicate, so {@code Products/5} and
+	 * {@code Products(5)} route identically. Two shapes arrive from the parser: explicit
+	 * {@link ResourcePath.KeySegment}s (non-identifier literals) fold structurally; a
+	 * {@link ResourcePath.PropertySegment} that does NOT match a declared feature of the
+	 * current collection's type folds as a (quoted) string key — declared properties always
+	 * win the ambiguity. Anything that does not fold cleanly leaves the path unchanged, so
+	 * the classic routing (and its 404s) stays authoritative.
+	 */
+	private ResourcePath keyAsSegment(ResourcePath path) {
+		EClass current = resolveEntityType(path.entitySet());
+		if (current == null || path.segments().isEmpty()) {
+			return path;
+		}
+		String key = path.key();
+		// a keyless set (no positional AND no compound predicate) is a collection context
+		boolean collection = key == null && path.namedKeys().isEmpty();
+		boolean changed = false;
+		List<ResourcePath.Segment> out = new ArrayList<>();
+		for (ResourcePath.Segment segment : path.segments()) {
+			switch (segment) {
+				case ResourcePath.KeySegment(String value) -> {
+					if (!collection) {
+						return path; // a bare key needs a keyless collection before it
+					}
+					if (out.isEmpty()) {
+						key = value;
+					} else if (!foldKey(out, value)) {
+						return path;
+					}
+					collection = false;
+					changed = true;
+				}
+				case ResourcePath.PropertySegment property -> {
+					EStructuralFeature feature = current == null ? null
+							: current.getEStructuralFeature(property.name());
+					if (feature == null && collection && property.key() == null) {
+						// unknown name on a collection = an unquoted STRING key segment
+						String quoted = "'" + property.name().replace("'", "''") + "'";
+						if (out.isEmpty()) {
+							key = quoted;
+						} else if (!foldKey(out, quoted)) {
+							return path;
+						}
+						collection = false;
+						changed = true;
+					} else {
+						out.add(property);
+						collection = feature != null && feature.isMany() && property.key() == null;
+						current = feature != null && feature.getEType() instanceof EClass structured
+								? structured : null;
+					}
+				}
+				case ResourcePath.TypeCastSegment cast -> {
+					out.add(cast);
+					EClass castType = resolveCastType(cast.qualifiedName(), null);
+					if (castType != null) {
+						current = castType;
+					}
+					if (cast.key() != null) {
+						collection = false;
+					}
+				}
+				default -> {
+					out.add(segment); // $count/$value/$ref — terminal, nothing folds after them
+					collection = false;
+				}
+			}
+		}
+		return changed ? new ResourcePath(path.entitySet(), key, path.namedKeys(), out) : path;
+	}
+
+	/** Folds a key value into the trailing keyless property/cast segment; false when keyed. */
+	private static boolean foldKey(List<ResourcePath.Segment> segments, String value) {
+		int last = segments.size() - 1;
+		if (segments.get(last) instanceof ResourcePath.PropertySegment(String name, String key)
+				&& key == null) {
+			segments.set(last, new ResourcePath.PropertySegment(name, value));
+			return true;
+		}
+		if (segments.get(last) instanceof ResourcePath.TypeCastSegment(String qualified, String key)
+				&& key == null) {
+			segments.set(last, new ResourcePath.TypeCastSegment(qualified, value));
+			return true;
+		}
+		return false;
 	}
 
 	/**
@@ -2718,6 +2902,15 @@ public class ODataServlet extends HttpServlet {
 							error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
 							return;
 						}
+					}
+				}
+				case ResourcePath.KeySegment(String value) -> {
+					// only reaches the walk when key-as-segment could not fold it earlier;
+					// on a collection it still selects, anywhere else it is not addressable
+					current = current instanceof List<?> ? selectByKey(current, value) : null;
+					if (current == null) {
+						error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
+						return;
 					}
 				}
 				case ResourcePath.TypeCastSegment cast -> {
@@ -2884,8 +3077,10 @@ public class ODataServlet extends HttpServlet {
 		String context = contextRoot(request) + "/$metadata#" + path.entitySet();
 		if (value instanceof Enumerator literal) { // enum property → value document with the literal
 			response.setContentType(contentTypeJson());
-			response.getWriter().write("{\"@odata.context\":\"" + ODataJson.sanitize(context)
-					+ "\",\"value\":\"" + ODataJson.sanitize(literal.getLiteral()) + "\"}");
+			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
+			envelopeProperty(json).append("\"value\":\"")
+					.append(ODataJson.sanitize(literal.getLiteral())).append("\"}");
+			response.getWriter().write(json.toString());
 			return;
 		}
 		if (value instanceof EObject object) {
@@ -2895,8 +3090,7 @@ public class ODataServlet extends HttpServlet {
 			}
 			String json = entityJson(object, object.eClass(), null, Set.of());
 			response.setContentType(contentTypeJson());
-			response.getWriter().write("{\"@odata.context\":\"" + ODataJson.sanitize(context)
-					+ "\"," + json.substring(1));
+			response.getWriter().write(withContext(ODataJson.sanitize(context), json));
 			return;
 		}
 		if (value instanceof List<?> collection) {
@@ -2907,8 +3101,8 @@ public class ODataServlet extends HttpServlet {
 						: shaper.shapeAll(objects, objects.get(0).eClass(), null, Set.of()));
 				return;
 			}
-			StringBuilder json = new StringBuilder("{\"@odata.context\":\"")
-					.append(ODataJson.sanitize(context)).append("\",\"value\":[");
+			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
+			envelopeProperty(json).append("\"value\":[");
 			boolean first = true;
 			for (Object member : collection) {
 				if (!first) {
@@ -2918,7 +3112,7 @@ public class ODataServlet extends HttpServlet {
 				if (member instanceof EObject object) {
 					json.append(entityJson(object, object.eClass(), null, Set.of()));
 				} else {
-					ODataJson.value(json, member);
+					ODataJson.value(json, member, ieee754());
 				}
 			}
 			json.append("]}");
@@ -2926,10 +3120,11 @@ public class ODataServlet extends HttpServlet {
 			response.getWriter().write(json.toString());
 			return;
 		}
-		StringBuilder json = new StringBuilder("{\"@odata.context\":\"")
-				.append(ODataJson.sanitize(context)).append("\",\"value\":");
+		StringBuilder json = envelopeHead(ODataJson.sanitize(context));
+		envelopeProperty(json).append("\"value\":");
 		ODataJson.value(json, value instanceof java.util.Date date
-				? java.time.format.DateTimeFormatter.ISO_INSTANT.format(date.toInstant()) : value);
+				? java.time.format.DateTimeFormatter.ISO_INSTANT.format(date.toInstant()) : value,
+				ieee754());
 		json.append('}');
 		response.setContentType(contentTypeJson());
 		response.getWriter().write(json.toString());
@@ -2950,11 +3145,9 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		String json = entityJson(entity, entityType, select, expand);
-		// weave the context annotation into the entity object (single entities have no envelope)
-		String context = "\"@odata.context\":\"" + contextRoot(request) + "/$metadata#" + setName
-				+ "/$entity\",";
 		response.setContentType(contentTypeJson());
-		response.getWriter().write("{" + context + json.substring(1));
+		response.getWriter().write(withContext(
+				contextRoot(request) + "/$metadata#" + setName + "/$entity", json));
 	}
 
 
@@ -3056,17 +3249,16 @@ public class ODataServlet extends HttpServlet {
 		}
 		boolean hasMore = result.rows().size() > top;
 		List<Map<String, Object>> rows = hasMore ? result.rows().subList(0, top) : result.rows();
-		StringBuilder json = new StringBuilder("{\"@odata.context\":\"")
-				.append(contextRoot(request)).append("/$metadata#").append(setName).append('"');
+		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata#" + setName);
 		if (result.totalCount() >= 0) {
-			json.append(",\"@odata.count\":").append(result.totalCount());
+			envelopeProperty(json).append("\"@odata.count\":").append(countValue(result.totalCount()));
 		}
-		json.append(",\"value\":[");
+		envelopeProperty(json).append("\"value\":[");
 		for (int i = 0; i < rows.size(); i++) {
 			if (i > 0) {
 				json.append(',');
 			}
-			ODataJson.value(json, rows.get(i));
+			ODataJson.value(json, rows.get(i), ieee754());
 		}
 		json.append(']');
 		if (hasMore) {
@@ -3474,14 +3666,15 @@ public class ODataServlet extends HttpServlet {
 				? new ODataJsonResourceImpl(URI.createURI("response.odatajson"), metadataService, expand)
 				: ODataJsonResourceImpl.minimalMetadata(
 						URI.createURI("response.odatajson"), metadataService, expand);
+		resource.ieee754Compatible(ieee754());
 		resource.getContents().add(copy);
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		resource.save(out, null);
 		String json = out.toString(StandardCharsets.UTF_8);
-		if (!full && entity.eClass() != entityType) {
+		if (!full && !omitContext() && entity.eClass() != entityType) {
 			// derived instance under minimal metadata: the type is NOT computable from the context
 			// URL, so transport the single-field discriminator ([OData-JSON] 4.5.8). Full metadata
-			// already carries @odata.type, so this is not needed (and would duplicate it).
+			// already carries @odata.type; metadata=none MUST omit it like all control information.
 			json = "{\"@odata.type\":\"" + resource.typeDiscriminator(entity) + "\""
 					+ (json.length() > 2 ? "," : "") + json.substring(1);
 		}
@@ -3522,8 +3715,14 @@ public class ODataServlet extends HttpServlet {
 				&& (accept.contains("application/xml") || accept.contains("text/xml"));
 	}
 
+	/** The service root: the request URI without the resource path (not just its last segment). */
 	private static String contextRoot(HttpServletRequest request) {
-		return request.getRequestURI().replaceFirst("/[^/]*$", "");
+		String uri = request.getRequestURI();
+		String pathInfo = request.getPathInfo();
+		if (pathInfo != null && !pathInfo.isEmpty() && uri.endsWith(pathInfo)) {
+			return uri.substring(0, uri.length() - pathInfo.length());
+		}
+		return uri.replaceFirst("/[^/]*$", "");
 	}
 
 

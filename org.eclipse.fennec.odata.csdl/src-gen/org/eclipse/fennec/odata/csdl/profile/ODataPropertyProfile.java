@@ -40,6 +40,8 @@ import org.osgi.annotation.versioning.ProviderType;
  *   <li>{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getPrecision <em>Precision</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getScale <em>Scale</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getDefaultValue <em>Default Value</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getSrid <em>Srid</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getUnicode <em>Unicode</em>}</li>
  *   <li>{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getAnnotations <em>Annotations</em>}</li>
  * </ul>
  *
@@ -250,6 +252,56 @@ public interface ODataPropertyProfile extends EObject {
 	 * @generated
 	 */
 	void setDefaultValue(String value);
+
+	/**
+	 * Returns the value of the '<em><b>Srid</b></em>' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * SRID facet — numeric or the symbolic "variable"; null when absent.
+	 * <!-- end-model-doc -->
+	 * @return the value of the '<em>Srid</em>' attribute.
+	 * @see #setSrid(String)
+	 * @see org.eclipse.fennec.odata.csdl.profile.ProfilePackage#getODataPropertyProfile_Srid()
+	 * @model
+	 * @generated
+	 */
+	String getSrid();
+
+	/**
+	 * Sets the value of the '{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getSrid <em>Srid</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @param value the new value of the '<em>Srid</em>' attribute.
+	 * @see #getSrid()
+	 * @generated
+	 */
+	void setSrid(String value);
+
+	/**
+	 * Returns the value of the '<em><b>Unicode</b></em>' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * Unicode facet ([OData-CSDL] 7.2.5); null when absent (default true).
+	 * <!-- end-model-doc -->
+	 * @return the value of the '<em>Unicode</em>' attribute.
+	 * @see #setUnicode(Boolean)
+	 * @see org.eclipse.fennec.odata.csdl.profile.ProfilePackage#getODataPropertyProfile_Unicode()
+	 * @model
+	 * @generated
+	 */
+	Boolean getUnicode();
+
+	/**
+	 * Sets the value of the '{@link org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile#getUnicode <em>Unicode</em>}' attribute.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @param value the new value of the '<em>Unicode</em>' attribute.
+	 * @see #getUnicode()
+	 * @generated
+	 */
+	void setUnicode(Boolean value);
 
 	/**
 	 * Returns the value of the '<em><b>Annotations</b></em>' containment reference list.

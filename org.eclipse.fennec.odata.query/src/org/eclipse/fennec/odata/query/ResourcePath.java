@@ -61,6 +61,16 @@ public record ResourcePath(String entitySet, String key, Map<String, String> nam
 	public record TypeCastSegment(String qualifiedName, String key) implements Segment {
 	}
 
+	/**
+	 * A bare key-literal segment (key-as-segment convention, [OData-URL] 4.3.3):
+	 * {@code Products/5} addresses like {@code Products(5)}. Only non-identifier literals
+	 * arrive here (numbers, guids, dates, quoted strings) — bare string keys parse as
+	 * {@link PropertySegment} and are folded at the protocol layer when they do not match
+	 * a declared property.
+	 */
+	public record KeySegment(String value) implements Segment {
+	}
+
 	/** Terminal {@code /$count} on a collection. */
 	public record CountSegment() implements Segment {
 	}

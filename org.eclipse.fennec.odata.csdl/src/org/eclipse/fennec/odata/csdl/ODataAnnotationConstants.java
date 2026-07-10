@@ -84,6 +84,10 @@ public final class ODataAnnotationConstants {
 	public static final String PRECISION = "OData.Precision";
 	public static final String SCALE = "OData.Scale";
 	public static final String DEFAULT_VALUE = "OData.DefaultValue";
+	/** Spatial reference system id facet — numeric or the symbolic {@code Variable}. */
+	public static final String SRID = "OData.SRID";
+	/** Unicode facet ([OData-CSDL] 7.2.5): {@code false} = ASCII-only string property. */
+	public static final String UNICODE = "OData.Unicode";
 
 	// reference → navigation
 	public static final String CONTAINS_TARGET = "OData.NavigationProperty.ContainsTarget";

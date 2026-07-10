@@ -27,7 +27,7 @@ import org.eclipse.fennec.odata.query.apply.ApplyPackage;
  * The package will be registered into a OSGi base model registry.
  * <!-- end-user-doc -->
  * <!-- begin-model-doc -->
- * OData $apply aggregation pipeline (req §3.5): pipeline semantics are deliberately NOT expressed in OCL — transformation stages are first-class objects, only their embedded expressions (filter predicates, grouping properties, aggregate/compute operands) are OclExpressions from the m2x OCL model (the shared predicate IR). v1 covers filter/groupby/aggregate/compute; bottom/top and concat follow (E4 backlog).
+ * OData $apply aggregation pipeline (req §3.5): pipeline semantics are deliberately NOT expressed in OCL — transformation stages are first-class objects, only their embedded expressions (filter predicates, grouping properties, aggregate/compute operands) are OclExpressions from the m2x OCL model (the shared predicate IR). Covers filter/groupby(+rollup)/aggregate(+from, custom methods/aggregates)/compute plus the preserving transformations topcount/topsum/toppercent (and their bottom mirrors), concat, top, skip, orderby and identity; still open: search, nest/addnested, join/outerjoin, ancestors/descendants/traverse, rolluprecursive (E4 backlog).
  * <!-- end-model-doc -->
  * @see EPackageConfigurator
  * @generated
