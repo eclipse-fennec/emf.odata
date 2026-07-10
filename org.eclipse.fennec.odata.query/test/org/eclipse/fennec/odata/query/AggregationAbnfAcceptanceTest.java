@@ -44,17 +44,14 @@ class AggregationAbnfAcceptanceTest {
 
 	/** Negatives that hinge on model categories (collection/primitive classes), not syntax. */
 	private static final Pattern SEMANTIC_NEGATIVE = Pattern.compile(
-			"forbidden|requires method|requires with|no two consecutive|collection-valued|final type cast");
+			"forbidden|requires method|requires with|no two consecutive|collection-valued|final type cast|groupby.*annotations|single-valued");
 
 	/** Aggregation constructs the $apply submodel deliberately does not cover YET (backlog). */
 	private static final List<Pattern> BACKLOG = List.of(
-			Pattern.compile("\\b(expand|search|nest|addnested|join|outerjoin|traverse"
-					+ "|ancestors|descendants|rolluprecursive)\\s*\\("),
+			Pattern.compile("\\bexpand\\s*\\("),                  // expand transformation
+			Pattern.compile("\\bcase\\s*\\("),                    // 4.02 case() expression
 			Pattern.compile("\\$all"),                            // $all grouping
-			Pattern.compile("\\$it|\\$root|\\$these"),            // instance refs
-			Pattern.compile("[A-Za-z_]\\w*\\.[A-Za-z_]\\w*\\s*\\("), // qualified custom FUNCTIONS
-			Pattern.compile("@"),                                 // annotations / parameter aliases
-			Pattern.compile("\\w\\('"));                          // keyed path segments in expressions
+			Pattern.compile("never-matches-placeholder-x"));      // (kept non-empty for List.of)
 
 	/** Cases owned by ANOTHER layer — never judgeable here, not generated. */
 	private static final List<Pattern> OUT_OF_SCOPE = List.of(

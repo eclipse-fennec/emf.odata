@@ -292,7 +292,11 @@ public class ODataQueryParser {
 				t.setCount(count);
 				yield t;
 			}
-			default -> ApplyFactory.eINSTANCE.createIdentityTransformation();
+			case ODataFilterParser.IdentityTrafoContext identity ->
+				ApplyFactory.eINSTANCE.createIdentityTransformation();
+			// parsed for spec coverage, execution honestly refused ([OData-Aggregation] rest)
+			default -> throw new UnsupportedOperationException("the $apply transformation '"
+					+ ctx.getStart().getText() + "' is not supported yet");
 		};
 	}
 
@@ -302,6 +306,9 @@ public class ODataQueryParser {
 		for (ODataFilterParser.GroupbyElementContext element : ctx.groupbyElement()) {
 			if (element instanceof ODataFilterParser.PathElementContext path) {
 				t.getGroupingProperties().add(typeResolver.resolve(builder.visit(path.memberPath())));
+			} else if (element instanceof ODataFilterParser.RollupRecursiveElementContext) {
+				throw new UnsupportedOperationException(
+						"rolluprecursive grouping is not supported yet");
 			} else {
 				ODataFilterParser.RollupElementContext rollup =
 						(ODataFilterParser.RollupElementContext) element;

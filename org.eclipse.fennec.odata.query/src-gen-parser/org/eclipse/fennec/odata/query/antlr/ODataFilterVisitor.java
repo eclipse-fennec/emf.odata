@@ -29,11 +29,33 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitOrderbyItem(ODataFilterParser.OrderbyItemContext ctx);
 	/**
-	 * Visit a parse tree produced by {@link ODataFilterParser#resource}.
+	 * Visit a parse tree produced by the {@code EntitySetResource}
+	 * labeled alternative in {@link ODataFilterParser#resource}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
 	 */
-	T visitResource(ODataFilterParser.ResourceContext ctx);
+	T visitEntitySetResource(ODataFilterParser.EntitySetResourceContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code CrossjoinResource}
+	 * labeled alternative in {@link ODataFilterParser#resource}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitCrossjoinResource(ODataFilterParser.CrossjoinResourceContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code AllResource}
+	 * labeled alternative in {@link ODataFilterParser#resource}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitAllResource(ODataFilterParser.AllResourceContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code EntityResource}
+	 * labeled alternative in {@link ODataFilterParser#resource}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitEntityResource(ODataFilterParser.EntityResourceContext ctx);
 	/**
 	 * Visit a parse tree produced by {@link ODataFilterParser#keyPredicate}.
 	 * @param ctx the parse tree
@@ -176,12 +198,80 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitIdentityTrafo(ODataFilterParser.IdentityTrafoContext ctx);
 	/**
+	 * Visit a parse tree produced by the {@code SearchTrafo}
+	 * labeled alternative in {@link ODataFilterParser#applyTrafo}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitSearchTrafo(ODataFilterParser.SearchTrafoContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code NestTrafo}
+	 * labeled alternative in {@link ODataFilterParser#applyTrafo}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitNestTrafo(ODataFilterParser.NestTrafoContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code AddNestedTrafo}
+	 * labeled alternative in {@link ODataFilterParser#applyTrafo}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitAddNestedTrafo(ODataFilterParser.AddNestedTrafoContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code JoinTrafo}
+	 * labeled alternative in {@link ODataFilterParser#applyTrafo}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitJoinTrafo(ODataFilterParser.JoinTrafoContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code HierarchyTrafo}
+	 * labeled alternative in {@link ODataFilterParser#applyTrafo}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitHierarchyTrafo(ODataFilterParser.HierarchyTrafoContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code TraverseTrafo}
+	 * labeled alternative in {@link ODataFilterParser#applyTrafo}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitTraverseTrafo(ODataFilterParser.TraverseTrafoContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code CustomFunctionTrafo}
+	 * labeled alternative in {@link ODataFilterParser#applyTrafo}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitCustomFunctionTrafo(ODataFilterParser.CustomFunctionTrafoContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#searchExpr}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitSearchExpr(ODataFilterParser.SearchExprContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#searchAtom}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitSearchAtom(ODataFilterParser.SearchAtomContext ctx);
+	/**
 	 * Visit a parse tree produced by the {@code RollupElement}
 	 * labeled alternative in {@link ODataFilterParser#groupbyElement}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
 	 */
 	T visitRollupElement(ODataFilterParser.RollupElementContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code RollupRecursiveElement}
+	 * labeled alternative in {@link ODataFilterParser#groupbyElement}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitRollupRecursiveElement(ODataFilterParser.RollupRecursiveElementContext ctx);
 	/**
 	 * Visit a parse tree produced by the {@code PathElement}
 	 * labeled alternative in {@link ODataFilterParser#groupbyElement}.
@@ -302,6 +392,13 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitInComparison(ODataFilterParser.InComparisonContext ctx);
 	/**
+	 * Visit a parse tree produced by the {@code InArrayComparison}
+	 * labeled alternative in {@link ODataFilterParser#comparison}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitInArrayComparison(ODataFilterParser.InArrayComparisonContext ctx);
+	/**
 	 * Visit a parse tree produced by the {@code PassThrough}
 	 * labeled alternative in {@link ODataFilterParser#comparison}.
 	 * @param ctx the parse tree
@@ -358,12 +455,12 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitFunctionPrimary(ODataFilterParser.FunctionPrimaryContext ctx);
 	/**
-	 * Visit a parse tree produced by the {@code MemberPrimary}
+	 * Visit a parse tree produced by the {@code RootedPrimary}
 	 * labeled alternative in {@link ODataFilterParser#primary}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
 	 */
-	T visitMemberPrimary(ODataFilterParser.MemberPrimaryContext ctx);
+	T visitRootedPrimary(ODataFilterParser.RootedPrimaryContext ctx);
 	/**
 	 * Visit a parse tree produced by the {@code AliasPrimary}
 	 * labeled alternative in {@link ODataFilterParser#primary}.
@@ -371,6 +468,13 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 * @return the visitor result
 	 */
 	T visitAliasPrimary(ODataFilterParser.AliasPrimaryContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code MemberPrimary}
+	 * labeled alternative in {@link ODataFilterParser#primary}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitMemberPrimary(ODataFilterParser.MemberPrimaryContext ctx);
 	/**
 	 * Visit a parse tree produced by the {@code ParenPrimary}
 	 * labeled alternative in {@link ODataFilterParser#primary}.
@@ -385,6 +489,64 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 * @return the visitor result
 	 */
 	T visitNegatedPrimary(ODataFilterParser.NegatedPrimaryContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code JsonArrayPrimary}
+	 * labeled alternative in {@link ODataFilterParser#primary}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitJsonArrayPrimary(ODataFilterParser.JsonArrayPrimaryContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code JsonObjectPrimary}
+	 * labeled alternative in {@link ODataFilterParser#primary}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitJsonObjectPrimary(ODataFilterParser.JsonObjectPrimaryContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code InstanceRef}
+	 * labeled alternative in {@link ODataFilterParser#rootedPath}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitInstanceRef(ODataFilterParser.InstanceRefContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code RootRef}
+	 * labeled alternative in {@link ODataFilterParser#rootedPath}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitRootRef(ODataFilterParser.RootRefContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#aggregateCall}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitAggregateCall(ODataFilterParser.AggregateCallContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#aggregateFunctionItem}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitAggregateFunctionItem(ODataFilterParser.AggregateFunctionItemContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#jsonArray}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitJsonArray(ODataFilterParser.JsonArrayContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#jsonObject}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitJsonObject(ODataFilterParser.JsonObjectContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#jsonMember}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitJsonMember(ODataFilterParser.JsonMemberContext ctx);
 	/**
 	 * Visit a parse tree produced by {@link ODataFilterParser#typeFunc}.
 	 * @param ctx the parse tree
@@ -422,6 +584,12 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitLastSegment(ODataFilterParser.LastSegmentContext ctx);
 	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#filterSegment}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitFilterSegment(ODataFilterParser.FilterSegmentContext ctx);
+	/**
 	 * Visit a parse tree produced by {@link ODataFilterParser#countCall}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
@@ -458,6 +626,13 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 * @return the visitor result
 	 */
 	T visitStringLiteral(ODataFilterParser.StringLiteralContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code JsonStringLiteral}
+	 * labeled alternative in {@link ODataFilterParser#literal}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitJsonStringLiteral(ODataFilterParser.JsonStringLiteralContext ctx);
 	/**
 	 * Visit a parse tree produced by the {@code BinaryLiteral}
 	 * labeled alternative in {@link ODataFilterParser#literal}.

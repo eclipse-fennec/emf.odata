@@ -81,7 +81,26 @@ public class ODataResourceParser {
 		parser.removeErrorListeners();
 		parser.addErrorListener(THROWING);
 
-		ODataFilterParser.ResourceContext resource = parser.resource();
+		ODataFilterParser.ResourceContext parsed = parser.resource();
+		// $crossjoin/$all/$entity ([OData-URL] 4.10/4.14/4.15): parsed structurally, the
+		// special form travels as the "entity set" name — routing/501 is the servlet's job
+		if (parsed instanceof ODataFilterParser.CrossjoinResourceContext crossjoin) {
+			List<Segment> sets = new ArrayList<>();
+			for (var set : crossjoin.IDENT()) {
+				sets.add(new PropertySegment(set.getText(), null));
+			}
+			return new ResourcePath("$crossjoin", null, sets);
+		}
+		if (parsed instanceof ODataFilterParser.AllResourceContext all) {
+			return new ResourcePath("$all", null, all.castName() == null ? List.of()
+					: List.of(new TypeCastSegment(all.castName().getText(), null)));
+		}
+		if (parsed instanceof ODataFilterParser.EntityResourceContext entity) {
+			return new ResourcePath("$entity", null, entity.castName() == null ? List.of()
+					: List.of(new TypeCastSegment(entity.castName().getText(), null)));
+		}
+		ODataFilterParser.EntitySetResourceContext resource =
+				(ODataFilterParser.EntitySetResourceContext) parsed;
 		if (resource.resourceSegment().size() > MAX_SEGMENTS) {
 			throw new ODataQueryParseException(
 					"resource path exceeds the maximum of " + MAX_SEGMENTS + " segments");
@@ -130,7 +149,7 @@ public class ODataResourceParser {
 		if (key.keyLiteral() != null) {
 			return key.keyLiteral().getText();
 		}
-		if (!(key.getParent() instanceof ODataFilterParser.ResourceContext)) {
+		if (!(key.getParent() instanceof ODataFilterParser.EntitySetResourceContext)) {
 			throw new ODataQueryParseException(
 					"compound key predicates are only supported on the entity set");
 		}

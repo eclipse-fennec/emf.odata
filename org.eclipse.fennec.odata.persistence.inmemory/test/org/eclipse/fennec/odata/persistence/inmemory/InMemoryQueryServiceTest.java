@@ -349,6 +349,20 @@ class InMemoryQueryServiceTest {
 	}
 
 	@Test
+	@DisplayName("wave 2/3 evaluation: $it in lambdas, JSON-array in, inline $filter segment")
+	void waveTwoThreeEvaluation() {
+		// $it escapes the lambda scope: any review at least as good as the product's rating
+		assertEquals(List.of("Cheese"),
+				names(query("reviews/any(r: r/stars ge $it/rating)", null, 0, -1, false)));
+		// JSON-array listExpr
+		assertEquals(List.of("Milk", "Cheese"),
+				names(query("name in [\"Milk\",'Cheese']", null, 0, -1, false)));
+		// inline $filter segment
+		assertEquals(List.of("Cheese"),
+				names(query("reviews/$filter(stars ge 5)/$count eq 1", null, 0, -1, false)));
+	}
+
+	@Test
 	@DisplayName("repository boundary: unknown types yield empty, directory must exist")
 	void repositoryBoundaries() {
 		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");

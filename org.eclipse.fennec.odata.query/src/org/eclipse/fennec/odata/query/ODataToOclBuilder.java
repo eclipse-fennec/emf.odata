@@ -111,9 +111,10 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	private record ImplicitScope(Variable variable, EClass elementClass) {
 	}
 
-	/** One member-path segment: exactly one of property IDENT, bound call or cast name. */
-	private record Step(TerminalNode ident, ODataFilterParser.BoundCallContext bound,
-			ODataFilterParser.CastNameContext cast) {
+	/** One member-path segment: property (optionally keyed), call, cast, @annotation or $filter. */
+	private record Step(TerminalNode ident, ODataFilterParser.KeyPredicateContext key,
+			ODataFilterParser.BoundCallContext bound, ODataFilterParser.CastNameContext cast,
+			TerminalNode annotation, ODataFilterParser.FilterSegmentContext filter) {
 	}
 	/** Aliases introduced by $apply aggregate/compute stages — referable in later stages. */
 	private final Map<String, Variable> aliases = new HashMap<>();
@@ -261,6 +262,104 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		return type;
 	}
 
+	// --- instance references + JSON literals ---
+
+	/** {@code $it}/{@code $this} = the request instance; {@code $these} = the current collection. */
+	@Override
+	public OclExpression visitInstanceRef(ODataFilterParser.InstanceRefContext ctx) {
+		String anchor = ctx.anchor.getText();
+		if ("$these".equals(anchor)) {
+			OperationCallExp these = FACTORY.createOperationCallExp();
+			these.setName("$these"); // the backend's subject — evaluation refuses honestly
+			if (ctx.countCall() != null) {
+				OperationCallExp size = FACTORY.createOperationCallExp();
+				size.setName("size");
+				size.setOwnedSource(these);
+				return size;
+			}
+			if (ctx.memberPath() != null || ctx.aggregateCall() != null) {
+				throw new UnsupportedOperationException(
+						"$these navigation/aggregation is not supported yet");
+			}
+			return these;
+		}
+		if (ctx.aggregateCall() != null) {
+			throw new UnsupportedOperationException(
+					"aggregate functions in expressions are not supported yet");
+		}
+		// $it/$this: anchor at the REQUEST instance — scope lookup off, so the path escapes
+		// lambda variables and filtered-$count scopes
+		if (ctx.memberPath() != null) {
+			return memberPath(ctx.memberPath(), context, false);
+		}
+		if (ctx.countCall() != null) {
+			throw new ODataQueryParseException("'$count' requires a collection-valued path");
+		}
+		OperationCallExp self = FACTORY.createOperationCallExp();
+		self.setName("$it"); // bare instance reference — evaluates to the row itself
+		self.setIsImplicit(true);
+		return self;
+	}
+
+	/** {@code $root/Set(key)/…} addresses ANOTHER resource — no backend support yet. */
+	@Override
+	public OclExpression visitRootRef(ODataFilterParser.RootRefContext ctx) {
+		throw new UnsupportedOperationException(
+				"$root cross-resource references are not supported yet");
+	}
+
+	/** JSON array literal → collection literal of its (scalar) members. */
+	@Override
+	public OclExpression visitJsonArrayPrimary(ODataFilterParser.JsonArrayPrimaryContext ctx) {
+		return jsonArray(ctx.jsonArray());
+	}
+
+	/** JSON object literal — no OCL counterpart: opaque JSON text for the operation layer. */
+	@Override
+	public OclExpression visitJsonObjectPrimary(ODataFilterParser.JsonObjectPrimaryContext ctx) {
+		return typedString(ctx.getText(), "JSON");
+	}
+
+	private OclExpression jsonArray(ODataFilterParser.JsonArrayContext ctx) {
+		CollectionLiteralExp collection = FACTORY.createCollectionLiteralExp();
+		collection.setKind(CollectionKind.SEQUENCE);
+		for (ODataFilterParser.ExprContext member : ctx.expr()) {
+			CollectionItem item = FACTORY.createCollectionItem();
+			item.setOwnedItem(visit(member));
+			collection.getOwnedParts().add(item);
+		}
+		return collection;
+	}
+
+	@Override
+	public OclExpression visitJsonStringLiteral(ODataFilterParser.JsonStringLiteralContext ctx) {
+		String raw = ctx.getText();
+		StringLiteralExp exp = FACTORY.createStringLiteralExp();
+		exp.setStringSymbol(unescapeJson(raw.substring(1, raw.length() - 1)));
+		return exp;
+	}
+
+	@Override
+	public OclExpression visitInArrayComparison(ODataFilterParser.InArrayComparisonContext ctx) {
+		// 4.01 listExpr with square brackets: Name in ["a","b"] — same includes mapping
+		List<OclExpression> members = ctx.jsonArray().expr().stream().map(this::visit).toList();
+		return includes(members, visit(ctx.additive()));
+	}
+
+	/** JSON backslash escapes: the escaped character stands for itself (\" → ", \\ → \). */
+	private static String unescapeJson(String raw) {
+		StringBuilder out = new StringBuilder(raw.length());
+		for (int i = 0; i < raw.length(); i++) {
+			char c = raw.charAt(i);
+			if (c == '\\' && i + 1 < raw.length()) {
+				out.append(raw.charAt(++i));
+			} else {
+				out.append(c);
+			}
+		}
+		return out.toString();
+	}
+
 	// --- functions ---
 
 	@Override
@@ -287,20 +386,35 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 
 	@Override
 	public OclExpression visitMemberPath(ODataFilterParser.MemberPathContext ctx) {
+		return memberPath(ctx, context, true);
+	}
+
+	/**
+	 * Core path builder. Rooted forms ({@code $it}/{@code $this}) call it with scope lookup
+	 * DISABLED so their paths anchor at the request instance, escaping lambda and
+	 * filtered-$count scopes ([OData-URL] 5.1.1.13).
+	 */
+	private OclExpression memberPath(ODataFilterParser.MemberPathContext ctx,
+			EClass anchorClass, boolean resolveLeadingNames) {
 		OclExpression source = null;
-		EClass current = context;
+		EClass current = anchorClass;
 		EClassifier valueType = null;
 		boolean many = false;
 		// uniform view over the mid-path steps and the (cast-free) last segment
 		List<Step> segments = new ArrayList<>();
 		for (ODataFilterParser.PathStepContext step : ctx.pathStep()) {
-			segments.add(new Step(step.IDENT(), step.boundCall(), step.castName()));
+			segments.add(new Step(step.IDENT(), step.keyPredicate(), step.boundCall(),
+					step.castName(),
+					step.ANNOTATION() != null ? step.ANNOTATION() : step.ALIAS(),
+					step.filterSegment()));
 		}
-		segments.add(new Step(ctx.lastSegment().IDENT(), ctx.lastSegment().boundCall(),
-				ctx.lastSegment().castName()));
+		ODataFilterParser.LastSegmentContext last = ctx.lastSegment();
+		segments.add(new Step(last.IDENT(), last.keyPredicate(), last.boundCall(),
+				last.castName(), last.ANNOTATION() != null ? last.ANNOTATION() : last.ALIAS(),
+				last.filterSegment()));
 		int start = 0;
 
-		if (segments.get(0).ident() != null) {
+		if (resolveLeadingNames && segments.get(0).ident() != null) {
 			String name = segments.get(0).ident().getText();
 			LambdaScope scope = scopeOf(name);
 			if (scope != null) { // first segment is a lambda variable, not a property
@@ -317,7 +431,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 				start = 1;
 			}
 		}
-		if (start == 0 && source == null && !implicitScopes.isEmpty()) {
+		if (resolveLeadingNames && start == 0 && source == null && !implicitScopes.isEmpty()) {
 			// inside a filtered $count body: implicit paths root in the select variable
 			VariableExp variable = FACTORY.createVariableExp();
 			variable.setReferredVariable(implicitScopes.peek().variable());
@@ -327,6 +441,29 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 
 		for (int i = start; i < segments.size(); i++) {
 			Step step = segments.get(i);
+			if (step.annotation() != null) {
+				// @Ns.Term value reference: representable, but no runtime vocabulary values yet
+				throw new UnsupportedOperationException(
+						"annotation value references are not supported yet: "
+								+ step.annotation().getText());
+			}
+			if (step.filter() != null) {
+				if (step.filter().keyPredicate() != null) {
+					throw new UnsupportedOperationException(
+							"keyed inline $filter segments are not supported yet");
+				}
+				if (!many || !(valueType instanceof EClass elementClass)) {
+					throw new ODataQueryParseException(
+							"'$filter(...)' requires a collection of structured type");
+				}
+				source = selectOver(source, elementClass, step.filter().expr());
+				// element type and cardinality survive the inline filter
+				continue;
+			}
+			if (step.ident() != null && step.key() != null) {
+				throw new UnsupportedOperationException(
+						"keyed path segments in expressions are not supported yet");
+			}
 			if (step.bound() != null) {
 				source = boundCall(step.bound(), source, current);
 				EOperation operation = resolveOperation(step.bound(), current);
@@ -388,25 +525,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 					throw new ODataQueryParseException(
 							"filtered '$count' requires a collection of structured type");
 				}
-				Variable variable = FACTORY.createVariable();
-				variable.setName("$e");
-				var variableType = FACTORY.createClassifierType();
-				variableType.setReferredClassifier(elementClass);
-				variableType.setName(elementClass.getName());
-				variable.setType(variableType);
-				implicitScopes.push(new ImplicitScope(variable, elementClass));
-				OclExpression body;
-				try {
-					body = visit(ctx.countCall().expr());
-				} finally {
-					implicitScopes.pop();
-				}
-				IteratorExp select = FACTORY.createIteratorExp();
-				select.setName("select");
-				select.setOwnedSource(source);
-				select.getOwnedIterators().add(variable);
-				select.setOwnedBody(body);
-				collection = select;
+				collection = selectOver(source, elementClass, ctx.countCall().expr());
 			}
 			OperationCallExp size = FACTORY.createOperationCallExp();
 			size.setName("size");
@@ -414,6 +533,30 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 			return size;
 		}
 		return source;
+	}
+
+	/** {@code select(element | body)} over a collection; the body resolves against the element type. */
+	private OclExpression selectOver(OclExpression source, EClass elementClass,
+			ODataFilterParser.ExprContext bodyExpr) {
+		Variable variable = FACTORY.createVariable();
+		variable.setName("$e");
+		var variableType = FACTORY.createClassifierType();
+		variableType.setReferredClassifier(elementClass);
+		variableType.setName(elementClass.getName());
+		variable.setType(variableType);
+		implicitScopes.push(new ImplicitScope(variable, elementClass));
+		OclExpression body;
+		try {
+			body = visit(bodyExpr);
+		} finally {
+			implicitScopes.pop();
+		}
+		IteratorExp select = FACTORY.createIteratorExp();
+		select.setName("select");
+		select.setOwnedSource(source);
+		select.getOwnedIterators().add(variable);
+		select.setOwnedBody(body);
+		return select;
 	}
 
 	/** Resolves a cast-segment name to an EClass RELATED to the current context type. */

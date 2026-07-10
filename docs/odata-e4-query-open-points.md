@@ -116,7 +116,18 @@ ABNF-Stand: 537 verifiziert / 176 Skips. Ursprünglicher Plan:
    NaN/INF, `binary'…'`; dazu die Lexer-Randfälle (roher Apostroph im Key-Segment,
    keyed Segmente in Aggregat-Pfaden).
 
-**Welle 2 — mittlere Pakete (je 1–2 Tage, ≈85 Skips):**
+**Welle 2 ✅ + Welle 3 ✅ ERLEDIGT (2026-07-10):** `$it`/`$this` voll (Anker = Request-Instanz,
+entkommt Lambda-/$count-Scopes, in-memory ausführbar); `$these`/`$root` parsen (Ausführung 501);
+JSON-Literale (Arrays = volle listExpr mit Ausdrucks-Membern → Collection-Literal + `in [...]`;
+Objekte opak als JSON-String); Key-Aliase `Set(@k)` (Parser + Servlet-Substitution aus den
+Query-Parametern, fehlender Wert → 400); Inline-`$filter(...)`-Segmente ECHT (select, in-memory
+ausführbar; keyed Variante 501); keyed Pfad-Segmente in Ausdrücken parsen (501);
+`@Ns.Term`/`@Term`-Annotations-Referenzen in Pfaden parsen (501); $apply-Struktur-Trafos
+search/nest/addnested/join/outerjoin/ancestors/descendants/traverse/rolluprecursive + Custom-
+Function-Trafos + 4.02-Aggregat-FUNKTION (`$these/aggregate(...)`) parsen spec-konform,
+Ausführung ehrlich 501; `$crossjoin`/`$all`/`$entity` parsen als Resource-Formen, Servlet → 501.
+ABNF-Stand: **697 verifiziert / 13 Skips** (nur noch: geo.* [eigenes Spatial-Paket], roher
+Apostroph im Key-Segment [URL-Decode/Lexer], 4.02 `case()`). Ursprünglicher Plan:
 4. `$it`/`$this` (implizite Variable ist im AST schon da) und `$these` im $apply-Kontext;
    `$root` braucht Backend-Semantik (Cross-Ressourcen-Zugriff) → ggf. splitten (34).
 5. JSON-Literale als Funktions-/Key-Argumente (51) — Lexer/Grammatik für Objekt/Array-

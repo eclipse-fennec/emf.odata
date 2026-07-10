@@ -816,6 +816,24 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("key aliases: Product(@k)?@k='p1' resolves; a missing alias value is a 400")
+	void keyAliases() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		Response resolved = get("/Product(@k)", Map.of("@k", "'p1'"));
+		assertEquals(200, resolved.status(), resolved.body());
+		assertTrue(resolved.body().contains("\"name\":\"Milk\""), resolved.body());
+		assertEquals(400, get("/Product(@k)", Map.of()).status(), "unresolved alias");
+	}
+
+	@Test
+	@DisplayName("$crossjoin/$all/$entity parse but answer an honest 501")
+	void advancedUrlForms() throws Exception {
+		assertEquals(501, get("/$crossjoin(Product,Category)", Map.of()).status());
+		assertEquals(501, get("/$all", Map.of()).status());
+		assertEquals(501, get("/$entity", Map.of("$id", "Product('p1')")).status());
+	}
+
+	@Test
 	@DisplayName("IEEE754Compatible=true: Edm.Decimal/Int64 and @odata.count travel as strings")
 	void ieee754Compatible() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));

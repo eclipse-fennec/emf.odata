@@ -1167,6 +1167,10 @@ public class ODataServlet extends HttpServlet {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
 			return;
 		}
+		path = resolveKeyAliases(path, request, response);
+		if (path == null) {
+			return; // 400 already written
+		}
 		path = keyAsSegment(path);
 		EClass entityType = resolveEntityType(path.entitySet());
 		if (entityType == null) {
@@ -2178,6 +2182,12 @@ public class ODataServlet extends HttpServlet {
 	/** Dispatches a parsed resource path: set, set/$count, keyed entity, navigation walk. */
 	private void resource(String rawPath, HttpServletRequest request, HttpServletResponse response)
 			throws IOException {
+		if (rawPath.startsWith("$crossjoin") || rawPath.startsWith("$all")
+				|| rawPath.startsWith("$entity")) {
+			// $crossjoin/$all/$entity ([OData-URL] 4.10/4.14/4.15) parse but have no engine yet
+			error(response, 501, "this URL form is not implemented");
+			return;
+		}
 		// a set name with named args is a COMPOUND KEY predicate (Set(id='x'), [OData-URL]),
 		// not a function call — only a non-set name routes to the function imports
 		if (isFunctionCall(rawPath)
@@ -2195,6 +2205,15 @@ public class ODataServlet extends HttpServlet {
 		} catch (ODataQueryParseException e) {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
 			return;
+		}
+		if (path.entitySet().startsWith("$")) {
+			// $crossjoin/$all/$entity parse ([OData-URL] 4.10/4.14/4.15) but have no engine yet
+			error(response, 501, "'" + ODataJson.sanitize(path.entitySet()) + "' is not implemented");
+			return;
+		}
+		path = resolveKeyAliases(path, request, response);
+		if (path == null) {
+			return; // 400 already written
 		}
 		path = keyAsSegment(path);
 		if (path.key() == null && resolveSingleton(path.entitySet()) != null) {
@@ -2750,6 +2769,54 @@ public class ODataServlet extends HttpServlet {
 			}
 		}
 		return changed ? new ResourcePath(path.entitySet(), key, path.namedKeys(), out) : path;
+	}
+
+	/**
+	 * Key aliases ([OData-URL] 4.3.2): {@code Products(@key)} takes the key literal from the
+	 * query parameter {@code @key}. Substituted for the set key, named keys and segment keys;
+	 * a referenced alias without a value is a client error (null return, 400 written).
+	 */
+	private ResourcePath resolveKeyAliases(ResourcePath path, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
+		String key = aliasValue(path.key(), request, response);
+		if (key == null && path.key() != null) {
+			return null;
+		}
+		Map<String, String> namedKeys = new LinkedHashMap<>();
+		for (Map.Entry<String, String> named : path.namedKeys().entrySet()) {
+			String value = aliasValue(named.getValue(), request, response);
+			if (value == null && named.getValue() != null) {
+				return null;
+			}
+			namedKeys.put(named.getKey(), value);
+		}
+		List<ResourcePath.Segment> segments = new ArrayList<>(path.segments());
+		for (int i = 0; i < segments.size(); i++) {
+			if (segments.get(i) instanceof ResourcePath.PropertySegment(String name, String raw)
+					&& raw != null && raw.startsWith("@")) {
+				String value = aliasValue(raw, request, response);
+				if (value == null) {
+					return null;
+				}
+				segments.set(i, new ResourcePath.PropertySegment(name, value));
+			}
+		}
+		return new ResourcePath(path.entitySet(), key, namedKeys, segments);
+	}
+
+	private String aliasValue(String rawKey, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
+		if (rawKey == null || !rawKey.startsWith("@")) {
+			return rawKey;
+		}
+		String value = request.getParameter(rawKey);
+		if (value == null || value.isBlank()) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"unresolved key alias '" + ODataJson.sanitize(rawKey) + "'");
+			return null;
+		}
+		limits.checkExpression(value);
+		return value.trim();
 	}
 
 	/** Folds a key value into the trailing keyless property/cast segment; false when keyed. */

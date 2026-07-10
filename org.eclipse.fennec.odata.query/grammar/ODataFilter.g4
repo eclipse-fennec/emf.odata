@@ -29,6 +29,10 @@ grammar ODataFilter;
 		return name.equals(_input.LT(1).getText());
 	}
 
+	private boolean customTrafo() {
+		return _input.LT(2) != null && ".".equals(_input.LT(2).getText());
+	}
+
 	private boolean bottomTopTrafo() {
 		return switch (_input.LT(1).getText()) {
 			case "topcount", "topsum", "toppercent", "bottomcount", "bottomsum", "bottompercent" -> true;
@@ -44,12 +48,16 @@ orderbyItem : expr direction=(ASC | DESC)? ;
 // resource paths (ADR-0005, own URI parser — no Olingo): Set | Set(key) | …/nav(key)/prop
 // with terminal $count/$value/$ref segments and derived-type casts (/Ns.Type, [OData-URL]
 // 4.11); key literals reuse the expression tokens
-resource : IDENT keyPredicate? (SLASH resourceSegment)* EOF ;
+resource : IDENT keyPredicate? (SLASH resourceSegment)* EOF   # EntitySetResource
+         | CROSSJOIN LPAREN IDENT (COMMA IDENT)* RPAREN EOF   # CrossjoinResource
+         | ALLRES (SLASH castName)? EOF                       # AllResource
+         | ENTITYRES (SLASH castName)? EOF                    # EntityResource
+         ;
 // simple positional key OR named key-value pairs (ABNF compoundKey — composite keys and the
 // named single-key form Set(id='x') both use it)
 keyPredicate : LPAREN ( keyLiteral | namedKeyValue (COMMA namedKeyValue)* ) RPAREN ;
 namedKeyValue : IDENT EQUALS keyLiteral ;
-keyLiteral : STRING | INT | DECIMAL | GUID | DATETIMEOFFSET | DATE | TIMEOFDAY ;
+keyLiteral : STRING | INT | DECIMAL | GUID | DATETIMEOFFSET | DATE | TIMEOFDAY | ALIAS ;
 // key-as-segment ([OData-URL] 4.3.3, 4.01 MAY — the Microsoft Graph style): a bare literal
 // segment is a key value; bare IDENT string keys parse as PropertySegment and are
 // disambiguated against the model at the protocol layer (declared properties win)
@@ -80,11 +88,32 @@ applyTrafo
     | {trafo("orderby")}?   name=IDENT LPAREN orderbyItem (COMMA orderbyItem)* RPAREN        # OrderByTrafo
     | {trafo("top") || trafo("skip")}? name=IDENT LPAREN INT RPAREN                          # RowLimitTrafo
     | {trafo("identity")}?  name=IDENT                                                       # IdentityTrafo
+    | {trafo("search")}?    name=IDENT LPAREN searchExpr RPAREN                              # SearchTrafo
+    | {trafo("nest")}?      name=IDENT LPAREN applySeq AS IDENT
+                            (COMMA applySeq AS IDENT)* RPAREN                                # NestTrafo
+    | {trafo("addnested")}? name=IDENT LPAREN memberPath
+                            (COMMA applySeq AS IDENT)+ RPAREN                                # AddNestedTrafo
+    | {trafo("join") || trafo("outerjoin")}?
+                            name=IDENT LPAREN memberPath AS IDENT (COMMA applySeq)? RPAREN   # JoinTrafo
+    | {trafo("ancestors") || trafo("descendants")}?
+                            name=IDENT LPAREN rootedPath COMMA IDENT COMMA memberPath
+                            COMMA applySeq (COMMA INT)? (COMMA IDENT IDENT)? RPAREN          # HierarchyTrafo
+    | {trafo("traverse")}?  name=IDENT LPAREN rootedPath COMMA IDENT COMMA memberPath
+                            COMMA IDENT (COMMA applySeq)?
+                            (COMMA orderbyItem (COMMA orderbyItem)*)? RPAREN                 # TraverseTrafo
+    | {customTrafo()}?      IDENT (DOT IDENT)+ LPAREN boundCallArgs? RPAREN                  # CustomFunctionTrafo
     ;
+
+// $search word grammar subset for the search transformation: words, OData strings,
+// NOT/AND/OR (case-sensitive per ABNF, matched as plain words here), grouping
+searchExpr : searchAtom+ ;
+searchAtom : NOT? (IDENT | STRING | DQSTRING | INT | DECIMAL | LPAREN searchExpr RPAREN) ;
 // rollup: 2+ paths = unnamed leveled hierarchy; ONE simple identifier = named hierarchy
 // (Aggregation.LeveledHierarchy qualifier) — disambiguated in the builder
 groupbyElement
     : {trafo("rollup")}? name=IDENT LPAREN memberPath (COMMA memberPath)* RPAREN  # RollupElement
+    | {trafo("rolluprecursive")}? name=IDENT LPAREN rootedPath COMMA IDENT
+      COMMA memberPath (COMMA applySeq)? RPAREN                                   # RollupRecursiveElement
     | memberPath                                                                  # PathElement
     ;
 // ABNF aggregateExpr: 'with'-items and $count require the alias and their from clauses a
@@ -115,6 +144,7 @@ comparison
         | additive IN LPAREN literal (COMMA literal)+ RPAREN        # InListComparison
         | additive IN LPAREN RPAREN                                 # InEmptyListComparison
         | additive IN LPAREN expr RPAREN                            # InComparison
+        | additive IN jsonArray                                     # InArrayComparison
         | additive                                                  # PassThrough
         ;
 
@@ -128,11 +158,34 @@ multiplicative : multiplicative op=(MUL | DIV | DIVBY | MOD) primary  # MulDivMo
 primary : literal                 # LiteralPrimary
         | typeFunc                # TypeFuncPrimary
         | functionCall            # FunctionPrimary
-        | memberPath              # MemberPrimary
+        | rootedPath              # RootedPrimary
         | ALIAS                   # AliasPrimary
+        | memberPath              # MemberPrimary
         | LPAREN expr RPAREN      # ParenPrimary
         | MINUS primary           # NegatedPrimary
+        | jsonArray               # JsonArrayPrimary
+        | jsonObject              # JsonObjectPrimary
         ;
+
+// instance references ([OData-URL] 5.1.1.13): $it/$this anchor at the REQUEST instance
+// (escaping lambda scopes), $these at the current collection ($apply), $root addresses
+// another resource from the service root
+rootedPath : anchor=(ITREF | THISREF | THESEREF)
+             (SLASH memberPath | SLASH countCall | SLASH aggregateCall)?                # InstanceRef
+           | ROOTREF SLASH IDENT (keyPredicate | LPAREN RPAREN)?
+             (SLASH memberPath | SLASH countCall)?                                      # RootRef
+           ;
+// the 4.02 aggregate FUNCTION ($these/aggregate(Amount with sum)) — items carry no alias
+aggregateCall : {trafo("aggregate")}? IDENT LPAREN aggregateFunctionItem RPAREN ;
+aggregateFunctionItem : expr WITH method=methodName aggrFrom*
+                      | COUNT aggrFrom*
+                      ;
+
+// JSON-style literals (ABNF arrayOrObject / 4.01 listExpr): array members are FULL
+// expressions (properties, OData strings, nested arrays); objects stay opaque JSON text
+jsonArray  : LBRACKET (expr (COMMA expr)*)? RBRACKET ;
+jsonObject : LBRACE (jsonMember (COMMA jsonMember)*)? RBRACE ;
+jsonMember : DQSTRING COLON expr ;
 
 // cast(T) / cast(x,T) / isof(T) / isof(x,T) — the type name may be namespace-qualified
 typeFunc : op=(CAST | ISOF) LPAREN (expr COMMA)? qualifiedTypeName RPAREN ;
@@ -144,10 +197,12 @@ functionCall : IDENT LPAREN (expr (COMMA expr)*)? RPAREN ;
 // Segments may be bound/composed function calls (E4-AP-10): namespace-qualified, with named
 // (bound operations) or positional (built-ins like geo.*) arguments
 memberPath   : (pathStep SLASH)* lastSegment (SLASH lambdaCall | SLASH countCall)? ;
-pathStep     : IDENT | boundCall | castName ;
+pathStep     : IDENT keyPredicate? | boundCall | castName | ANNOTATION | ALIAS | filterSegment ;
 // terminal casts are legal (aggregate operands, …/Cast/$count); whether a bare qualified
 // name is a cast or a parenless function is a MODEL question — the harnesses omit those
-lastSegment  : IDENT | boundCall | castName ;
+lastSegment  : IDENT keyPredicate? | boundCall | castName | ANNOTATION | ALIAS | filterSegment ;
+// inline collection filter ([OData-URL] 4.12): Products/$filter(Age gt 3)[(key)]
+filterSegment : FILTERQ LPAREN expr RPAREN keyPredicate? ;
 // path/$count with the optional filtered form path/$count($filter=...) ([OData-URL] 4.8)
 countCall    : COUNT (LPAREN FILTERQ EQUALS expr RPAREN)? ;
 // the name may be unqualified (4.01 allows it when unambiguous); at the EXPRESSION HEAD a
@@ -162,6 +217,7 @@ lambdaCall   : op=ANY LPAREN (IDENT COLON expr)? RPAREN
              ;
 
 literal : STRING          # StringLiteral
+        | DQSTRING        # JsonStringLiteral
         | BINARY          # BinaryLiteral
         | (NANLIT | INF)  # NanInfLiteral
         | DECIMAL         # DecimalLiteral
@@ -204,6 +260,13 @@ ANY  : 'any' ;
 ALL  : 'all' ;
 CAST : C A S T ;
 ISOF : I S O F ;
+CROSSJOIN : '$crossjoin' ;
+ALLRES    : '$all' ;
+ENTITYRES : '$entity' ;
+ITREF   : '$it' ;
+THISREF : '$this' ;
+THESEREF : '$these' ;
+ROOTREF : '$root' ;
 COUNT : '$count' ;
 VALUE : '$value' ;
 REF   : '$ref' ;
@@ -213,6 +276,10 @@ AS   : 'as' ;
 FROM : 'from' ;
 
 MINUS  : '-' ;
+LBRACE : '{' ;
+RBRACE : '}' ;
+LBRACKET : '[' ;
+RBRACKET : ']' ;
 LPAREN : '(' ;
 RPAREN : ')' ;
 COMMA  : ',' ;
@@ -222,6 +289,7 @@ COLON  : ':' ;
 DOT    : '.' ;
 
 // typed literals (order matters: longest/most specific before INT/IDENT)
+DQSTRING : '"' ('\\' . | ~["\\])* '"' ;
 NANLIT   : 'NaN' ;
 INF      : 'INF' ;
 BINARY   : 'binary' '\'' ~'\''* '\'' ;
@@ -237,7 +305,9 @@ STRING  : '\'' ( ~'\'' | '\'\'' )* '\'' ;
 DECIMAL : '-'? [0-9]+ '.' [0-9]+ ;
 INT     : '-'? [0-9]+ ;
 IDENT   : [a-zA-Z_] [a-zA-Z0-9_]* ;
-// parameter alias (4.01 11.2.5.1.3): plain @name — @Ns.Term annotation refs stay unsupported
+// annotation value references in paths (Price/@Measures.ISOCurrency) vs plain @alias
+ANNOTATION : '@' [a-zA-Z_] [a-zA-Z0-9_]* ('.' [a-zA-Z_] [a-zA-Z0-9_]*)+ ;
+// parameter alias (4.01 11.2.5.1.3): plain @name
 ALIAS   : '@' [a-zA-Z_] [a-zA-Z0-9_]* ;
 
 fragment HEX : [0-9a-fA-F] ;

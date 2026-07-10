@@ -58,13 +58,9 @@ class AbnfAcceptanceTest {
 
 	/** Constructs the expression grammar deliberately does not cover YET (E4 backlog). */
 	private static final List<Pattern> BACKLOG = List.of(
-			Pattern.compile("\\$(it|this|root)"),                      // $it/$this/$root instance refs
-			Pattern.compile("\\$filter\\("),                        // inline $filter(...) collection segments
-			Pattern.compile("@\\w+\\."),                             // @Ns.Term annotation refs (plain @alias parses)
-			Pattern.compile("/@|@\\w+/"),                            // instance-annotation values in paths
 			Pattern.compile("(?i)\\bgeo(graphy|metry)?\\s*'"),       // spatial literals
 			Pattern.compile("\\bdiv\\s+by\\b"),                      // spaced "div by" (only divby is one keyword)
-			Pattern.compile("\"|\\{|\\["));                          // JSON-ish / string-with-quote forms
+			Pattern.compile("\\bgeo\\.\\w"));                          // geo.* built-ins on literals we lack
 
 	/** Expression cases owned by ANOTHER layer — never judgeable here, not generated. */
 	private static final List<Pattern> OUT_OF_SCOPE = List.of(
@@ -81,7 +77,6 @@ class AbnfAcceptanceTest {
 	/** Resource-path gaps of the parser itself (ADR-0005 backlog). */
 	private static final List<Pattern> BACKLOG_PATHS = List.of(
 			Pattern.compile("@"),                      // key aliases
-			Pattern.compile("\\$(all|crossjoin|entity)"), // advanced URL forms (backlog package)
 			Pattern.compile("/[A-Za-z_]\\w*'"),        // key-as-segment with a RAW apostrophe (O'Neil)
 			Pattern.compile("\\{"));                   // JSON values in key predicates
 

@@ -369,6 +369,43 @@ class ODataQueryParserTest {
 	}
 
 	@Test
+	@DisplayName("wave 2/3: $it, JSON arrays, inline $filter segments, honest 501 refusals")
+	void waveTwoThreeConstructs() {
+		// $it anchors at the request instance — also inside lambda bodies
+		parser.parseFilter("$it/rating gt 3", productClass);
+		parser.parseFilter("reviews/any(r: r/stars ge $it/rating)", productClass);
+
+		// 4.01 listExpr: in with a JSON array of expressions
+		OperationCallExp in = assertInstanceOf(OperationCallExp.class,
+				parser.parseFilter("name in [\"Milk\",'Cheese']", productClass));
+		assertEquals("includes", in.getName());
+		assertEquals(2, ((CollectionLiteralExp) in.getOwnedSource()).getOwnedParts().size());
+
+		// inline $filter segment → select, cardinality survives
+		OperationCallExp count = assertInstanceOf(OperationCallExp.class, ((OperationCallExp)
+				parser.parseFilter("reviews/$filter(stars ge 5)/$count eq 1", productClass))
+				.getOwnedSource());
+		assertInstanceOf(IteratorExp.class, count.getOwnedSource());
+
+		// representable but unsupported constructs refuse honestly (→ 501, never silent)
+		assertThrows(UnsupportedOperationException.class,
+				() -> parser.parseFilter("$root/Product('p1')/name eq name", productClass));
+		assertThrows(UnsupportedOperationException.class,
+				() -> parser.parseFilter("price/@Measures.ISOCurrency eq 'EUR'", productClass));
+		assertThrows(UnsupportedOperationException.class,
+				() -> parser.parseFilter("reviews(5)/stars gt 3", productClass),
+				"keyed path segments in expressions");
+		assertThrows(UnsupportedOperationException.class,
+				() -> parser.parseApply("join(reviews as R)", productClass));
+		assertThrows(UnsupportedOperationException.class,
+				() -> parser.parseApply("search(coffee)", productClass));
+		assertThrows(UnsupportedOperationException.class,
+				() -> parser.parseApply(
+						"groupby((rolluprecursive($root/Sets,H,id)),aggregate($count as C))",
+						productClass));
+	}
+
+	@Test
 	@DisplayName("type operators (E4-AP-2): isof→oclIsKindOf, cast→oclAsType + TypeExp")
 	void typeOperators() {
 		OperationCallExp isof = assertInstanceOf(OperationCallExp.class,
