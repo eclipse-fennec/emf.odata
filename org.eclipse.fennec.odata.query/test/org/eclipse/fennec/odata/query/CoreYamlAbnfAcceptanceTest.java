@@ -61,21 +61,24 @@ class CoreYamlAbnfAcceptanceTest {
 	/** Expression constructs the grammar deliberately does not cover YET (E4 backlog). */
 	private static final List<Pattern> BACKLOG = List.of(
 			Pattern.compile("\\$(it|this|root|these)"),              // instance refs
-			Pattern.compile("\\$count\\(|\\$filter\\("),             // filtered $count / inline $filter segments
+			Pattern.compile("\\$filter\\("),                        // inline $filter(...) collection segments
 			Pattern.compile("@\\w+\\."),                             // @Ns.Term annotation refs (plain @alias parses)
 			Pattern.compile("/@|@\\w+/"),                            // instance-annotation values in paths
-			Pattern.compile("-\\s*[A-Za-z_(]"),                      // unary minus on expressions
 			Pattern.compile("(?i)\\bgeo(graphy|metry)?\\s*'"),       // spatial literals
-			Pattern.compile("\\bbinary'"),                           // binary literals
-			Pattern.compile("[A-Za-z_][\\w.]*'[^']*,"),              // enum FLAG combinations (comma list)
-			Pattern.compile("[Nn][Aa][Nn]|INF"),                     // nanInfinity literals
 			Pattern.compile("\\bdiv\\s+by\\b"),                      // spaced "div by" (only divby is one keyword)
-			Pattern.compile("(^|/)[A-Za-z_]\\w*\\.[A-Za-z_][\\w.]*(/|$| )"), // type-cast path segments
 			Pattern.compile("\"|\\{|\\["));                          // JSON-ish / string-with-quote forms
 
 	/** Expression cases owned by ANOTHER layer — never judgeable here, not generated. */
 	private static final List<Pattern> OUT_OF_SCOPE = List.of(
 			Pattern.compile("%[0-9A-Fa-f]{2}"));                     // percent-encoding = URL decoding
+
+	/**
+	 * A NEGATIVE whose input is one bare qualified name: whether that is an (invalid)
+	 * parenless function or a (valid) terminal type cast is a MODEL question — not
+	 * judgeable syntax-only, so the case is not generated.
+	 */
+	private static final Pattern BARE_QUALIFIED_NAME =
+			Pattern.compile("^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)+$");
 
 	/** Resource-path gaps of the parser itself (ADR-0005 backlog). */
 	private static final List<Pattern> BACKLOG_PATHS = List.of(
@@ -118,7 +121,8 @@ class CoreYamlAbnfAcceptanceTest {
 			if (!EXPRESSION_RULES.contains(c.rule())) {
 				continue;
 			}
-			if (outOfScope(OUT_OF_SCOPE, c.input()) || queryOptionLevelNegative(c)) {
+			if (outOfScope(OUT_OF_SCOPE, c.input()) || queryOptionLevelNegative(c)
+					|| (c.negative() && BARE_QUALIFIED_NAME.matcher(c.input().trim()).matches())) {
 				omitted++;
 				continue;
 			}

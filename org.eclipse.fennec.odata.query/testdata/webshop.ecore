@@ -25,6 +25,10 @@
       <eParameters name="count" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
     </eOperations>
   </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="DiscountedProduct" eSuperTypes="#//Product">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="discount"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+  </eClassifiers>
   <eClassifiers xsi:type="ecore:EClass" name="Review">
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="stars"
         eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>

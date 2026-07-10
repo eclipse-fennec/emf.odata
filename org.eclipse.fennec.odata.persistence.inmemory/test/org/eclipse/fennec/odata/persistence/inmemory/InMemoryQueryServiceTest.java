@@ -315,6 +315,40 @@ class InMemoryQueryServiceTest {
 	}
 
 	@Test
+	@DisplayName("wave 1 evaluation: cast paths, filtered $count, unary minus, flag honesty")
+	void waveOneEvaluation() throws Exception {
+		// one derived-type instance in an EXTRA repository, visible only to this test
+		EClass discounted = EcoreHelper.getEClass(pkg, "DiscountedProduct");
+		EObject sale = create(discounted, "id", "p9", "name", "Sale",
+				"price", new BigDecimal("0.99"), "rating", 1);
+		sale.eSet(discounted.getEStructuralFeature("discount"), 20);
+		Path extra = java.nio.file.Files.createDirectory(dataDirectory.resolve("extra"));
+		ResourceSet rs = new ResourceSetImpl();
+		rs.getResourceFactoryRegistry().getExtensionToFactoryMap().put("*", new XMIResourceFactoryImpl());
+		rs.getPackageRegistry().put(pkg.getNsURI(), pkg);
+		Resource resource = rs.createResource(
+				URI.createFileURI(extra.resolve("sale.xmi").toString()));
+		resource.getContents().add(sale);
+		resource.save(null);
+		service.addRepository(new FileEntityRepository(extra, List.of(pkg)));
+
+		// cast path segment: base-typed instances yield null (excluded), never an error
+		assertEquals(List.of("Sale"),
+				names(query("webshop.DiscountedProduct/discount gt 5", null, 0, -1, false)));
+
+		// filtered $count: only Cheese has a 5-star review
+		assertEquals(List.of("Cheese"),
+				names(query("reviews/$count($filter=stars ge 5) eq 1", null, 0, -1, false)));
+
+		// unary minus: ratings Milk 3, Cheese 5, Bread 4, Sale 1 → only -5 < -4
+		assertEquals(List.of("Cheese"), names(query("-rating lt -4", null, 0, -1, false)));
+
+		// flag combinations parse but are NOT evaluable on single-literal EMF enums → honest error
+		assertThrows(ODataQueryParseException.class,
+				() -> query("color has webshop.Color'Red,Green'", null, 0, -1, false));
+	}
+
+	@Test
 	@DisplayName("repository boundary: unknown types yield empty, directory must exist")
 	void repositoryBoundaries() {
 		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");

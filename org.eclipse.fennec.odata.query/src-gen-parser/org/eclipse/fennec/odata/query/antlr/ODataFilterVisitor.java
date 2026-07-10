@@ -379,6 +379,13 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitParenPrimary(ODataFilterParser.ParenPrimaryContext ctx);
 	/**
+	 * Visit a parse tree produced by the {@code NegatedPrimary}
+	 * labeled alternative in {@link ODataFilterParser#primary}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitNegatedPrimary(ODataFilterParser.NegatedPrimaryContext ctx);
+	/**
 	 * Visit a parse tree produced by {@link ODataFilterParser#typeFunc}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
@@ -403,19 +410,23 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitMemberPath(ODataFilterParser.MemberPathContext ctx);
 	/**
-	 * Visit a parse tree produced by the {@code PropertyPathSegment}
-	 * labeled alternative in {@link ODataFilterParser#pathSegment}.
+	 * Visit a parse tree produced by {@link ODataFilterParser#pathStep}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
 	 */
-	T visitPropertyPathSegment(ODataFilterParser.PropertyPathSegmentContext ctx);
+	T visitPathStep(ODataFilterParser.PathStepContext ctx);
 	/**
-	 * Visit a parse tree produced by the {@code BoundCallSegment}
-	 * labeled alternative in {@link ODataFilterParser#pathSegment}.
+	 * Visit a parse tree produced by {@link ODataFilterParser#lastSegment}.
 	 * @param ctx the parse tree
 	 * @return the visitor result
 	 */
-	T visitBoundCallSegment(ODataFilterParser.BoundCallSegmentContext ctx);
+	T visitLastSegment(ODataFilterParser.LastSegmentContext ctx);
+	/**
+	 * Visit a parse tree produced by {@link ODataFilterParser#countCall}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitCountCall(ODataFilterParser.CountCallContext ctx);
 	/**
 	 * Visit a parse tree produced by {@link ODataFilterParser#boundCall}.
 	 * @param ctx the parse tree
@@ -447,6 +458,20 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 * @return the visitor result
 	 */
 	T visitStringLiteral(ODataFilterParser.StringLiteralContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code BinaryLiteral}
+	 * labeled alternative in {@link ODataFilterParser#literal}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitBinaryLiteral(ODataFilterParser.BinaryLiteralContext ctx);
+	/**
+	 * Visit a parse tree produced by the {@code NanInfLiteral}
+	 * labeled alternative in {@link ODataFilterParser#literal}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitNanInfLiteral(ODataFilterParser.NanInfLiteralContext ctx);
 	/**
 	 * Visit a parse tree produced by the {@code DecimalLiteral}
 	 * labeled alternative in {@link ODataFilterParser#literal}.

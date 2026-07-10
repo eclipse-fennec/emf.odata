@@ -98,7 +98,12 @@ public class FileEntityRepository implements EntityRepository {
 			}
 			for (TreeIterator<EObject> it = resource.getAllContents(); it.hasNext();) {
 				EObject entity = it.next();
+				// polymorphic like the JPA backend: a derived instance is part of every
+				// base type's set (queries on the base set see DiscountedProducts too)
 				byType.computeIfAbsent(entity.eClass(), c -> new ArrayList<>()).add(entity);
+				for (EClass superType : entity.eClass().getEAllSuperTypes()) {
+					byType.computeIfAbsent(superType, c -> new ArrayList<>()).add(entity);
+				}
 			}
 		} catch (IOException e) {
 			throw new UncheckedIOException("cannot load data file " + file, e);

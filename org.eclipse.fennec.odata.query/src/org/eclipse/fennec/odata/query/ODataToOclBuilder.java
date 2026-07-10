@@ -13,6 +13,7 @@
 package org.eclipse.fennec.odata.query;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -29,6 +30,7 @@ import org.eclipse.emf.ecore.EOperation;
 import org.eclipse.emf.ecore.EParameter;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.ClassifierType;
 import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
 import org.eclipse.fennec.m2x.model.ocl.CollectionKind;
 import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
@@ -99,6 +101,20 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	private final EClass context;
 	/** Lambda variable scopes, innermost last: name → (Variable, element type when structured). */
 	private final Deque<LambdaScope> scopes = new ArrayDeque<>();
+	/**
+	 * Implicit-context scopes for filtered {@code $count($filter=…)} bodies: property paths
+	 * without an explicit variable resolve against the collection's ELEMENT type and are
+	 * rooted in the select iterator's variable.
+	 */
+	private final Deque<ImplicitScope> implicitScopes = new ArrayDeque<>();
+
+	private record ImplicitScope(Variable variable, EClass elementClass) {
+	}
+
+	/** One member-path segment: exactly one of property IDENT, bound call or cast name. */
+	private record Step(TerminalNode ident, ODataFilterParser.BoundCallContext bound,
+			ODataFilterParser.CastNameContext cast) {
+	}
 	/** Aliases introduced by $apply aggregate/compute stages — referable in later stages. */
 	private final Map<String, Variable> aliases = new HashMap<>();
 	/** Resolves a {@code @name} parameter alias to its expression (4.01 11.2.5.1.3). */
@@ -275,11 +291,17 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		EClass current = context;
 		EClassifier valueType = null;
 		boolean many = false;
-		List<ODataFilterParser.PathSegmentContext> segments = ctx.pathSegment();
+		// uniform view over the mid-path steps and the (cast-free) last segment
+		List<Step> segments = new ArrayList<>();
+		for (ODataFilterParser.PathStepContext step : ctx.pathStep()) {
+			segments.add(new Step(step.IDENT(), step.boundCall(), step.castName()));
+		}
+		segments.add(new Step(ctx.lastSegment().IDENT(), ctx.lastSegment().boundCall(),
+				ctx.lastSegment().castName()));
 		int start = 0;
 
-		if (segments.get(0) instanceof ODataFilterParser.PropertyPathSegmentContext first) {
-			String name = first.IDENT().getText();
+		if (segments.get(0).ident() != null) {
+			String name = segments.get(0).ident().getText();
 			LambdaScope scope = scopeOf(name);
 			if (scope != null) { // first segment is a lambda variable, not a property
 				VariableExp variable = FACTORY.createVariableExp();
@@ -295,16 +317,39 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 				start = 1;
 			}
 		}
+		if (start == 0 && source == null && !implicitScopes.isEmpty()) {
+			// inside a filtered $count body: implicit paths root in the select variable
+			VariableExp variable = FACTORY.createVariableExp();
+			variable.setReferredVariable(implicitScopes.peek().variable());
+			source = variable;
+			current = implicitScopes.peek().elementClass();
+		}
 
 		for (int i = start; i < segments.size(); i++) {
-			if (segments.get(i) instanceof ODataFilterParser.BoundCallSegmentContext bound) {
-				source = boundCall(bound.boundCall(), source, current);
-				EOperation operation = resolveOperation(bound.boundCall(), current);
+			Step step = segments.get(i);
+			if (step.bound() != null) {
+				source = boundCall(step.bound(), source, current);
+				EOperation operation = resolveOperation(step.bound(), current);
 				valueType = operation.getEType();
 				many = operation.isMany();
+			} else if (step.cast() != null) {
+				// derived-type cast segment ([OData-URL] 4.11 in expression paths): the value
+				// keeps its cardinality, the static context becomes the cast target
+				EClass castClass = resolveCastClass(step.cast().getText(), current);
+				OperationCallExp cast = FACTORY.createOperationCallExp();
+				cast.setName("oclAsType");
+				if (source == null) {
+					cast.setIsImplicit(true);
+				} else {
+					cast.setOwnedSource(source);
+				}
+				TypeExp typeExp = FACTORY.createTypeExp();
+				typeExp.setReferredType(resolveTypeName(step.cast().getText()));
+				cast.getOwnedArguments().add(typeExp);
+				source = cast;
+				valueType = castClass;
 			} else {
-				String name = ((ODataFilterParser.PropertyPathSegmentContext) segments.get(i))
-						.IDENT().getText();
+				String name = step.ident().getText();
 				if (current == null) {
 					throw new ODataQueryParseException("cannot navigate into '" + name
 							+ "' — the previous segment is not a structured type");
@@ -331,16 +376,59 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		if (ctx.lambdaCall() != null) {
 			return lambda(ctx.lambdaCall(), source, valueType, many);
 		}
-		if (ctx.COUNT() != null) { // path/$count → size (E4-AP-8)
+		if (ctx.countCall() != null) { // path/$count → size, optionally filtered (E4-AP-8)
 			if (!many) {
 				throw new ODataQueryParseException("'$count' requires a collection-valued path");
 			}
+			OclExpression collection = source;
+			if (ctx.countCall().expr() != null) {
+				// $count($filter=…) → size over select: the body resolves against the
+				// collection's ELEMENT type, rooted in the select iterator's variable
+				if (!(valueType instanceof EClass elementClass)) {
+					throw new ODataQueryParseException(
+							"filtered '$count' requires a collection of structured type");
+				}
+				Variable variable = FACTORY.createVariable();
+				variable.setName("$e");
+				var variableType = FACTORY.createClassifierType();
+				variableType.setReferredClassifier(elementClass);
+				variableType.setName(elementClass.getName());
+				variable.setType(variableType);
+				implicitScopes.push(new ImplicitScope(variable, elementClass));
+				OclExpression body;
+				try {
+					body = visit(ctx.countCall().expr());
+				} finally {
+					implicitScopes.pop();
+				}
+				IteratorExp select = FACTORY.createIteratorExp();
+				select.setName("select");
+				select.setOwnedSource(source);
+				select.getOwnedIterators().add(variable);
+				select.setOwnedBody(body);
+				collection = select;
+			}
 			OperationCallExp size = FACTORY.createOperationCallExp();
 			size.setName("size");
-			size.setOwnedSource(source);
+			size.setOwnedSource(collection);
 			return size;
 		}
 		return source;
+	}
+
+	/** Resolves a cast-segment name to an EClass RELATED to the current context type. */
+	private EClass resolveCastClass(String qualifiedName, EClass current) {
+		if (!(resolveTypeName(qualifiedName) instanceof ClassifierType classifierType)
+				|| !(classifierType.getReferredClassifier() instanceof EClass castClass)) {
+			throw new ODataQueryParseException(
+					"'" + qualifiedName + "' is not a structured type");
+		}
+		if (current != null && !castClass.isSuperTypeOf(current)
+				&& !current.isSuperTypeOf(castClass)) {
+			throw new ODataQueryParseException("'" + qualifiedName
+					+ "' is unrelated to " + current.getName());
+		}
+		return castClass;
 	}
 
 	/**
@@ -529,26 +617,62 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	}
 
 	@Override
+	public OclExpression visitNegatedPrimary(ODataFilterParser.NegatedPrimaryContext ctx) {
+		OperationCallExp negate = FACTORY.createOperationCallExp();
+		negate.setName("-"); // unary form: no arguments, only the source
+		negate.setOwnedSource(visit(ctx.primary()));
+		return negate;
+	}
+
+	@Override
+	public OclExpression visitNanInfLiteral(ODataFilterParser.NanInfLiteralContext ctx) {
+		RealLiteralExp exp = FACTORY.createRealLiteralExp();
+		exp.setRealSymbol("NaN".equals(ctx.getText()) ? Double.NaN : Double.POSITIVE_INFINITY);
+		return exp;
+	}
+
+	@Override
+	public OclExpression visitBinaryLiteral(ODataFilterParser.BinaryLiteralContext ctx) {
+		String raw = ctx.getText(); // binary'T0RhdGE'
+		return typedString(raw.substring("binary'".length(), raw.length() - 1), "Binary");
+	}
+
+	@Override
 	public OclExpression visitDurationLiteral(ODataFilterParser.DurationLiteralContext ctx) {
 		String raw = ctx.getText(); // duration'P12DT23H59M59S'
 		return typedString(raw.substring("duration'".length(), raw.length() - 1), "Duration");
 	}
 
-	/** {@code Ns.Enum'Value'} resolved against the context package (flag combinations: E4 backlog). */
+	/**
+	 * {@code Ns.Enum'Value'} resolved against the context package. FLAG combinations
+	 * ({@code 'Read,Write'}) become a Set literal of the member literals — the {@code has}
+	 * semantics over them is the backend's subject.
+	 */
 	@Override
 	public OclExpression visitEnumLiteral(ODataFilterParser.EnumLiteralContext ctx) {
 		String raw = ctx.getText();
 		int quote = raw.indexOf('\'');
 		String qualifiedName = raw.substring(0, quote);
 		String value = raw.substring(quote + 1, raw.length() - 1);
-		if (value.contains(",")) {
-			throw new ODataQueryParseException("enum flag combinations are not supported yet: " + raw);
-		}
 		String enumName = qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1);
 		if (!(context.getEPackage().getEClassifier(enumName) instanceof EEnum eEnum)) {
 			throw new ODataQueryParseException(
 					"unknown enum type '" + qualifiedName + "' in package " + context.getEPackage().getName());
 		}
+		if (value.contains(",")) { // flag combination → Set{A, B}
+			CollectionLiteralExp flags = FACTORY.createCollectionLiteralExp();
+			flags.setKind(CollectionKind.SET);
+			for (String member : value.split(",")) {
+				CollectionItem item = FACTORY.createCollectionItem();
+				item.setOwnedItem(enumLiteral(eEnum, member.trim(), enumName));
+				flags.getOwnedParts().add(item);
+			}
+			return flags;
+		}
+		return enumLiteral(eEnum, value, enumName);
+	}
+
+	private OclExpression enumLiteral(EEnum eEnum, String value, String enumName) {
 		EEnumLiteral literal = eEnum.getEEnumLiteral(value);
 		if (literal == null) {
 			throw new ODataQueryParseException("unknown literal '" + value + "' of enum " + enumName);

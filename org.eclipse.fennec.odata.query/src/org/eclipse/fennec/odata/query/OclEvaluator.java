@@ -22,6 +22,7 @@ import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -159,6 +160,21 @@ public class OclEvaluator {
 		Object source = evaluate(it.getOwnedSource(), self, bindings);
 		Collection<?> elements = asCollection(source);
 		Variable variable = it.getOwnedIterators().get(0);
+		if ("select".equals(it.getName())) { // filtered $count: keep matching elements
+			List<Object> selected = new ArrayList<>();
+			for (Object element : elements) {
+				Map<Variable, Object> inner = new HashMap<>(bindings);
+				inner.put(variable, element);
+				try {
+					if (Boolean.TRUE.equals(evaluate(it.getOwnedBody(), self, inner))) {
+						selected.add(element);
+					}
+				} catch (NullComparison unknown) {
+					// 3VL: an unknown predicate excludes the element, never the whole query
+				}
+			}
+			return selected;
+		}
 		boolean forAll = "forAll".equals(it.getName());
 		if (!forAll && !"exists".equals(it.getName())) {
 			throw new IllegalArgumentException("unsupported iterator '" + it.getName() + "'");
@@ -219,9 +235,18 @@ public class OclEvaluator {
 			case "<=" -> comparison(source, evaluate(args.get(0), self, bindings)) <= 0;
 			case ">" -> comparison(source, evaluate(args.get(0), self, bindings)) > 0;
 			case ">=" -> comparison(source, evaluate(args.get(0), self, bindings)) >= 0;
-			case "has" -> equalTo3vl(op, source, evaluate(args.get(0), self, bindings)); // single-flag semantics
+			case "has" -> {
+				Object flags = evaluate(args.get(0), self, bindings);
+				if (flags instanceof Collection<?>) {
+					// EMF enums carry ONE literal — a multi-flag test cannot be answered here
+					throw new IllegalArgumentException(
+							"enum flag combinations are not evaluable on single-literal enums");
+				}
+				yield equalTo3vl(op, source, flags); // single-flag semantics
+			}
 			case "+" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
-			case "-" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
+			case "-" -> args.isEmpty() ? negate(source)
+					: arithmetic(name, source, evaluate(args.get(0), self, bindings));
 			case "*" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
 			case "/" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
 			case "mod" -> arithmetic(name, source, evaluate(args.get(0), self, bindings));
@@ -258,7 +283,13 @@ public class OclEvaluator {
 			throw new IllegalArgumentException(name + " expects a type argument");
 		}
 		if ("oclAsType".equals(name)) {
-			return value; // type assertion only — representation stays unchanged
+			// a failed structured cast yields null ([OData-URL] 5.1.1.10.1) — 3VL exclusion;
+			// primitive casts stay representation-preserving assertions
+			if (typeExp.getReferredType() instanceof ClassifierType classifierType
+					&& classifierType.getReferredClassifier() != null) {
+				return classifierType.getReferredClassifier().isInstance(value) ? value : null;
+			}
+			return value;
 		}
 		if (typeExp.getReferredType() instanceof ClassifierType classifierType) {
 			EClassifier classifier = classifierType.getReferredClassifier();
@@ -371,6 +402,14 @@ public class OclEvaluator {
 	 */
 	public boolean matchesNullSafe(OclExpression predicate, Object self) {
 		return matches(predicate, self);
+	}
+
+	/** Unary minus; NaN/±INF live as doubles (BigDecimal cannot carry them). */
+	private static Object negate(Object value) {
+		if (value instanceof Double d && (d.isNaN() || d.isInfinite())) {
+			return -d;
+		}
+		return decimal(value).negate();
 	}
 
 	private static BigDecimal decimal(Object value) {

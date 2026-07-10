@@ -223,8 +223,10 @@ public class OclToCriteriaTranslator {
 			case "<", "<=", ">", ">=" -> new Expr(ordering(name,
 					operand(op.getOwnedSource(), ctx), operand(args.get(0), ctx), cb));
 
-			case "+", "-", "*", "/", "mod" -> arithmetic(name,
-					operand(op.getOwnedSource(), ctx), operand(args.get(0), ctx), cb);
+			case "+", "-", "*", "/", "mod" -> args.isEmpty() // unary minus: negate the source
+					? new Expr(cb.neg(numeric(operand(op.getOwnedSource(), ctx), cb)))
+					: arithmetic(name,
+							operand(op.getOwnedSource(), ctx), operand(args.get(0), ctx), cb);
 
 			case "includes" -> new Expr(inList(op, ctx));
 			case "notEmpty" -> new Expr(cb.isNotEmpty(collection(op.getOwnedSource(), ctx)));

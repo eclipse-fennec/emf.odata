@@ -44,7 +44,7 @@ class AggregationAbnfAcceptanceTest {
 
 	/** Negatives that hinge on model categories (collection/primitive classes), not syntax. */
 	private static final Pattern SEMANTIC_NEGATIVE = Pattern.compile(
-			"forbidden|requires method|requires with|no two consecutive|collection-valued");
+			"forbidden|requires method|requires with|no two consecutive|collection-valued|final type cast");
 
 	/** Aggregation constructs the $apply submodel deliberately does not cover YET (backlog). */
 	private static final List<Pattern> BACKLOG = List.of(
@@ -53,8 +53,6 @@ class AggregationAbnfAcceptanceTest {
 			Pattern.compile("\\$all"),                            // $all grouping
 			Pattern.compile("\\$it|\\$root|\\$these"),            // instance refs
 			Pattern.compile("[A-Za-z_]\\w*\\.[A-Za-z_]\\w*\\s*\\("), // qualified custom FUNCTIONS
-			// qualified names OUTSIDE 'with' clauses = type casts in paths (aggrCastPath)
-			Pattern.compile("(?<!with )\\b[A-Za-z_]\\w*\\.[A-Za-z_]"),
 			Pattern.compile("@"),                                 // annotations / parameter aliases
 			Pattern.compile("\\w\\('"));                          // keyed path segments in expressions
 

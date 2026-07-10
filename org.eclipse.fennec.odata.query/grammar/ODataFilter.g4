@@ -131,6 +131,7 @@ primary : literal                 # LiteralPrimary
         | memberPath              # MemberPrimary
         | ALIAS                   # AliasPrimary
         | LPAREN expr RPAREN      # ParenPrimary
+        | MINUS primary           # NegatedPrimary
         ;
 
 // cast(T) / cast(x,T) / isof(T) / isof(x,T) — the type name may be namespace-qualified
@@ -142,10 +143,13 @@ functionCall : IDENT LPAREN (expr (COMMA expr)*)? RPAREN ;
 // Products/$count. Parameterless any() = "has members"; all() REQUIRES a lambda (5.1.1.13.2).
 // Segments may be bound/composed function calls (E4-AP-10): namespace-qualified, with named
 // (bound operations) or positional (built-ins like geo.*) arguments
-memberPath   : pathSegment (SLASH pathSegment)* (SLASH lambdaCall | SLASH COUNT)? ;
-pathSegment  : IDENT       # PropertyPathSegment
-             | boundCall   # BoundCallSegment
-             ;
+memberPath   : (pathStep SLASH)* lastSegment (SLASH lambdaCall | SLASH countCall)? ;
+pathStep     : IDENT | boundCall | castName ;
+// terminal casts are legal (aggregate operands, …/Cast/$count); whether a bare qualified
+// name is a cast or a parenless function is a MODEL question — the harnesses omit those
+lastSegment  : IDENT | boundCall | castName ;
+// path/$count with the optional filtered form path/$count($filter=...) ([OData-URL] 4.8)
+countCall    : COUNT (LPAREN FILTERQ EQUALS expr RPAREN)? ;
 // the name may be unqualified (4.01 allows it when unambiguous); at the EXPRESSION HEAD a
 // simple call parses as functionCall first (canonical functions win the ambiguity there)
 boundCall    : IDENT (DOT IDENT)* LPAREN boundCallArgs? RPAREN ;
@@ -158,6 +162,8 @@ lambdaCall   : op=ANY LPAREN (IDENT COLON expr)? RPAREN
              ;
 
 literal : STRING          # StringLiteral
+        | BINARY          # BinaryLiteral
+        | (NANLIT | INF)  # NanInfLiteral
         | DECIMAL         # DecimalLiteral
         | INT             # IntLiteral
         | (TRUE | FALSE)  # BooleanLiteral
@@ -201,10 +207,12 @@ ISOF : I S O F ;
 COUNT : '$count' ;
 VALUE : '$value' ;
 REF   : '$ref' ;
+FILTERQ : '$filter' ;
 WITH : 'with' ;
 AS   : 'as' ;
 FROM : 'from' ;
 
+MINUS  : '-' ;
 LPAREN : '(' ;
 RPAREN : ')' ;
 COMMA  : ',' ;
@@ -214,6 +222,9 @@ COLON  : ':' ;
 DOT    : '.' ;
 
 // typed literals (order matters: longest/most specific before INT/IDENT)
+NANLIT   : 'NaN' ;
+INF      : 'INF' ;
+BINARY   : 'binary' '\'' ~'\''* '\'' ;
 DURATION : 'duration' '\'' ~'\''* '\'' ;
 ENUM     : [a-zA-Z_] [a-zA-Z0-9_]* ('.' [a-zA-Z_] [a-zA-Z0-9_]*)+ '\'' ~'\''* '\'' ;
 GUID     : HEX HEX HEX HEX HEX HEX HEX HEX '-' HEX HEX HEX HEX '-' HEX HEX HEX HEX '-'

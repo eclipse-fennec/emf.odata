@@ -324,9 +324,48 @@ class ODataQueryParserTest {
 
 		assertThrows(ODataQueryParseException.class,
 				() -> parser.parseFilter("color eq webshop.Color'Cyan'", productClass), "unknown enum literal");
+		// flag combinations become a Set literal of the member literals
+		OperationCallExp has = assertInstanceOf(OperationCallExp.class,
+				parser.parseFilter("color has webshop.Color'Red,Green'", productClass));
+		CollectionLiteralExp flags = assertInstanceOf(CollectionLiteralExp.class,
+				has.getOwnedArguments().get(0));
+		assertEquals(2, flags.getOwnedParts().size());
+	}
+
+	@Test
+	@DisplayName("wave 1: cast path segments, filtered $count, unary minus, NaN/INF, binary")
+	void waveOneConstructs() {
+		// derived-type cast segment in an expression path → oclAsType + continued navigation
+		OperationCallExp gt = assertInstanceOf(OperationCallExp.class,
+				parser.parseFilter("webshop.DiscountedProduct/discount gt 5", productClass));
+		PropertyCallExp discount = assertInstanceOf(PropertyCallExp.class, gt.getOwnedSource());
+		OperationCallExp cast = assertInstanceOf(OperationCallExp.class, discount.getOwnedSource());
+		assertEquals("oclAsType", cast.getName());
 		assertThrows(ODataQueryParseException.class,
-				() -> parser.parseFilter("color has webshop.Color'Red,Green'", productClass),
-				"flag combinations are a documented gap");
+				() -> parser.parseFilter("webshop.Category/name eq 'x'", productClass),
+				"a cast to an UNRELATED type is a client error");
+
+		// filtered $count → size over select, body against the ELEMENT type
+		OperationCallExp size = assertInstanceOf(OperationCallExp.class,
+				((OperationCallExp) parser.parseFilter(
+						"reviews/$count($filter=stars ge 4) gt 0", productClass)).getOwnedSource());
+		assertEquals("size", size.getName());
+		IteratorExp select = assertInstanceOf(IteratorExp.class, size.getOwnedSource());
+		assertEquals("select", select.getName());
+		assertThrows(ODataQueryParseException.class,
+				() -> parser.parseFilter("tags/$count($filter=stars ge 4) gt 0", productClass),
+				"filtered $count needs a structured collection");
+
+		// unary minus, NaN/INF, binary
+		OperationCallExp negated = assertInstanceOf(OperationCallExp.class,
+				((OperationCallExp) parser.parseFilter("-rating lt 0", productClass)).getOwnedSource());
+		assertEquals("-", negated.getName());
+		assertEquals(0, negated.getOwnedArguments().size(), "unary form carries no argument");
+		parser.parseFilter("price ne NaN", productClass);
+		parser.parseFilter("price lt INF and price gt -INF", productClass);
+		assertEquals("Binary", ((StringLiteralExp) ((OperationCallExp) parser
+				.parseFilter("name ne binary'T0RhdGE'", productClass))
+				.getOwnedArguments().get(0)).getType().getName());
 	}
 
 	@Test

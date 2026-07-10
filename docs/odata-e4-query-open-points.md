@@ -34,8 +34,10 @@ kein Olingo-Expression-Parsing), §3.6.1 (Caching am Metadata-Service).
   `TimeOfDay`/`Guid` — Backend-Dispatch über den Typnamen), `duration'…'` → `Duration`,
   `Ns.Enum'Value'` → `EnumLiteralExp` (aufgelöst gegen das Kontext-EPackage). Außerdem:
   Operator-/Funktionsnamen jetzt CASE-INSENSITIVE (4.01, OASIS 5.1.1.1.12).
-  **Restlücken:** Enum-FLAG-Kombinationen (`'Red,Green'`), `binary'…'`, Geo-Literale,
-  NaN/INF, unäres Minus, `$it`/`$this`/`$root`.
+  **Restlücken (nach Welle 1, 2026-07-10):** Geo-Literale, `$it`/`$this`/`$root`.
+  ✅ Welle 1: Enum-FLAGS (`'Red,Green'` → Set-Literal; Auswertung auf Single-Literal-EMF-Enums
+  ehrlich abgelehnt), `binary'…'`, NaN/INF (als Double-Literale), unäres Minus (OperationCallExp
+  `-` ohne Argumente; Evaluator negiert, JPA `cb.neg`).
 - **E4-AP-4 `$apply` ✅ v1 erledigt (2026-07-03):** eigenes Submodell `model/apply.ecore`
   (`ApplyPipeline`/`Filter`/`GroupBy`(+`then`)/`Aggregate`(sum/min/max/average/countdistinct/
   $count)/`Compute` — eingebettete Expressions sind OclExpressions per Cross-Model-Containment,
@@ -78,9 +80,10 @@ kein Olingo-Expression-Parsing), §3.6.1 (Caching am Metadata-Service).
   DIESELBE AST-Instanz — read-only, bei Bedarf kopieren). **Offen:** Anbindung ans
   `ODataAspectProvider`-Profil (Aspect-Slot `parsedQueryCache`, Whiteboard-Invalidierung beim
   Unregister — der Adapter-Teil aus ADR-0004); Cache-Key-Kanonisierung = Q20.
-- **E4-AP-8 `$count`-Segment ✅ Kern erledigt (2026-07-03):** `path/$count` → `size` (nur auf
-  collection-valued Pfaden, sonst 400). **Offen:** gefilterte Form `$count($filter=…)` und
-  Inline-`/$filter(…)`-Segmente.
+- **E4-AP-8 `$count`-Segment ✅ erledigt (gefilterte Form 2026-07-10):** `path/$count` → `size`;
+  `path/$count($filter=…)` → `select(…)->size()` (Body löst gegen den ELEMENT-Typ auf, verankert
+  in der select-Variablen; In-Memory ausführbar, JPA → 501). **Offen:** Inline-`/$filter(…)`-
+  Collection-Segmente.
 - **E4-AP-9 Query-Modell-Refactoring Stufe 1** (req §3.5): `QWhere` → `predicate: OclExpression`
   im Persistence-Query-Modell — Cross-Repo-Abstimmung nötig (emf.persistence-jpa).
 - **E4-AP-10 Bound/Composed Functions in Member-Pfaden ✅ erledigt (2026-07-10):**
@@ -99,7 +102,11 @@ kein Olingo-Expression-Parsing), §3.6.1 (Caching am Metadata-Service).
 Die 211 Harness-Skips = exakt diese Features. Vorschlag in drei Wellen (strategisch bleiben
 Delta/Change-Tracking und der Release-Weg auf `main` VOR Welle 2/3 einsortiert):
 
-**Welle 1 — Quick Wins (~1–2 Tage, ≈40 Skips):**
+**Welle 1 — Quick Wins ✅ ERLEDIGT (2026-07-10):** Casts in Ausdrucks-Pfaden (inkl. terminale
+Casts für Aggregat-Operanden; Evaluator: fehlgeschlagener Cast → null/3VL; JPA-Ausdrucks-Cast →
+501, Root-Cast-treat existiert), gefiltertes `$count`, Literal-Reste. Nebenzug: In-Memory-
+`FileEntityRepository` ist jetzt POLYMORPH wie JPA (abgeleitete Instanzen im Basis-Set).
+ABNF-Stand: 537 verifiziert / 176 Skips. Ursprünglicher Plan:
 1. Typ-Casts in AUSDRUCKS-Pfaden `…/Ns.SubType/prop` (18) — Grammatik-Segment + Builder
    (Kontext-EClass-Wechsel wie im Resource-Parser), Evaluator = instanceof-Filter, JPA =
    `cb.treat()` auf dem Join (Root-Cast-Pushdown existiert schon). Rundet Derived-Types ab.
