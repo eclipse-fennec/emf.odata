@@ -12,7 +12,9 @@
  */
 package org.eclipse.fennec.odata.persistence.inmemory;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,10 +29,14 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
+import org.eclipse.fennec.odata.persistence.api.DeltaService;
+import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.EntityRepository;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
+import org.eclipse.fennec.odata.query.OclEvaluator;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
@@ -46,8 +52,10 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  * their defaults (key excluded); updates with unknown keys create (OData upsert). Everything
  * synchronizes on the per-class map — reference semantics, not a transactional store.
  */
-@Component(service = { EntityRepository.class, WriteService.class, MediaService.class })
-public class MemoryWriteRepository implements EntityRepository, WriteService, MediaService {
+@Component(service = { EntityRepository.class, WriteService.class, MediaService.class,
+		DeltaService.class })
+public class MemoryWriteRepository
+		implements EntityRepository, WriteService, MediaService, DeltaService {
 
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	private final Map<EClass, Map<String, EObject>> store = new ConcurrentHashMap<>();
@@ -59,6 +67,31 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 	 * this way, not full isolation from concurrent writers — a real transactional backend (JPA) would.
 	 */
 	private final ThreadLocal<Map<EClass, Map<String, EObject>>> snapshot = new ThreadLocal<>();
+
+	// --- change journal (DeltaService, [OData-Protocol] 11.3) ---
+
+	/** Retention window: tokens older than this many changes answer 410 Gone. */
+	private static final int MAX_JOURNAL_ENTRIES = 10_000;
+
+	/**
+	 * One structural change to a set member. {@code seq} orders the journal; entries buffered
+	 * inside a transaction carry {@code seq = 0} until {@link #commit()} assigns real numbers —
+	 * assigning at write time would let a concurrently issued token overtake the uncommitted
+	 * entries and silently skip them.
+	 */
+	private record Change(long seq, EClass type, String storeKey,
+			Map<String, Object> keyValues, boolean deleted) {
+	}
+
+	/** Global journal; all access synchronizes on the deque itself. */
+	private final Deque<Change> journal = new ArrayDeque<>();
+	private long nextSeq = 1;
+	/** Highest sequence number evicted from the bounded journal — tokens at or below it are gone. */
+	private long evictedUpTo = 0;
+	/** Changes of an open thread-bound transaction — flushed on commit, dropped on rollback. */
+	private final ThreadLocal<List<Change>> pendingJournal = new ThreadLocal<>();
+
+	private final OclEvaluator evaluator = new OclEvaluator();
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
 	void addEPackage(EPackage ePackage) {
@@ -114,15 +147,22 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 			}
 		});
 		snapshot.set(snap);
+		pendingJournal.set(new ArrayList<>());
 	}
 
 	@Override
 	public void commit() {
+		List<Change> pending = pendingJournal.get();
+		if (pending != null) {
+			append(pending);
+		}
+		pendingJournal.remove();
 		snapshot.remove();
 	}
 
 	@Override
 	public void rollback() {
+		pendingJournal.remove(); // a rolled-back transaction never happened, journal-wise
 		Map<EClass, Map<String, EObject>> snap = snapshot.get();
 		if (snap == null) {
 			return;
@@ -162,6 +202,7 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 						"an entity with this key already exists in " + entityType.getName());
 			}
 			entities.put(key, entity);
+			journal(entity, entityType, key, false);
 		}
 		return entity;
 	}
@@ -176,9 +217,11 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 			EObject existing = entities.get(key);
 			if (existing == null) { // OData upsert (13.1.1/29)
 				entities.put(key, payload);
+				journal(payload, entityType, key, false);
 				return new WriteResult(payload, true);
 			}
 			apply(entityType, payload, existing, replace, id);
+			journal(existing, entityType, key, false);
 			return new WriteResult(existing, false);
 		}
 	}
@@ -189,8 +232,13 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 		if (entities == null) {
 			return false;
 		}
+		String key = unquote(rawKey);
 		synchronized (entities) {
-			return entities.remove(unquote(rawKey)) != null;
+			EObject removed = entities.remove(key);
+			if (removed != null) {
+				journal(removed, entityType, key, true);
+			}
+			return removed != null;
 		}
 	}
 
@@ -325,9 +373,11 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 					}
 				});
 				entities.put(key, payload);
+				journal(payload, entityType, key, false);
 				return new WriteResult(payload, true);
 			}
 			apply(entityType, payload, existing, replace, id);
+			journal(existing, entityType, key, false);
 			return new WriteResult(existing, false);
 		}
 	}
@@ -337,8 +387,113 @@ public class MemoryWriteRepository implements EntityRepository, WriteService, Me
 		String key = keyOf(entityType, namedKeys);
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
-			return entities.remove(key) != null;
+			EObject removed = entities.remove(key);
+			if (removed != null) {
+				journal(removed, entityType, key, true);
+			}
+			return removed != null;
 		}
+	}
+
+	// --- delta side (change tracking, [OData-Protocol] 11.3) ---
+
+	@Override
+	public String trackingToken(EClass entityType) {
+		synchronized (journal) {
+			return Long.toString(nextSeq - 1);
+		}
+	}
+
+	@Override
+	public DeltaResult changesSince(EntityQuery query, String token) {
+		long since;
+		try {
+			since = Long.parseLong(token);
+		} catch (RuntimeException e) {
+			throw new DeltaGoneException("the delta token is not valid");
+		}
+		List<Change> relevant = new ArrayList<>();
+		long now;
+		synchronized (journal) {
+			// every change in (since, now] must still be retained — an evicted range means the
+			// client would silently miss changes, so the token is honestly gone (410)
+			if (since < 0 || since > nextSeq - 1 || since < evictedUpTo) {
+				throw new DeltaGoneException("the delta token is no longer valid");
+			}
+			now = nextSeq - 1;
+			for (Change change : journal) {
+				if (change.seq() > since && query.entityType().isSuperTypeOf(change.type())) {
+					relevant.add(change);
+				}
+			}
+		}
+		// multiple changes to one entity collapse into its latest outcome, at its LAST position
+		Map<List<Object>, Change> latest = new LinkedHashMap<>();
+		for (Change change : relevant) {
+			List<Object> key = List.of(change.type(), change.storeKey());
+			latest.remove(key);
+			latest.put(key, change);
+		}
+		List<EObject> changed = new ArrayList<>();
+		List<Removal> removals = new ArrayList<>();
+		for (Change change : latest.values()) {
+			EObject current = null;
+			Map<String, EObject> entities = store.get(change.type());
+			if (entities != null) {
+				synchronized (entities) {
+					current = entities.get(change.storeKey());
+				}
+			}
+			if (current == null) {
+				removals.add(new Removal(change.keyValues(), REASON_DELETED));
+			} else if (query.castType() != null && !query.castType().isInstance(current)) {
+				removals.add(new Removal(change.keyValues(), REASON_CHANGED));
+			} else if (query.filter() == null || evaluator.matchesNullSafe(query.filter(), current)) {
+				changed.add(current);
+			} else { // still exists, but left the tracked membership ([OData-Protocol] 11.3.1)
+				removals.add(new Removal(change.keyValues(), REASON_CHANGED));
+			}
+		}
+		return new DeltaResult(changed, removals, Long.toString(now));
+	}
+
+	/**
+	 * Records one mutation; called under the owner's class-store lock. Inside a transaction the
+	 * change is buffered per thread ({@code seq} pending) and only enters the global journal on
+	 * {@link #commit()} — see {@link Change}.
+	 */
+	private void journal(EObject entity, EClass storeType, String storeKey, boolean deleted) {
+		Change change = new Change(0, storeType, storeKey, keyValuesOf(entity), deleted);
+		List<Change> pending = pendingJournal.get();
+		if (pending != null) {
+			pending.add(change);
+			return;
+		}
+		append(List.of(change));
+	}
+
+	/** Assigns sequence numbers and appends, evicting past the retention window. */
+	private void append(List<Change> changes) {
+		synchronized (journal) {
+			for (Change change : changes) {
+				journal.addLast(new Change(nextSeq++, change.type(), change.storeKey(),
+						change.keyValues(), change.deleted()));
+				if (journal.size() > MAX_JOURNAL_ENTRIES) {
+					evictedUpTo = journal.removeFirst().seq();
+				}
+			}
+		}
+	}
+
+	/** Key-property name → value in id-attribute order — the delta layer renders ids from it. */
+	private static Map<String, Object> keyValuesOf(EObject entity) {
+		Map<String, Object> keys = new LinkedHashMap<>();
+		for (EAttribute id : entity.eClass().getEAllAttributes()) {
+			if (id.isID()) {
+				keys.put(id.getName(), entity.eGet(id));
+			}
+		}
+		return keys;
 	}
 
 	// --- media side (HasStream entities, [OData-Protocol] 11.2.4/11.4.7) ---

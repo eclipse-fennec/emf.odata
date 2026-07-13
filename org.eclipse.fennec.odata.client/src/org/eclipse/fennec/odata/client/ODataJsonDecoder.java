@@ -59,7 +59,53 @@ final class ODataJsonDecoder {
 		JsonNode next = root.has("@odata.nextLink") ? root.get("@odata.nextLink") : root.get("@nextLink");
 		long totalCount = count == null ? -1 : count.asLong(-1);
 		String nextLink = next == null ? null : next.asString();
-		return new ODataPage(entities, totalCount, nextLink);
+		return new ODataPage(entities, totalCount, nextLink, link(root, "deltaLink"));
+	}
+
+	/** An {@code @odata.}-prefixed or 4.01 prefix-free control link of the envelope, or null. */
+	private static String link(JsonNode root, String name) {
+		JsonNode value = root.has("@odata." + name) ? root.get("@odata." + name)
+				: root.get("@" + name);
+		return value == null ? null : value.asString();
+	}
+
+	/**
+	 * Decodes a delta response ([OData-JSON] delta payloads): entries carrying {@code @removed}
+	 * (4.01) or a {@code …/$deletedEntity} context fragment (4.0) become {@link ODataDelta.Removal}s,
+	 * everything else decodes as an added/changed entity with its current state.
+	 */
+	static ODataDelta delta(String json, EClass entityType, MetadataService metadataService) {
+		JsonNode root = parse(json);
+		JsonNode value = root.get("value");
+		if (value == null || !value.isArray()) {
+			throw new ODataClientException("the delta response carries no 'value' array");
+		}
+		List<EObject> changed = new ArrayList<>();
+		List<ODataDelta.Removal> removals = new ArrayList<>();
+		for (JsonNode element : value) {
+			if (!(element instanceof ObjectNode object)) {
+				throw new ODataClientException("expected a JSON delta entry object");
+			}
+			JsonNode removed = object.has("@removed") ? object.get("@removed")
+					: object.get("@odata.removed");
+			JsonNode context = object.has("@odata.context") ? object.get("@odata.context")
+					: object.get("@context");
+			boolean deleted40 = context != null && context.asString().contains("/$deletedEntity");
+			if (removed == null && !deleted40) {
+				changed.add(decode(element, entityType, metadataService));
+				continue;
+			}
+			JsonNode id = object.has("@id") ? object.get("@id")
+					: object.has("@odata.id") ? object.get("@odata.id") : object.get("id");
+			String reason = null;
+			if (removed instanceof ObjectNode removedObject && removedObject.hasNonNull("reason")) {
+				reason = removedObject.get("reason").asString();
+			} else if (object.hasNonNull("reason")) { // the 4.0 deleted-entity form
+				reason = object.get("reason").asString();
+			}
+			removals.add(new ODataDelta.Removal(id == null ? null : id.asString(), reason));
+		}
+		return new ODataDelta(changed, removals, link(root, "deltaLink"), link(root, "nextLink"));
 	}
 
 	static EObject entity(String json, EClass entityType, MetadataService metadataService) {

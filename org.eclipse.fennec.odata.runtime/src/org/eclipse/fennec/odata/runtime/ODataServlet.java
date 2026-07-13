@@ -77,6 +77,8 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.codec.resource.CodecResource;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
+import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
+import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
@@ -97,6 +99,8 @@ import org.open.oasis.docs.odata.ns.edm.AnnotationType;
 import org.open.oasis.docs.odata.ns.edm.EdmFactory;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
 import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
+import org.open.oasis.docs.odata.ns.edm.TPropertyValue;
+import org.open.oasis.docs.odata.ns.edm.TRecordExpression;
 import org.open.oasis.docs.odata.ns.edmx.EdmxFactory;
 import org.open.oasis.docs.odata.ns.edmx.TInclude;
 import org.open.oasis.docs.odata.ns.edmx.TReference;
@@ -169,6 +173,7 @@ public class ODataServlet extends HttpServlet {
 	private final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	private final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
 	private final List<MediaService> mediaServices = new CopyOnWriteArrayList<>();
+	private final List<DeltaService> deltaServices = new CopyOnWriteArrayList<>();
 	private final List<ODataOperationHandler> operationHandlers = new CopyOnWriteArrayList<>();
 	private final CachingODataQueryParser parser = new CachingODataQueryParser();
 	private final OclEvaluator expandFilterEvaluator = new OclEvaluator();
@@ -230,6 +235,15 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void addDeltaService(DeltaService deltaService) {
+		deltaServices.add(deltaService);
+	}
+
+	void removeDeltaService(DeltaService deltaService) {
+		deltaServices.remove(deltaService);
+	}
+
+	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
 	void addOperationHandler(ODataOperationHandler handler) {
 		operationHandlers.add(handler);
 	}
@@ -246,10 +260,17 @@ public class ODataServlet extends HttpServlet {
 	/** System query options this service implements. */
 	private static final Set<String> SUPPORTED_OPTIONS = Set.of(
 			"$filter", "$orderby", "$top", "$skip", "$count", "$select", "$expand", "$apply", "$format",
-			"$search", "$compute");
+			"$search", "$compute", "$deltatoken");
 	/** Spec-defined options we know but do not implement yet → 501 (conformance 13.1.1/7). */
 	private static final Set<String> KNOWN_UNSUPPORTED_OPTIONS = Set.of(
-			"$skiptoken", "$deltatoken", "$id", "$index", "$schemaversion", "$levels");
+			"$skiptoken", "$id", "$index", "$schemaversion", "$levels");
+	/**
+	 * The parts of a defining query a delta link re-encodes ([OData-Protocol] 11.3.1: the link
+	 * MUST NOT carry top/skip and SHOULD NOT carry count; ordering does not apply to deltas).
+	 * Everything else present on a delta request → 400, the client MUST NOT append options.
+	 */
+	private static final Set<String> DELTA_LINK_OPTIONS = Set.of(
+			"$filter", "$search", "$select", "$compute", "$format");
 
 	/** The {@code odata.metadata=} format parameter of an Accept header or {@code $format}. */
 	private static final java.util.regex.Pattern METADATA_PARAM =
@@ -2019,6 +2040,7 @@ public class ODataServlet extends HttpServlet {
 				container.getAnnotation().add(conformance);
 				container.getAnnotation().add(
 						boolCapability("Org.OData.Capabilities.V1.BatchSupported", true));
+				container.getAnnotation().add(changeTrackingCapability(!deltaServices.isEmpty()));
 				container.getAnnotation().add(
 						boolCapability("Org.OData.Capabilities.V1.AsynchronousRequestsSupported", false));
 				container.getAnnotation().add(
@@ -2069,6 +2091,19 @@ public class ODataServlet extends HttpServlet {
 		return annotation;
 	}
 
+	/** {@code Capabilities.ChangeTracking} is a record-typed term ([OData-Protocol] 11.3). */
+	private static AnnotationType changeTrackingCapability(boolean supported) {
+		AnnotationType annotation = EdmFactory.eINSTANCE.createAnnotationType();
+		annotation.setTerm("Org.OData.Capabilities.V1.ChangeTracking");
+		TRecordExpression record = EdmFactory.eINSTANCE.createTRecordExpression();
+		TPropertyValue member = EdmFactory.eINSTANCE.createTPropertyValue();
+		member.setProperty("Supported");
+		member.setBool1(supported);
+		record.getPropertyValue().add(member);
+		annotation.getRecord().add(record);
+		return annotation;
+	}
+
 	private record Target(EClass entityType, QueryService queryService) {
 	}
 
@@ -2099,6 +2134,10 @@ public class ODataServlet extends HttpServlet {
 				return;
 			}
 			apply(setName, target, request, response);
+			return;
+		}
+		if (option(request, "$deltatoken") != null) { // following a delta link ([OData-Protocol] 11.3.2)
+			deltaResponse(setName, castName, castType, target, request, response);
 			return;
 		}
 		// a cast makes the DERIVED type the context: its properties are addressable in options
@@ -2132,6 +2171,15 @@ public class ODataServlet extends HttpServlet {
 				"true".equals(option(request, "$count")),
 				expand.keySet()); // backends prefetch expanded navigations (no N+1, no lazy proxies)
 
+		// change tracking ([OData-Protocol] 11.3): a preference, applied only when the backend
+		// can track this type and the defining query stays inside the supported shape (no $expand
+		// v1). The token is taken BEFORE the query runs — a write racing the read is re-reported
+		// in the first delta rather than lost.
+		DeltaService deltaService = trackChangesRequested(request) && expand.isEmpty()
+				? deltaService(target.entityType()) : null;
+		String deltaToken = deltaService == null ? null
+				: deltaService.trackingToken(target.entityType());
+
 		QueryResult result = target.queryService().execute(query);
 		boolean hasMore = result.entities().size() > top;
 		List<EObject> page = hasMore ? result.entities().subList(0, top) : result.entities();
@@ -2160,6 +2208,10 @@ public class ODataServlet extends HttpServlet {
 		if (hasMore) {
 			json.append(",\"@odata.nextLink\":\"")
 					.append(ODataJson.sanitize(nextLink(request, skip + top))).append('"');
+		} else if (deltaToken != null) { // the delta link replaces the next link on the LAST page
+			response.setHeader("Preference-Applied", "odata.track-changes");
+			json.append(",\"@odata.deltaLink\":\"")
+					.append(ODataJson.sanitize(deltaLink(request, deltaToken))).append('"');
 		}
 		json.append('}');
 		response.setContentType(contentTypeJson());
@@ -2177,6 +2229,159 @@ public class ODataServlet extends HttpServlet {
 			}
 		}
 		return link.toString();
+	}
+
+	// --- change tracking ([OData-Protocol] 11.3, [OData-JSON] delta payloads) ---
+
+	/** Whether the client sent {@code Prefer: odata.track-changes} (prefix optional, 4.01). */
+	private static boolean trackChangesRequested(HttpServletRequest request) {
+		String prefer = request.getHeader("Prefer");
+		if (prefer == null) {
+			return false;
+		}
+		for (String preference : prefer.split(",")) {
+			String name = preference.trim().split("=", 2)[0].trim().toLowerCase(Locale.ROOT);
+			if ("odata.track-changes".equals(name) || "track-changes".equals(name)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private DeltaService deltaService(EClass entityType) {
+		return deltaServices.stream().filter(s -> s.supports(entityType)).findFirst().orElse(null);
+	}
+
+	/**
+	 * The delta link: the defining query's {@linkplain #DELTA_LINK_OPTIONS carry-over options}
+	 * (plus its {@code @}-parameter aliases) re-encoded around the fresh {@code $deltatoken} —
+	 * self-describing, so the server stays stateless per client.
+	 */
+	private String deltaLink(HttpServletRequest request, String token) {
+		return definingUrl(request) + (definingUrl(request).indexOf('?') < 0 ? '?' : '&')
+				+ "$deltatoken=" + java.net.URLEncoder.encode(token, StandardCharsets.UTF_8);
+	}
+
+	/** The defining query's URL without the token — the refetch target for {@code 410 Gone}. */
+	private String definingUrl(HttpServletRequest request) {
+		StringBuilder link = new StringBuilder(request.getRequestURI());
+		char separator = '?';
+		for (String option : DELTA_LINK_OPTIONS) {
+			String value = option(request, option);
+			if (value != null) {
+				link.append(separator).append(option).append('=')
+						.append(java.net.URLEncoder.encode(value, StandardCharsets.UTF_8));
+				separator = '&';
+			}
+		}
+		for (Map.Entry<String, String> alias : parameterAliases(request).entrySet()) {
+			link.append(separator)
+					.append(java.net.URLEncoder.encode(alias.getKey(), StandardCharsets.UTF_8))
+					.append('=').append(java.net.URLEncoder.encode(alias.getValue(), StandardCharsets.UTF_8));
+			separator = '&';
+		}
+		return link.toString();
+	}
+
+	/**
+	 * Answers a delta link ({@code GET Set?$deltatoken=…}): everything that changed since the
+	 * token, as a delta payload — upserts with their current state, removals as deleted-entity
+	 * objects in the negotiated version's form, and a fresh delta link for the next round.
+	 * An aged-out token answers {@code 410 Gone} with the refetch URL in {@code Location}.
+	 */
+	private void deltaResponse(String setName, String castName, EClass castType, Target target,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		for (String name : request.getParameterMap().keySet()) {
+			String normalized = normalizeOption(name);
+			if (normalized.startsWith("$") && !"$deltatoken".equals(normalized)
+					&& !DELTA_LINK_OPTIONS.contains(normalized)) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST,
+						"query options must not be appended to a delta link");
+				return;
+			}
+		}
+		DeltaService deltaService = deltaService(target.entityType());
+		if (deltaService == null) {
+			error(response, 501, "change tracking is not supported for this entity set");
+			return;
+		}
+		EClass context = castType != null ? castType : target.entityType();
+		Map<String, String> aliases = parameterAliases(request);
+		SelectTree select = selectOption(request, context);
+		EntityQuery definingQuery = new EntityQuery(target.entityType(), castType,
+				parseChecked(filterWithSearch(request, context),
+						filter -> aliases.isEmpty() ? parser.parseFilter(filter, context)
+								: parser.parseFilter(filter, context, aliases)),
+				List.of(), 0, -1, false);
+
+		DeltaService.DeltaResult delta;
+		try {
+			delta = deltaService.changesSince(definingQuery, option(request, "$deltatoken"));
+		} catch (DeltaGoneException e) {
+			// the client refetches the full set: the defining query without the token (11.3.2)
+			response.setHeader("Location", definingUrl(request));
+			error(response, 410, "the delta token is no longer valid");
+			return;
+		}
+
+		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata#" + setName
+				+ (castName != null ? "/" + castName : "") + "/$delta");
+		envelopeProperty(json).append("\"value\":[");
+		boolean first = true;
+		for (EObject entity : delta.changed()) {
+			if (!first) {
+				json.append(',');
+			}
+			first = false;
+			json.append(entityJson(entity, context, select, Map.of()));
+		}
+		boolean v40 = "4.0".equals(negotiateVersion(request));
+		for (DeltaService.Removal removal : delta.removals()) {
+			if (!first) {
+				json.append(',');
+			}
+			first = false;
+			String id = setName + "(" + keyLiteral(removal.keyValues()) + ")";
+			if (v40) { // 4.0 deleted-entity object: context fragment + plain id property
+				json.append("{\"@odata.context\":\"#").append(setName).append("/$deletedEntity\",")
+						.append("\"reason\":\"").append(removal.reason()).append("\",")
+						.append("\"id\":\"").append(ODataJson.sanitize(id)).append("\"}");
+			} else { // 4.01 form: @removed control information
+				json.append("{\"@removed\":{\"reason\":\"").append(removal.reason()).append("\"},")
+						.append("\"@id\":\"").append(ODataJson.sanitize(id)).append("\"}");
+			}
+		}
+		json.append(']');
+		json.append(",\"@odata.deltaLink\":\"")
+				.append(ODataJson.sanitize(deltaLink(request, delta.nextToken()))).append('"');
+		json.append('}');
+		response.setContentType(contentTypeJson());
+		response.getWriter().write(json.toString());
+	}
+
+	/**
+	 * The key predicate for an entity id from the removal's key values: string values quoted
+	 * ({@code ''}-escaped), composite keys as named pairs — the same forms {@code keyEquals}
+	 * accepts back.
+	 */
+	private static String keyLiteral(Map<String, Object> keyValues) {
+		StringBuilder literal = new StringBuilder();
+		boolean named = keyValues.size() > 1;
+		for (Map.Entry<String, Object> entry : keyValues.entrySet()) {
+			if (literal.length() > 0) {
+				literal.append(',');
+			}
+			if (named) {
+				literal.append(entry.getKey()).append('=');
+			}
+			Object value = entry.getValue();
+			if (value instanceof String string) {
+				literal.append('\'').append(string.replace("'", "''")).append('\'');
+			} else {
+				literal.append(value);
+			}
+		}
+		return literal.toString();
 	}
 
 	/** Dispatches a parsed resource path: set, set/$count, keyed entity, navigation walk. */
@@ -2234,6 +2439,12 @@ public class ODataServlet extends HttpServlet {
 				error(response, HttpServletResponse.SC_NOT_FOUND,
 						"navigation requires an entity key");
 			}
+			return;
+		}
+		if (option(request, "$deltatoken") != null) {
+			// a delta link addresses an entity SET — a keyed resource cannot carry a token
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"a delta token applies to an entity set");
 			return;
 		}
 		Target target = resolveTarget(path.entitySet(), response);
@@ -2316,6 +2527,10 @@ public class ODataServlet extends HttpServlet {
 	/** {@code GET Set/$count}: the (optionally filtered, optionally cast) total as text/plain. */
 	private void setCount(String setName, EClass castType, HttpServletRequest request,
 			HttpServletResponse response) throws IOException {
+		if (option(request, "$deltatoken") != null) { // 11.3.2 allows /$count on a delta link (MAY)
+			error(response, 501, "the count of changes on a delta link is not implemented");
+			return;
+		}
 		Target target = resolveTarget(setName, response);
 		if (target == null) {
 			return;

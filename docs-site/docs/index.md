@@ -32,7 +32,7 @@ features:
     linkText: Server manual
   - icon: ✍️
     title: Updatable service
-    details: "Create, update, delete, upsert and deep inserts with ETags/If-Match, $ref management, @odata.bind, Prefer return=, media streams and $batch in BOTH wire forms — OData JSON (4.01) and multipart/mixed (4.0/SAP)."
+    details: "Create, update, delete, upsert and deep inserts with ETags/If-Match, $ref management, @odata.bind, Prefer return=, media streams, change tracking with delta links, and $batch in BOTH wire forms — OData JSON (4.01) and multipart/mixed (4.0/SAP)."
     link: /guides/02-server
     linkText: Server manual
   - icon: 🗄️
@@ -42,7 +42,7 @@ features:
     linkText: Server manual
   - icon: 🔌
     title: Schema-aware client
-    details: A fluent EMF client for any conformant OData v4 service — $metadata (XML or JSON) into Ecore, reads/writes incl. composite keys, media, singletons, both $batch formats, CSRF/SSRF hardening and a decoupled schema registry.
+    details: A fluent EMF client for any conformant OData v4 service — $metadata (XML or JSON) into Ecore, reads/writes incl. composite keys, media, singletons, both $batch formats, delta/change tracking, CSRF/SSRF hardening and a decoupled schema registry.
     link: /guides/03-client
     linkText: Client manual
   - icon: 🌍

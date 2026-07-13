@@ -194,6 +194,38 @@ class ODataClientTest {
 				contentType = "text/plain;charset=UTF-8";
 			} else if (path.endsWith("/Product")
 					&& exchange.getRequestURI().getRawQuery() != null
+					&& exchange.getRequestURI().getRawQuery().contains("$deltatoken=gone")) {
+				// an aged-out delta token: 410 Gone with the refetch URL ([OData-Protocol] 11.3.2)
+				exchange.getResponseHeaders().set("Location", "/odata/Product");
+				answer = "{\"error\":{\"code\":\"410\",\"message\":\"the delta token is no longer valid\"}}";
+				status = 410;
+			} else if (path.endsWith("/Product")
+					&& exchange.getRequestURI().getRawQuery() != null
+					&& exchange.getRequestURI().getRawQuery().contains("$deltatoken=40")) {
+				// a 4.0 delta payload: deleted entities via the $deletedEntity context fragment
+				answer = """
+						{"@odata.context":"/odata/$metadata#Product/$delta","value":[\
+						{"@odata.context":"#Product/$deletedEntity","reason":"changed",\
+						"id":"Product('p8')"}],\
+						"@odata.deltaLink":"/odata/Product?$deltatoken=41"}""";
+			} else if (path.endsWith("/Product")
+					&& exchange.getRequestURI().getRawQuery() != null
+					&& exchange.getRequestURI().getRawQuery().contains("$deltatoken")) {
+				// a 4.01 delta payload: an upsert and an @removed deleted-entity object
+				answer = """
+						{"@odata.context":"/odata/$metadata#Product/$delta","value":[\
+						{"id":"p1","name":"Milk Fresh","price":"1.30","rating":3,"active":true},\
+						{"@removed":{"reason":"deleted"},"@id":"Product('p9')"}],\
+						"@odata.deltaLink":"/odata/Product?$deltatoken=77"}""";
+			} else if (path.endsWith("/Product")
+					&& "odata.track-changes".equals(exchange.getRequestHeaders().getFirst("Prefer"))) {
+				exchange.getResponseHeaders().set("Preference-Applied", "odata.track-changes");
+				answer = """
+						{"@odata.context":"/odata/$metadata#Product","value":[\
+						{"id":"p1","name":"Milk","price":"1.20","rating":3,"active":true}],\
+						"@odata.deltaLink":"/odata/Product?$deltatoken=42"}""";
+			} else if (path.endsWith("/Product")
+					&& exchange.getRequestURI().getRawQuery() != null
 					&& exchange.getRequestURI().getRawQuery().contains("$apply")) {
 				answer = "{\"value\":[{\"category\":{\"name\":\"Dairy\"},\"Total\":5.70}]}";
 			} else if (path.endsWith("/Product")
@@ -359,6 +391,47 @@ class ODataClientTest {
 		assertEquals(2, second.entities().size(), "the follow-up request decodes into entities");
 		assertTrue(lastRequest.get().toString().contains("$skip=2"),
 				"the nextLink's query is carried onto the follow-up request: " + lastRequest.get());
+	}
+
+	@Test
+	@DisplayName("trackChanges → deltaLink; changes() decodes upserts and 4.01 @removed entries")
+	void deltaRoundTrip() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EntitySetRequest request = client.entitySet("Product").trackChanges();
+		ODataPage tracked = request.list();
+		assertEquals("/odata/Product?$deltatoken=42", tracked.deltaLink(),
+				"the tracked read surfaces the delta link");
+
+		ODataDelta delta = request.changes(tracked.deltaLink());
+		assertEquals(1, delta.changed().size());
+		assertEquals("Milk Fresh", delta.changed().get(0)
+				.eGet(delta.changed().get(0).eClass().getEStructuralFeature("name")),
+				"changed entities decode with their current state");
+		assertEquals(1, delta.removals().size());
+		assertEquals("Product('p9')", delta.removals().get(0).id());
+		assertEquals("deleted", delta.removals().get(0).reason());
+		assertEquals("/odata/Product?$deltatoken=77", delta.deltaLink(),
+				"the follow-up delta link carries the next token");
+	}
+
+	@Test
+	@DisplayName("a 4.0 delta payload's $deletedEntity entries decode into removals too")
+	void delta40Decoding() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		ODataDelta delta = client.entitySet("Product").changes("/odata/Product?$deltatoken=40");
+		assertEquals(0, delta.changed().size());
+		assertEquals(1, delta.removals().size());
+		assertEquals("Product('p8')", delta.removals().get(0).id());
+		assertEquals("changed", delta.removals().get(0).reason());
+	}
+
+	@Test
+	@DisplayName("an aged-out delta token surfaces as a 410 failure — refetch the set")
+	void deltaGone() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		ODataClientException gone = assertThrows(ODataClientException.class,
+				() -> client.entitySet("Product").changes("/odata/Product?$deltatoken=gone"));
+		assertEquals(410, gone.status());
 	}
 
 	@Test

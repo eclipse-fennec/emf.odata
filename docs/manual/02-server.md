@@ -35,7 +35,10 @@ property `fennec.odata.backend=jpa`.
 | `GET /odata/{Set}({key})/{prop}/$value` | raw property/enum value |
 | `GET /odata/{Set}/$count`, `…/{nav}/$count` | count (honours `$filter`) |
 | `GET /odata/{Set}(k1=v1,k2=v2)` | composite / named key predicate |
+| `GET /odata/{Set}/{key}` | key-as-segment (4.01 MAY; properties win on ambiguity) |
+| `GET /odata/{Set}(@k)?@k=…` | key alias (value from a query parameter) |
 | `GET /odata/{Set}/{Ns.Type}` | derived-type cast segment |
+| `GET /odata/{Set}?$deltatoken=…` | delta link — changes since the token (see **Change tracking**) |
 | `POST /odata/$batch` | batch — OData JSON (4.01) **and** multipart/mixed (4.0) |
 
 ## Query options
@@ -59,14 +62,18 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 | `$compute` | server-computed properties (`price mul 1.19 as gross`) |
 | `$apply` | aggregation (see below) |
 | `$format` | `json` (default), `xml` (EMF XMI) |
-| `odata.metadata=full` | via `Accept`/`$format` → per-entity `@odata.type`/`@odata.id` (default `minimal`; `none` served as minimal) |
+| `$deltatoken` | follows a delta link (see **Change tracking** below) |
+| `odata.metadata=full`/`none` | via `Accept`/`$format` → per-entity `@odata.type`/`@odata.id` resp. no context/discriminators at all (default `minimal`) |
+| `IEEE754Compatible=true` | via `Accept`/`$format` → Int64/Decimal values, `@odata.count` and `$apply` rows as strings; echoed in the Content-Type |
 | `@name` | 4.01 parameter aliases referenced from `$filter`/`$orderby` |
 
 **`$filter` surface:** comparison/logical/arithmetic operators (`eq ne gt ge lt le`,
-`and or not`, `add sub mul div mod`, `divby`), string functions
+`and or not`, `add sub mul div mod`, `divby`, unary minus), string functions
 (`contains`/`startswith`/`endswith`/`tolower`/`toupper`/`trim`/`length`/`indexof`/`substring`/`concat`),
-date functions (`year`…`second`), `in`, lambdas (`any`/`all`), `cast`/`isof`, `$count` on
-collection paths, and typed literals (Date/DateTimeOffset/TimeOfDay/Guid/Duration/enum).
+date functions (`year`…`second`), `in` (incl. the JSON-array form), lambdas (`any`/`all`),
+`cast`/`isof` (also inside expression paths), `$count` on collection paths (incl. filtered
+`$count($filter=…)`), bound functions in member paths, `$it`/`$this`, and typed literals
+(Date/DateTimeOffset/TimeOfDay/Guid/Duration/enum incl. flags, `NaN`/`INF`, `binary'…'`).
 Operator and function names are case-insensitive (4.01).
 
 **`$apply`:**
@@ -75,8 +82,11 @@ Operator and function names are case-insensitive (4.01).
 GET /odata/Product?$apply=groupby((category/name),aggregate(price with sum as Total))
 ```
 
-Transformations: `groupby`, `aggregate` (`sum`/`min`/`max`/`average`/`countdistinct`/`$count`),
-`compute`, `filter`. It combines with `$filter`/`$orderby`/`$skip`/`$top`/`$count`, which run
+Transformations: `groupby` (incl. `rollup` grouping sets), `aggregate`
+(`sum`/`min`/`max`/`average`/`countdistinct`/`$count`), `compute`, `filter`,
+`topcount`/`topsum`/`toppercent`/`bottom*`, `concat`, `top`/`skip`, `orderby`, `identity`
+(in-memory; the JPA backend pushes `groupby`/`aggregate`/`filter`/`compute` down and answers 501
+for the rest). It combines with `$filter`/`$orderby`/`$skip`/`$top`/`$count`, which run
 *after* the pipeline (aggregate/compute aliases are in scope).
 
 ## Write (Updatable Service)
@@ -129,6 +139,28 @@ binary stream is served at `GET Set(key)/$value` (with its media content type) a
 `PUT Set(key)/$value` (raw body, any content type, If-Match applies, body-size limit enforced).
 The stream comes from the `MediaService` SPI — a type without a media backend answers 501, a
 missing entity or stream 404. The in-memory backend is the reference implementation.
+
+## Change tracking
+
+A client that sends `Prefer: odata.track-changes` on a collection GET receives — when the
+addressed type's backend implements the `DeltaService` SPI — a `Preference-Applied` header and an
+`@odata.deltaLink` in place of the next link on the last page ([OData-Protocol] 11.3). The delta
+link is **self-describing**: it re-encodes the defining query's `$filter`/`$search`/`$select`/
+`$compute` and `@`-aliases around an opaque `$deltatoken`, so the server keeps no per-client state.
+
+Following the link (`GET Set?$deltatoken=…`) yields a delta payload: added/changed entities with
+their current state, deleted entities as 4.01 `@removed` objects (or the 4.0 `#Set/$deletedEntity`
+form for a client pinned to `OData-MaxVersion: 4.0`), and a fresh delta link. Membership follows
+the defining query — an entity that changed and no longer matches the filter is reported as
+removed with `reason="changed"`. An aged-out token answers **410 Gone** with the refetch URL in
+`Location`; appending any other query option to a delta link is a 400.
+
+The in-memory backend implements the SPI with a bounded, transaction-aware change journal
+(rolled-back `$batch` change sets never surface). The JPA backend does not implement it, so the
+preference is simply not applied there. `$metadata` advertises the actual support via a
+`Capabilities.ChangeTracking` annotation on the container. Not covered (v1): deltas of
+`$expand`ed relationships (the preference is not applied then), the `PATCH` collection-update
+payload, paging inside a delta response, `/$count` on a delta link (501).
 
 ## Backend configuration
 

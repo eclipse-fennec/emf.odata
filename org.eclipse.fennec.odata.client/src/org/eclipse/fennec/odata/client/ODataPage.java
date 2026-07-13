@@ -18,10 +18,16 @@ import org.eclipse.emf.ecore.EObject;
 
 /**
  * One page of an entity-set read: the decoded entities plus the envelope's control
- * information — {@code @odata.count} ({@code -1} when the server sent none) and
- * {@code @odata.nextLink} ({@code null} on the last page).
+ * information — {@code @odata.count} ({@code -1} when the server sent none),
+ * {@code @odata.nextLink} ({@code null} on the last page) and {@code @odata.deltaLink}
+ * ({@code null} unless the request tracked changes, [OData-Protocol] 11.3).
  */
-public record ODataPage(List<EObject> entities, long totalCount, String nextLink) {
+public record ODataPage(List<EObject> entities, long totalCount, String nextLink, String deltaLink) {
+
+	/** A page without change tracking. */
+	public ODataPage(List<EObject> entities, long totalCount, String nextLink) {
+		this(entities, totalCount, nextLink, null);
+	}
 
 	public boolean hasMore() {
 		return nextLink != null;

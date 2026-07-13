@@ -72,6 +72,25 @@ List<Map<String,Object>> agg = client.entitySet("Product")
 
 Expanded navigations decode inline into the typed `EObject` graph.
 
+## Change tracking
+
+`trackChanges()` sends `Prefer: odata.track-changes`; a supporting service answers the last page
+with a delta link, which `changes(deltaLink)` follows ([OData-Protocol] 11.3):
+
+```java
+EntitySetRequest request = client.entitySet("Product").trackChanges();
+ODataPage tracked = request.list();                 // tracked.deltaLink() != null when applied
+
+ODataDelta delta = request.changes(tracked.deltaLink());
+delta.changed();                                    // upserts, typed EObjects (current state)
+delta.removals();                                   // id + reason ("deleted" | "changed")
+delta.deltaLink();                                  // follow again for the next round
+```
+
+Both wire forms decode — the 4.01 `@removed` objects and the 4.0 `#Set/$deletedEntity` context
+form, prefixed or 4.01 prefix-free. A `410 Gone` (the token aged out) surfaces as an
+`ODataClientException` with status 410: refetch the full set and track anew.
+
 ## Operations
 
 ```java

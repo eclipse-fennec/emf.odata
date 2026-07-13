@@ -50,8 +50,8 @@ SPI. The client mirrors the server's codec and metadata wiring.
 | `odata.codec.json` | E3 | OData-JSON codec profile (`@odata.type`/`@odata.id`, `Edm.*` value formats) |
 | `odata.query` | E4 | ANTLR4 grammar → OCL IR, `$apply` submodel, standalone type resolver (ADR-0004), `OclEvaluator`, LRU cache |
 | `odata.operation.api` | E4 | `ODataOperationHandler` SPI — pluggable function/action implementations |
-| `odata.persistence.api` | E5 | `QueryService` / `ApplyQuery` / `WriteService` SPIs + `EntityRepository` data-source abstraction |
-| `odata.persistence.inmemory` | E5 | Reference backend: in-memory query + `ApplyExecutor`, `FileEntityRepository`, `MemoryWriteRepository` |
+| `odata.persistence.api` | E5 | `QueryService` / `ApplyQuery` / `WriteService` / `MediaService` / `DeltaService` SPIs + `EntityRepository` data-source abstraction |
+| `odata.persistence.inmemory` | E5 | Reference backend: in-memory query + `ApplyExecutor`, `FileEntityRepository`, `MemoryWriteRepository` (write + media + change journal) |
 | `odata.persistence.jpa` | E5 | JPA backend: `OclToCriteriaTranslator`, `JpaApplyExecutor`, `WriteService` (Jakarta Criteria, ADR-0006) |
 | `odata.runtime` | E6/E7 | `ODataServlet` catch-all + `RequestLimits` / `EntityShaper` / `ODataJson` / resource-path parser |
 | `odata.schema.api` | E8 | Client schema-registry SPI: `ODataSchemaReader` / `Registrar` / `Resolver` / `ODataSchema` / `SchemaScope` (ADR-0007) |
@@ -65,7 +65,7 @@ SPI. The client mirrors the server's codec and metadata wiring.
 3. **Limits before parsing** (`RequestLimits`) — expression length, parenthesis depth (O(n) scan), `$top` ceiling, paging validation.
 4. **Parsing** (`CachingODataQueryParser`) — `$filter`/`$orderby`/`$apply` → typed OCL IR; property paths resolved eagerly against the context EClass (unknown names → 400). Single-entity keys are **built** as a literal AST, never expression-parsed (quote-injection stays one literal).
 5. **Backend** — `QueryService.execute(EntityQuery)` / `executeApply(ApplyQuery)` receives only the IR. Options after `$apply` run on the transformed set.
-6. **Response** — `EntityShaper` copies ($select/$expand) → E3 OData-JSON (`odata.metadata=minimal`) or XMI; `$apply` rows → `ODataJson`; page overflow → `@odata.nextLink`; errors → sanitized OData error JSON.
+6. **Response** — `EntityShaper` copies ($select/$expand) → E3 OData-JSON (`odata.metadata=minimal` by default, `full`/`none` on request) or XMI; `$apply` rows → `ODataJson`; page overflow → `@odata.nextLink` (or `@odata.deltaLink` under `Prefer: odata.track-changes`); errors → sanitized OData error JSON.
 
 ## The query IR
 

@@ -42,6 +42,8 @@ public final class EntitySetRequest {
 	private EClass castedType;
 	/** {@code Prefer: return=} value applied to writes ({@code "minimal"}/{@code "representation"}), or null. */
 	private String returnPreference;
+	/** Whether {@link #list()} asks for change tracking ({@code Prefer: odata.track-changes}). */
+	private boolean trackChanges;
 
 	EntitySetRequest(ODataClient client, String setName, EClass entityType) {
 		this.client = client;
@@ -158,8 +160,21 @@ public final class EntitySetRequest {
 
 	/** Executes the request and decodes one page. */
 	public ODataPage list() {
-		return ODataJsonDecoder.page(client.fetch(collectionPath() + queryString(), "application/json"),
+		return ODataJsonDecoder.page(read(collectionPath() + queryString()),
 				decodeType(), client.metadataService());
+	}
+
+	/** A collection GET, carrying {@code Prefer: odata.track-changes} when requested. */
+	private String read(String relative) {
+		if (!trackChanges) {
+			return client.fetch(relative, "application/json");
+		}
+		ODataClient.Response response = client.exchange("GET", relative, "application/json", null,
+				null, Map.of("Prefer", "odata.track-changes"));
+		if (response.status() / 100 != 2) {
+			throw failure("GET " + relative, response);
+		}
+		return response.body();
 	}
 
 	/**
@@ -355,12 +370,37 @@ public final class EntitySetRequest {
 		if (!page.hasMore()) {
 			throw new ODataClientException("the page has no @odata.nextLink");
 		}
-		String link = page.nextLink();
-		// the servlet emits request-URI-based links — reduce to a service-root-relative form
+		return ODataJsonDecoder.page(client.fetch(relativize(page.nextLink()), "application/json"),
+				entityType, client.metadataService());
+	}
+
+	/**
+	 * Requests change tracking ([OData-Protocol] 11.3): {@link #list()} sends
+	 * {@code Prefer: odata.track-changes}; a supporting service answers with an
+	 * {@link ODataPage#deltaLink()} on the last page, to be followed with {@link #changes(String)}.
+	 */
+	public EntitySetRequest trackChanges() {
+		this.trackChanges = true;
+		return this;
+	}
+
+	/**
+	 * Follows an {@code @odata.deltaLink}: everything that changed since the link's token, plus
+	 * the fresh delta link for the next round. A {@code 410 Gone} answer (the token aged out)
+	 * surfaces as an {@link ODataClientException} with status 410 — refetch the full set then.
+	 */
+	public ODataDelta changes(String deltaLink) {
+		if (deltaLink == null || deltaLink.isBlank()) {
+			throw new ODataClientException("the page has no @odata.deltaLink");
+		}
+		return ODataJsonDecoder.delta(client.fetch(relativize(deltaLink), "application/json"),
+				decodeType(), client.metadataService());
+	}
+
+	/** The servlet emits request-URI-based links — reduce to a service-root-relative form. */
+	private String relativize(String link) {
 		int setStart = link.lastIndexOf('/' + setName + '?');
-		String relative = setStart < 0 ? link : link.substring(setStart + 1);
-		return ODataJsonDecoder.page(client.fetch(relative, "application/json"), entityType,
-				client.metadataService());
+		return setStart < 0 ? link : link.substring(setStart + 1);
 	}
 
 	// --- write path (mirrors the server's Updatable Service contract) ---

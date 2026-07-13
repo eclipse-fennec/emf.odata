@@ -1,6 +1,6 @@
 # Fennec OData — Feature Reference (Server & Client)
 
-Status: 2026-07-09. This document describes the **current, implemented** capabilities of the
+Status: 2026-07-13. This document describes the **current, implemented** capabilities of the
 Fennec OData server and client. It is a capability reference, not a changelog — for the dated
 implementation history and the architecture rationale see
 [`odata-architecture.md`](odata-architecture.md); for the clause-by-clause conformance verdict see
@@ -23,8 +23,8 @@ Ecore↔EDM conversion against the OASIS CSDL model (no intermediate EDM object 
 | `odata.codec.json` | E3 | OData-JSON codec profile (`@odata.type`/`@odata.id`, `Edm.*` value formats) |
 | `odata.query` | E4 | ANTLR4 grammar → OCL IR, `$apply` submodel, standalone type resolver (ADR-0004), `OclEvaluator` (IR reference semantics), LRU cache |
 | `odata.operation.api` | E4 | `ODataOperationHandler` SPI — pluggable function/action implementations |
-| `odata.persistence.api` | E5 | `QueryService` / `ApplyQuery` / `WriteService` SPIs + `EntityRepository` data-source abstraction |
-| `odata.persistence.inmemory` | E5 | Reference backend: in-memory query + `ApplyExecutor`, `FileEntityRepository`, `MemoryWriteRepository` |
+| `odata.persistence.api` | E5 | `QueryService` / `ApplyQuery` / `WriteService` / `MediaService` / `DeltaService` SPIs + `EntityRepository` data-source abstraction |
+| `odata.persistence.inmemory` | E5 | Reference backend: in-memory query + `ApplyExecutor`, `FileEntityRepository`, `MemoryWriteRepository` (write + media + change journal) |
 | `odata.persistence.jpa` | E5 | JPA backend: `OclToCriteriaTranslator`, `JpaApplyExecutor`, `WriteService` (Jakarta Criteria pushdown, ADR-0006) |
 | `odata.runtime` | E6/E7 | `ODataServlet` catch-all + `RequestLimits` / `EntityShaper` / `ODataJson` / resource-path parser |
 | `odata.schema.api` | E8 | Client schema-registry SPI: `ODataSchemaReader` / `Registrar` / `Resolver` / `ODataSchema` / `SchemaScope` (ADR-0007) |
@@ -41,17 +41,20 @@ Ecore↔EDM conversion against the OASIS CSDL model (no intermediate EDM object 
 - **`GET /$metadata`** → CSDL XML, multi-schema, one EDM schema per EPackage. Emits
   `Core.ODataVersions="4.0 4.01"` and Capabilities annotations on the entity container
   (`ConformanceLevel`, `BatchSupported=true`, `AsynchronousRequestsSupported=false`,
-  `KeyAsSegmentSupported=false`) plus the Core/Capabilities `edmx:Reference`s.
+  `KeyAsSegmentSupported=false`, `ChangeTracking` with the backend's actual support) plus the
+  Core/Capabilities `edmx:Reference`s.
 - **`GET /`** → service document.
 - Ecore↔EDM covers entity/complex types, properties, navigation properties, enums, single
   inheritance (base types), entity sets, composite keys, `Partner`/`eOpposite`, bound operations,
-  navigation-property bindings + referential constraints, and a constant-subset annotation layer.
+  navigation-property bindings + referential constraints, and an annotation layer covering
+  constants **and rich expressions** (`<Record>`/`<Collection>`/path forms/`EnumMember`, XML and
+  JSON; `<Annotations Target>` still out).
   Round-trip is XSD-validated. `$metadata` is served as CSDL XML (default) or **CSDL JSON**
   (`$format=json` / `Accept: application/json`); the client reads both forms.
 
 ### Read — system query options
 All accepted options are declared in `ODataServlet.SUPPORTED_OPTIONS`; spec options that are known
-but unimplemented (`$skiptoken`, `$deltatoken`, `$id`, `$index`, `$schemaversion`, `$levels`) return
+but unimplemented (`$skiptoken`, `$id`, `$index`, `$schemaversion`, `$levels`) return
 **501**, unknown `$x` options return **400**, custom (`$`-less) options are ignored.
 
 | Option | Notes |
@@ -64,24 +67,36 @@ but unimplemented (`$skiptoken`, `$deltatoken`, `$id`, `$index`, `$schemaversion
 | `$expand` | including **`$filter` inside `$expand`** (parsed against the target type, applied to shaped copies) |
 | `$search` | server-side, pushed down to both backends |
 | `$compute` | server-side computed properties |
-| `$apply` | aggregation submodel: `groupby`, `aggregate` (sum/min/max/average/countdistinct/$count), `compute`, `filter`; combinable with `$filter`/`$orderby`/`$skip`/`$top`/`$count` (run after the pipeline) |
+| `$apply` | aggregation submodel: `groupby` (incl. `rollup` grouping sets), `aggregate` (sum/min/max/average/countdistinct/$count), `compute`, `filter`, `topcount`/`topsum`/`toppercent`+`bottom*`, `concat`, `top`/`skip`, `orderby`, `identity` (in-memory; JPA pushes groupby/aggregate/filter/compute down, rest → 501); `from`/custom aggregates/structure trafos parse → 501; combinable with `$filter`/`$orderby`/`$skip`/`$top`/`$count` (run after the pipeline) |
 | `$format` | `json` (default) and `xml` (EMF XMI; Atom is deprecated in 4.01 and not emitted) |
+| `$deltatoken` | follows a delta link (see **Change tracking**) |
+| `odata.metadata=minimal/full/none` | via Accept/`$format`; real `none` (no context/discriminators) |
+| `IEEE754Compatible=true` | via Accept/`$format`: Int64/Decimal values, `@odata.count` and `$apply` rows as strings, Content-Type echo, payload decode |
 | `@name` param aliases | referenced from `$filter`/`$orderby`, recursive with a depth cap |
 | `divby` | maps to OCL `/` |
 
-Filter/query expression coverage: comparison + logical + arithmetic operators, canonical string
-functions (`contains`/`startswith`/`endswith`/`tolower`/`toupper`/`trim`/`length`/`indexof`/
-`substring`/`concat`), date functions (`year`…`second` → SQL `EXTRACT` on JPA), `in`, lambdas
-(`any`/`all`), `cast`/`isof`, `$count` on collection paths, typed literals
-(Date/DateTimeOffset/TimeOfDay/Guid/Duration/enum). Operator/function names are case-insensitive
-(4.01).
+Filter/query expression coverage: comparison + logical + arithmetic operators (incl. unary
+minus), canonical string functions (`contains`/`startswith`/`endswith`/`tolower`/`toupper`/
+`trim`/`length`/`indexof`/`substring` incl. negative index/`concat`), date functions
+(`year`…`second` → SQL `EXTRACT` on JPA), `in` (incl. JSON-array form `in [...]` and the empty
+list), lambdas (`any`/`all`), `cast`/`isof` **including casts inside expression paths** (mid-path
+and terminal), `$count` on collection paths **including filtered `$count($filter=…)`**, bound
+functions in member paths, `$it`/`$this` (request-instance anchor, escapes lambda scopes), typed
+literals (Date/DateTimeOffset/TimeOfDay/Guid/Duration/enum incl. **flag combinations**,
+`NaN`/`INF`, `binary'…'`, JSON object/array literals). Operator/function names are
+case-insensitive (4.01). Parses-but-refuses (501): `$root`/`$these`, `@Ns.Term` runtime values.
+Open: geo literals (own spatial package), `case()` (4.02). ABNF acceptance state: **697
+verified / 13 skips** across the three OASIS suites.
 
 ### Resource-path addressing (own parser, ADR-0005)
 `Set(key)`, single/collection navigation paths (`Set(key)/nav/...`, keyed nav segments `nav(k)`),
 `/$value` (primitive + enum), `/$count` on sets and navigations, derived-type **cast segments**
 (`Set/Ns.Type`, `Set/Ns.Type(key)`, casts inside nav paths, max one cast per step), composite/named
 key predicates (`(k1=v1,k2=v2)`, reads and entity-level writes; type-mismatched key literals → 400),
-and `/$ref`.
+**key-as-segment** (`Set/key`, 4.01 MAY — properties win on ambiguity; also for writes and bound
+functions), **key aliases** (`Set(@k)` with the value in a query parameter), inline **`/$filter(…)`
+segments** (in-memory executable; keyed → 501), and `/$ref`.
+`$crossjoin`/`$all`/`$entity` parse but have no engine yet (501).
 Path length and segment count are capped before parsing.
 
 ### Write — "Updatable OData Service" (4.0 + 4.01)
@@ -105,6 +120,23 @@ Unbound **function imports** (`GET Name(p=…)`), unbound **action imports** (`P
 body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
 (`POST Set(key)/Ns.Action` with the parameters in the JSON body).
 
+### Change tracking ([OData-Protocol] 11.3, via `DeltaService` SPI)
+- `Prefer: odata.track-changes` on a collection GET → `Preference-Applied` and an
+  **`@odata.deltaLink`** in place of the next link on the last page. The link is
+  **self-describing**: it re-encodes the defining query's `$filter`/`$search`/`$select`/`$compute`
+  and `@`-aliases around an opaque `$deltatoken` — the server keeps **no per-client state**.
+- `GET Set?$deltatoken=…` → a **delta payload**: upserts with their current state, deleted
+  entities as **4.01 `@removed`** objects or the **4.0 `#Set/$deletedEntity`** form (negotiated
+  version), plus the fresh delta link. Filter membership follows the spec: an entity that changed
+  and no longer matches is reported as `@removed` with `reason="changed"`.
+- An aged-out/invalid token → **410 Gone** with the refetch URL in `Location`. Appending other
+  query options to a delta link → **400**; `Set/$count?$deltatoken=…` → 501 (MAY).
+- Backends: the in-memory backend journals every structural write (bounded, transaction-aware —
+  rolled-back `$batch` change sets never surface); JPA does not implement the SPI, so the
+  preference is simply not applied there. Not covered (v1): deltas of `$expand`ed relationships
+  (preference not applied when `$expand` is present), the `PATCH` collection-update payload,
+  paging within a delta response.
+
 ### Backends (behind the persistence SPIs)
 - **In-memory** (reference semantics): the `OclEvaluator` interprets the IR directly (three-valued
   null logic, lambdas, cast, `$count`, typed literals); errors are never silent (type/format errors
@@ -119,7 +151,8 @@ body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
 
 ### Conformance (see `odata-conformance-status.md`)
 **4.0 Minimal ✅** (incl. Updatable), **4.01 Minimal ✅**, **4.0 Intermediate ✅** (all MUSTs + all
-SHOULDs), **4.01 Intermediate ✅** (all MUSTs; SHOULDs 6/7/9 partial). Advanced is not met.
+SHOULDs), **4.01 Intermediate ✅** (all MUSTs; SHOULDs 6/7/9 partial). Advanced is not met
+(remaining: async, `$crossjoin`/`$all`; the delta/change-tracking SHOULD is covered).
 
 ### Security defaults (PID `org.eclipse.fennec.odata.servlet`)
 Pre-parse limits (`$top` ceiling `odata.max.top`=1000, expression length
@@ -169,10 +202,17 @@ All server query options (`filter`/`orderBy`/`top`/`skip`/`count`/`select`/`expa
 `navigateEntity` / `navigateCollection` / `propertyValue` (`/$value`) / `navigationCount`
 (`/$count`). Expanded navigations decode inline into the typed `EObject` graph.
 
+**Change tracking:** `trackChanges()` sends `Prefer: odata.track-changes`; the tracked page's
+`deltaLink()` feeds `changes(deltaLink)` → an `ODataDelta` of upserts (typed `EObject`s with their
+current state) and `Removal`s (id + reason). Both the 4.01 `@removed` and the 4.0
+`#Set/$deletedEntity` deleted-entity forms decode, prefixed or 4.01 prefix-free. A `410 Gone`
+(aged-out token) surfaces as an `ODataClientException` with status 410 — refetch the set.
+
 ### Operations
 Unbound function imports (`function` / `functionAsEntity` / `functionAsCollection`), unbound action
-imports (`action*`, `POST` with a JSON body, `204` → null), and bound functions (`boundFunction*` on
-`Set(key)`). Bound actions are a gap (mirrors the server).
+imports (`action*`, `POST` with a JSON body, `204` → null), bound functions (`boundFunction*` on
+`Set(key)`) and bound actions (`boundAction` / `boundActionAsEntity` / `boundActionAsCollection` —
+`POST Set(key)/Ns.Action`, mirrored by the server route).
 
 ### Write
 `create` (deep insert of containment children), `update` (PATCH, minimal payload — only `eIsSet`
@@ -203,15 +243,16 @@ origin is refused. `ODataClient` is `AutoCloseable` and closes only an `HttpClie
 
 ## Known gaps / not yet
 
-**Server:** `metadata=none` (served as
-minimal — `metadata=full` is supported via Accept/`$format`); `Edm.Int64 > 2^53`
-`IEEE754Compatible` string form;
-Advanced conformance (async, `$delta`, deltas); a few 4.01 Intermediate SHOULDs (query options on
-nav paths, some in-`$expand` options); the `ODataRequestFilter` refactor (req §5.1.1 — wrapping
-`RequestLimits`/parse validation in a whiteboard filter); in-memory backend is not
-subtype-polymorphic (JPA is).
+**Server:** Advanced conformance (async / `Respond-Async`, `$crossjoin`/`$all` engines,
+`$expand=nav/$ref` + cast-in-expand); **delta v1 limits**: no deltas
+of `$expand`ed relationships, no `PATCH` collection-update (`"@context":"#$delta"` write payload),
+no paging inside a delta response, no `/$count` on a delta link, no JPA `DeltaService`; a few 4.01
+Intermediate SHOULDs (query options on nav paths, some in-`$expand` options); the
+`ODataRequestFilter` refactor (req §5.1.1 — wrapping `RequestLimits`/parse validation in a
+whiteboard filter).
 
-**Client:** delta/change-tracking. The Atlas-backed schema registry impl is downstream (ADR-0007).
+**Client:** key-as-segment URL emission and `IEEE754Compatible` decode (both are server-side
+only); the Atlas-backed schema registry impl is downstream (ADR-0007).
 
 Media entities are supported on both sides: a `HasStream` type's binary stream is served and
 replaced at `GET/PUT Set(key)/$value` (server: `MediaService` SPI, in-memory reference impl;
@@ -224,7 +265,8 @@ Container singletons are supported on both sides: declared via an `EPackage` ann
 
 Client↔server functional parity now holds across the read/query surface, resource addressing
 (incl. **derived-type casts** and **composite keys**), writes (incl. `@odata.bind`,
-**`Prefer: return=`** and composite-key updates), **both `$batch` wire forms**, media, singletons and
+**`Prefer: return=`** and composite-key updates), **both `$batch` wire forms**, media, singletons,
+**change tracking** (track-changes preference, delta links, delta payload both wire forms) and
 operations (unbound imports, bound functions and **bound actions**). Opt-in **CORS**
 (`odata.cors.origin`) serves browser clients. Field-proof: `docs/odata-live-interop-findings.md`.
 

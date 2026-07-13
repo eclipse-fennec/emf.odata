@@ -440,3 +440,48 @@ verbleibende Skip ist echtes Backlog: 111 Expression-Grammatik (E4: $it/$root, C
 Pfaden, JSON-Literale, Geo/Binary/NaN, Enum-Flags, unäres Minus, @Ns.Term), 73 $apply-
 Submodell (search/nest/join/traverse/rolluprecursive, Custom-Functions, $these), 27
 Resource-Path-Parser (Key-Aliase, $crossjoin/$all/$entity, roher Apostroph im Key-Segment).
+
+## Delta/Change-Tracking (2026-07-13)
+
+Die letzte beidseitige Client/Server-Lücke ist geschlossen ([OData-Protocol] 11.3,
+[OData-JSON] Delta Payloads):
+
+- **SPI `DeltaService`** (persistence.api, Muster `MediaService`): `trackingToken(EClass)` →
+  opaker Token („jetzt“), `changesSince(EntityQuery, token)` → `DeltaResult` (Upserts als
+  EObjects im aktuellen Zustand, `Removal`s mit Key-Werten + Grund, Folge-Token).
+  `DeltaGoneException` → 410. Kein Backend-Support ⇒ Preference wird schlicht nicht angewendet.
+- **Zustandsloses Server-Design**: Der Delta-Link ist SELBSTBESCHREIBEND — er re-encodiert die
+  Defining-Query-Optionen (`$filter`/`$search`/`$select`/`$compute` + `@`-Aliase) um den
+  `$deltatoken`; der Server hält KEINEN Client-Zustand. Token = Journal-Sequenznummer (opak
+  dokumentiert). `$top/$skip/$count/$orderby` werden NICHT encodiert (Spec-MUST/SHOULD),
+  fremde Optionen auf Delta-Links → 400, `/$count` auf Delta-Link → 501, keyed Resource mit
+  Token → 400 (Nav-Pfade laufen in den bestehenden Options-Guard → 501).
+- **Servlet**: `Prefer: odata.track-changes` (präfix-optional) ⇒ `Preference-Applied` +
+  `@odata.deltaLink` STATT nextLink auf der letzten Seite; Token wird VOR der Query gezogen
+  (Race: Write zwischen Snapshot und Antwort wird im ersten Delta erneut gemeldet statt
+  verloren). Delta-Antwort: Kontext `#Set/$delta`, Removals versionsabhängig — 4.01
+  `@removed`+`@id`, 4.0 `#Set/$deletedEntity`+`id` (negotiateVersion). 410 mit Refetch-URL in
+  `Location`. `$metadata`: `Capabilities.ChangeTracking`-Record am Container (echter
+  Backend-Support). `$expand`+track-changes ⇒ Preference nicht angewendet (v1).
+- **In-Memory-Journal** (`MemoryWriteRepository`): bounded Deque (10k), Einträge (seq, Store-
+  EClass, Store-Key, Key-Werte, deleted) bei create/update/delete (link/unlink NICHT — Spec:
+  nur strukturelle Änderungen). TX-fest: Änderungen in offener `$batch`-Transaktion werden
+  thread-lokal gepuffert, Seq-Vergabe erst beim COMMIT (sonst könnten parallel gezogene Tokens
+  uncommittete Änderungen überspringen), Rollback verwirft. Membership: Filter/Cast der
+  Defining Query via `OclEvaluator` — geändert-und-passt ⇒ Upsert, passt-nicht-mehr ⇒
+  `@removed reason=changed`, gelöscht ⇒ `reason=deleted`; Mehrfachänderungen kollabieren auf
+  den letzten Zustand; polymorphe Sichtbarkeit (Derived-Instanzen im Basis-Set).
+  Retention-Fenster überschritten ⇒ ehrlich 410 statt stiller Lücken.
+- **Client**: `trackChanges()` (Prefer-Header), `ODataPage.deltaLink()` (neue Record-
+  Komponente, Kompat-Konstruktor), `changes(deltaLink)` → `ODataDelta` (Upserts typisiert,
+  `Removal(id, reason)`); Decoder versteht BEIDE Wire-Formen inkl. 4.01-präfixfreier
+  Control-Annotations; 410 → `ODataClientException.status()==410`.
+- **Tests**: inmemory 6 (Journal/Filter-Membership/Kollaps/Polymorphie/TX/Gone inkl.
+  10k-Eviction), runtime +7 (Preference, beide Payload-Formen, 410+Location, Guards,
+  $metadata-Capability), client +3 (Roundtrip, 4.0-Form, 410), itests e2e-Roundtrip
+  (track → create → delta → delete → `@removed`, echter HTTP-Stack). GOTCHA erneut bestätigt:
+  itests laufen gegen die BUNDLE-JARS — nach Servlet-Änderungen `:runtime:jar` bauen, sonst
+  testet man den alten Stand.
+- **Bewusst v1-außen-vor** (dokumentiert in features/conformance): `$expand`-Deltas (nested
+  `@delta`/Links), `PATCH`-Collection-Update (`"@context":"#$delta"`), Delta-Paging,
+  `/$count` auf Delta-Links, JPA-`DeltaService` (bräuchte DB-Change-Log/Envers-Äquivalent).

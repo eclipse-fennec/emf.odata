@@ -1,6 +1,8 @@
 # OData 4.01 Conformance-Status (Spec Part 1, §13)
 
-Status: 2026-07-08 (Neubewertung; siehe **Gesamturteil** unten). Bewertet gegen die vendorten Spec-Artefakte in `reference/specs/`:
+Status: 2026-07-08 (Neubewertung; siehe **Gesamturteil** unten), nachgeführt 2026-07-13
+(Multipart-`$batch`, CSDL-JSON, `metadata=full/none`, IEEE754Compatible, Key-as-Segment,
+gefiltertes `$count`, `/$filter`-Segment, Delta/Change-Tracking sind seitdem umgesetzt). Bewertet gegen die vendorten Spec-Artefakte in `reference/specs/`:
 Part 1 Protocol (§13.1/§13.2), Part 2 URL Conventions, `odata-abnf-construction-rules.txt`
 (normative Grammatik) und `odata-abnf-testcases.xml` (identisch mit der Test-Kopie im
 Query-Bundle, per MD5 verifiziert).
@@ -27,60 +29,63 @@ Bewertet gegen den vollständigen §13-Klauselkatalog (Part 1 Protocol, 4.0-Leve
 | **4.01 Minimal (§13.2.1)** | ✅ **erfüllt** | MUSTs 1–9 erfüllt/N-A; offen nur SHOULD (CSDL-JSON) / MAY |
 | **4.0 Intermediate (§13.1.2)** | ✅ **erfüllt** | alle MUSTs **und** alle SHOULDs (1–17) |
 | **4.01 Intermediate (§13.2.2)** | ✅ **erfüllt** | MUSTs 1–5 erledigt; SHOULDs 6/7/9 teilweise |
-| **4.0 Advanced (§13.1.3)** | ❌ **nicht erfüllt** | MUSTs 9.1, 9.3, 11 fehlen (+ SHOULDs 13–15) |
-| **4.01 Advanced (§13.2.3)** | ❌ **nicht erfüllt** | erbt 4.0-Advanced-Lücke; MUSTs 3, 5.1, 6, 7 fehlen |
+| **4.0 Advanced (§13.1.3)** | ❌ **nicht erfüllt** | MUSTs 9.1, 9.3 fehlen (11 Multipart-`$batch` ✅ 2026-07-09; SHOULD 14 Delta ✅ 2026-07-13; offen SHOULDs 13 async, 15 Cross-Join) |
+| **4.01 Advanced (§13.2.3)** | ❌ **nicht erfüllt** | erbt 4.0-Advanced-Lücke (9.1/9.3); MUST 5.1 fehlt (3 ✅ Welle 1, 6 CSDL-JSON ✅, 7 Multipart ✅) |
 
 **Fazit: Ziel „mindestens Intermediate" (Q10/§4.6) erreicht — 4.0 UND 4.01 Intermediate stehen.
 Advanced ist bewusst noch offen.**
 
 ### Advanced-Blocker (MUST-Ebene, das hält den Advanced-Anspruch auf)
 
-1. **Multipart-`$batch`** (§13.1.3/11, §13.2.3/7): nur JSON-Batch implementiert (`batch()` weist
-   Nicht-JSON mit 415 ab, `ODataServlet.java`). Advanced verlangt `multipart/mixed`; JSON-Batch ist
-   bei 4.0-Advanced nur MAY.
+1. ~~**Multipart-`$batch`** (§13.1.3/11, §13.2.3/7)~~ — ✅ 2026-07-09: Server akzeptiert und
+   beantwortet `multipart/mixed` (Change-Sets → atomicityGroups, Content-ID-Korrelation).
 2. **`$expand`-Sub-Optionstiefe** (§13.1.3/9): nur verschachteltes `$filter`. **`$expand=nav/$ref`
    (Referenzen, 9.1)** und **Cast-in-Expand (9.3)** sind MUSTs und fehlen (`ODataServlet.java` — Sub-
    Optionen außer `$filter` → 501). `$top/$skip/$orderby/$count/$search/$levels`-in-Expand (SHOULD/9.x)
    ebenfalls nicht; `$levels` → 501.
-3. **CSDL-JSON-`$metadata`** (§13.2.3/6 MUST; §13.2.1/10 + §13.1.1/13 nur SHOULD/MAY): `$metadata`
-   ist reines XML.
-4. **Count einer gefilterten/gesuchten Collection in einer Common Expression** (§13.2.3/3) und
-   **`$filter` auf selektierten Collections in `$select`** (§13.2.3/5.1): fehlen.
+3. ~~**CSDL-JSON-`$metadata`** (§13.2.3/6)~~ — ✅ 2026-07-09: `CsdlJsonWriter`/`CsdlJsonReader`,
+   Server emittiert via `$format=json`/Accept, Client liest beide Formen.
+4. ~~**Count einer gefilterten Collection in einer Common Expression** (§13.2.3/3)~~ — ✅ Welle 1
+   (2026-07-10, `$count($filter=…)` → select→size). **`$filter` auf selektierten Collections in
+   `$select`** (§13.2.3/5.1): fehlt weiter (nested `$select` kennt nur `$select`-Sub-Optionen).
 
 SHOULD-Ebene (nicht blockierend, aber Advanced-Qualität): async / `Respond-Async` (§13.1.3/13),
-Delta-Change-Tracking (14), Cross-Join (15), strukturelle Vergleiche (§13.2.2/7), verschachtelte
+Cross-Join (15), strukturelle Vergleiche (§13.2.2/7), verschachtelte
 Parameter-Aliase und `/$filter`-Pfadsegment (§13.2.2/10-11, §13.2.3/8-9).
+**Delta-Change-Tracking (14) ist seit 2026-07-13 erfüllt** (`Prefer: odata.track-changes`,
+selbstbeschreibende Delta-Links, Delta-Payloads in 4.0- UND 4.01-Form, 410 Gone,
+`Capabilities.ChangeTracking`; v1-Grenzen: keine `$expand`-Deltas, kein PATCH-Collection-Update,
+kein `/$count` auf Delta-Links, kein JPA-Backend — Details `odata-features.md`).
 
 ### Offene Verifizierungspunkte (eng, prüfenswert)
 
-- **`metadata=full`-Profil**: der Codec unterstützt minimal/full/none, die Runtime kodiert überall
-  fest `odata.metadata=minimal`. Keine §13-Klausel, aber im Anforderungsdok (§10.6) als **für
-  Power BI erforderlich** markiert → aktuell eine Interop-Lücke.
+- ~~**`metadata=full`-Profil**~~ — ✅ 2026-07-09/10: `full` UND echtes `none` via
+  Accept/`$format` (request-scoped), Power-BI-Interop-Lücke zu.
 - **4.01-Minimal Item 9 Unterpunkte** (MUST für *unterstützte* Funktionalität): parameterlose
   Function-Imports OHNE Klammern (9.3), Action-Aufruf ohne Body (9.4), unqualifizierte
   Default-Namespace-Aufrufe (9.5) — Functions/Actions sind neu, diese URL-Syntaxvarianten sind
   ungetestet und könnten kleine Lücken sein.
-- **Backend-Paritätsbug**: JPAs `OclToCriteriaTranslator` lässt `date`/`time`/`round`/`floor`/
-  `ceiling` aus → diese `$filter`-Funktionen liefern **auf JPA 501**, funktionieren aber in-memory.
-  Konform („Request abgelehnt"), aber Inkonsistenz zwischen den Backends — billig zu schließen.
+- **Backend-Paritätslücke (Rest)**: Datumsfunktionen (`year`…`second`) sind seit 2026-07-07 als
+  SQL `EXTRACT` gepusht; `round`/`floor`/`ceiling` fehlen im `OclToCriteriaTranslator` weiterhin
+  → **auf JPA 501**, in-memory ok. Konform („Request abgelehnt"), aber Inkonsistenz — billig zu
+  schließen.
 - **`$ref` auf dem Read-Pfad** → 501, obwohl `$ref`-*Writes* (link/unlink) funktionieren.
 - **Client** („Interoperable OData Client"): stark (typisierte Reads/Writes, Functions/Actions inkl.
-  typisierter Varianten, Batch-Builder mit `dependsOn`/`atomicityGroup`, CSRF, Bearer-/Basic-Auth,
-  Schema-Registry), liest CSDL aber **nur XML**; ob er bei Payload-Requests `OData-Version` setzt,
-  ist ungeprüft.
+  typisierter Varianten, Batch-Builder mit `dependsOn`/`atomicityGroup`, beide `$batch`-Wire-Formen,
+  CSRF, Bearer-/Basic-Auth, Schema-Registry, Delta/Change-Tracking); liest CSDL **XML und JSON**
+  (Shape-Detection). Ob er bei Payload-Requests `OData-Version` setzt, ist ungeprüft.
 
 ### Weg zu Advanced (Backlog, nach Aufwand × Nutzen)
 
-1. **CSDL-JSON-`$metadata`** — bestehendes EDM-Modell als JSON serialisieren (mittel; kippt einen
-   4.01-Advanced-MUST + einen 4.01-Minimal-SHOULD).
-2. **`metadata=full`** — Accept/`$format`-Metadata-Parameter honorieren (klein–mittel; Codec kann es
-   bereits; entsperrt Power BI).
-3. **Multipart-`$batch`** — zweiter Parser/Writer neben JSON-Batch (mittel; 4.0/4.01-Advanced-MUST).
+1. ~~**CSDL-JSON-`$metadata`**~~ — ✅ 2026-07-09.
+2. ~~**`metadata=full`**~~ — ✅ 2026-07-09 (+ echtes `none` 2026-07-10).
+3. ~~**Multipart-`$batch`**~~ — ✅ 2026-07-09.
 4. **`$expand`-Sub-Optionen** — `$ref`, Cast, `$top/$skip/$orderby/$count/$levels` in Expand (groß;
-   das größte einzelne MUST-Bündel).
-5. **`$ref`-Read-Pfad** + Count gefilterter Collection in `$filter` + `/$filter`-Segment (mittel).
-6. **JPA-Pushdown für date/round/floor/ceiling** (klein; Paritätsfix).
-7. async / Delta / Cross-Join (groß; alle SHOULD).
+   das größte — und letzte — Advanced-MUST-Bündel).
+5. **`$ref`-Read-Pfad** (mittel; ~~Count gefilterter Collection~~ ✅ Welle 1, ~~`/$filter`-Segment~~
+   ✅ Welle 2/3).
+6. **JPA-Pushdown für round/floor/ceiling** (klein; Paritätsfix — date-Funktionen ✅ 2026-07-07).
+7. async / ~~Delta~~ (✅ 2026-07-13) / Cross-Join (SHOULDs).
 
 ## 13.1.1 — OData 4.0 Minimal Conformance (read-only-relevante Items)
 

@@ -47,6 +47,8 @@ import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.model.metadata.api.MetadataWhiteboard;
+import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
+import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
@@ -1820,6 +1822,151 @@ class ODataServletTest {
 	void pathShapes() throws Exception {
 		assertEquals(404, get("/Product/../secret", Map.of()).status());
 		assertEquals(404, get("/a/b/c", Map.of()).status());
+	}
+
+	// --- change tracking ([OData-Protocol] 11.3) ---
+
+	private DeltaService.DeltaResult deltaResult =
+			new DeltaService.DeltaResult(List.of(), List.of(), "0");
+	private final AtomicReference<String> lastDeltaToken = new AtomicReference<>();
+	private final AtomicReference<EntityQuery> lastDeltaQuery = new AtomicReference<>();
+	private boolean deltaGone = false;
+
+	private void registerDeltaService() {
+		servlet.addDeltaService(new DeltaService() {
+			@Override
+			public boolean supports(EClass entityType) {
+				return entityType == productClass;
+			}
+
+			@Override
+			public String trackingToken(EClass entityType) {
+				return "42";
+			}
+
+			@Override
+			public DeltaResult changesSince(EntityQuery query, String token) {
+				lastDeltaQuery.set(query);
+				lastDeltaToken.set(token);
+				if (deltaGone) {
+					throw new DeltaGoneException("gone");
+				}
+				return deltaResult;
+			}
+		});
+	}
+
+	@Test
+	@DisplayName("Prefer: odata.track-changes → delta link on the last page, preference applied")
+	void trackChangesPreference() throws Exception {
+		registerDeltaService();
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response tracked = call("GET", "/Product", Map.of("$filter", "price gt 1.00"), null, null,
+				Map.of("Prefer", "odata.track-changes"));
+		assertEquals(200, tracked.status());
+		assertTrue(tracked.body().contains("\"@odata.deltaLink\":\"/odata/Product?"), tracked.body());
+		assertTrue(tracked.body().contains("$deltatoken=42"), tracked.body());
+		assertTrue(tracked.body().contains("$filter=price+gt+1.00"),
+				"the delta link re-encodes the defining query: " + tracked.body());
+		assertEquals("odata.track-changes", tracked.headers().get("Preference-Applied"));
+
+		Response untracked = get("/Product", Map.of());
+		assertFalse(untracked.body().contains("deltaLink"), "no preference, no delta link");
+
+		Response expanded = call("GET", "/Product", Map.of("$expand", "category"), null, null,
+				Map.of("Prefer", "odata.track-changes"));
+		assertEquals(200, expanded.status());
+		assertFalse(expanded.body().contains("deltaLink"),
+				"change tracking with $expand is outside the supported shape — preference not applied");
+		assertFalse("odata.track-changes".equals(expanded.headers().get("Preference-Applied")));
+	}
+
+	@Test
+	@DisplayName("without a delta backend the preference is ignored and a token answers 501")
+	void trackChangesWithoutBackend() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		Response tracked = call("GET", "/Product", Map.of(), null, null,
+				Map.of("Prefer", "odata.track-changes"));
+		assertEquals(200, tracked.status());
+		assertFalse(tracked.body().contains("deltaLink"));
+		assertFalse("odata.track-changes".equals(tracked.headers().get("Preference-Applied")));
+
+		assertEquals(501, get("/Product", Map.of("$deltatoken", "42")).status());
+	}
+
+	@Test
+	@DisplayName("following a delta link: upserts, 4.01 @removed entries, fresh delta link")
+	void deltaResponse() throws Exception {
+		registerDeltaService();
+		deltaResult = new DeltaService.DeltaResult(
+				List.of(product("p1", "Milk", "1.20", null)),
+				List.of(new DeltaService.Removal(Map.of("id", "p9"), DeltaService.REASON_DELETED)),
+				"77");
+
+		Response delta = get("/Product", Map.of("$deltatoken", "42", "$filter", "price gt 1.00"));
+		assertEquals(200, delta.status(), delta.body());
+		assertTrue(delta.body().contains("$metadata#Product/$delta\""), delta.body());
+		assertTrue(delta.body().contains("\"Milk\""), "changed entities carry their current state");
+		assertTrue(delta.body().contains("\"@removed\":{\"reason\":\"deleted\"}"), delta.body());
+		assertTrue(delta.body().contains("\"@id\":\"Product('p9')\""), delta.body());
+		assertTrue(delta.body().contains("\"@odata.deltaLink\":\"/odata/Product?"), delta.body());
+		assertTrue(delta.body().contains("$deltatoken=77"),
+				"the follow-up link carries the NEXT token: " + delta.body());
+		assertEquals("42", lastDeltaToken.get());
+		assertNotNull(lastDeltaQuery.get().filter(), "the defining filter is re-parsed and passed");
+	}
+
+	@Test
+	@DisplayName("a 4.0 client receives the $deletedEntity form")
+	void deltaResponse40() throws Exception {
+		registerDeltaService();
+		deltaResult = new DeltaService.DeltaResult(List.of(),
+				List.of(new DeltaService.Removal(Map.of("id", "p9"), DeltaService.REASON_CHANGED)),
+				"77");
+
+		Response delta = call("GET", "/Product", Map.of("$deltatoken", "42"), null, "4.0");
+		assertEquals(200, delta.status(), delta.body());
+		assertTrue(delta.body().contains("\"@odata.context\":\"#Product/$deletedEntity\""), delta.body());
+		assertTrue(delta.body().contains("\"reason\":\"changed\""), delta.body());
+		assertTrue(delta.body().contains("\"id\":\"Product('p9')\""), delta.body());
+		assertFalse(delta.body().contains("@removed"), "4.0 payloads use the context-fragment form");
+	}
+
+	@Test
+	@DisplayName("an aged-out token answers 410 Gone with the refetch URL")
+	void deltaGone() throws Exception {
+		registerDeltaService();
+		deltaGone = true;
+		Response gone = get("/Product", Map.of("$deltatoken", "1", "$filter", "price gt 1.00"));
+		assertEquals(410, gone.status());
+		String location = gone.headers().get("Location");
+		assertNotNull(location, "Location carries the defining query for the refetch");
+		assertFalse(location.contains("$deltatoken"), location);
+		assertTrue(location.contains("filter="), location);
+	}
+
+	@Test
+	@DisplayName("destructive: delta tokens only combine with the defining-query options and only on sets")
+	void deltaGuards() throws Exception {
+		registerDeltaService();
+		assertEquals(400, get("/Product", Map.of("$deltatoken", "42", "$top", "3")).status(),
+				"clients MUST NOT append options to a delta link");
+		assertEquals(400, get("/Product('p1')", Map.of("$deltatoken", "42")).status(),
+				"a delta link addresses a SET");
+		assertEquals(501, get("/Product/$count", Map.of("$deltatoken", "42")).status(),
+				"count-of-changes is not implemented");
+	}
+
+	@Test
+	@DisplayName("$metadata advertises Capabilities.ChangeTracking")
+	void metadataChangeTracking() throws Exception {
+		registerDeltaService();
+		Response metadata = get("/$metadata", Map.of());
+		assertTrue(metadata.body().contains("Org.OData.Capabilities.V1.ChangeTracking"),
+				metadata.body());
+		assertTrue(metadata.body().contains("\"Supported\"")
+				|| metadata.body().contains("Property=\"Supported\""), metadata.body());
 	}
 
 	private static Path findResource(String... candidatesRelative) {

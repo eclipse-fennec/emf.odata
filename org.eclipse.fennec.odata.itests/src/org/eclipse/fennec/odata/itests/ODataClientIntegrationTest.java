@@ -15,6 +15,7 @@ package org.eclipse.fennec.odata.itests;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -33,8 +34,10 @@ import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
+import org.eclipse.fennec.odata.client.EntitySetRequest;
 import org.eclipse.fennec.odata.client.ODataClient;
 import org.eclipse.fennec.odata.client.ODataClientException;
+import org.eclipse.fennec.odata.client.ODataDelta;
 import org.eclipse.fennec.odata.client.ODataPage;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -143,6 +146,52 @@ public class ODataClientIntegrationTest {
 		ODataClientException badFilter = assertThrows(ODataClientException.class,
 				() -> client.entitySet("Gadget").filter("nosuch eq 1").list());
 		assertEquals(400, badFilter.status(), "server-side parse errors surface as 400");
+	}
+
+	@Test
+	@DisplayName("change tracking end to end: track, write through the client, follow the delta link")
+	void deltaRoundTrip() throws Exception {
+		ODataClient client = ODataClient.connect(BASE);
+		EClass gadget = client.entityType("Gadget");
+		EntitySetRequest request = client.entitySet("Gadget").trackChanges();
+
+		ODataPage tracked = request.list();
+		assertNotNull(tracked.deltaLink(), "the server applies odata.track-changes");
+
+		// nothing happened yet: an empty delta with a fresh follow-up link
+		ODataDelta quiet = request.changes(tracked.deltaLink());
+		assertTrue(quiet.changed().isEmpty());
+		assertTrue(quiet.removals().isEmpty());
+		assertNotNull(quiet.deltaLink());
+
+		// create through the client (an instance of the CLIENT's converted EClass) — the write
+		// lands in the in-memory backend's journal
+		EObject lamp = gadget.getEPackage().getEFactoryInstance().create(gadget);
+		lamp.eSet(gadget.getEStructuralFeature("id"), "g9");
+		lamp.eSet(gadget.getEStructuralFeature("name"), "Lamp");
+		lamp.eSet(gadget.getEStructuralFeature("price"), new BigDecimal("12.00"));
+		lamp.eSet(gadget.getEStructuralFeature("stock"), 3);
+		client.entitySet("Gadget").create(lamp);
+
+		ODataDelta created = request.changes(quiet.deltaLink());
+		assertEquals(List.of("Lamp"), created.changed().stream()
+				.map(e -> e.eGet(gadget.getEStructuralFeature("name"))).toList(),
+				"the created entity arrives as an upsert with its current state");
+		assertTrue(created.removals().isEmpty());
+
+		// delete it (existing entities need If-Match — fetch the ETag over raw HTTP)
+		HttpResponse<String> single = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create(BASE + "Gadget('g9')")).GET().build(),
+				HttpResponse.BodyHandlers.ofString());
+		String etag = single.headers().firstValue("ETag").orElseThrow();
+		assertTrue(client.entitySet("Gadget").delete("'g9'", etag));
+
+		ODataDelta deleted = request.changes(created.deltaLink());
+		assertTrue(deleted.changed().isEmpty());
+		assertEquals(1, deleted.removals().size());
+		assertEquals("deleted", deleted.removals().get(0).reason());
+		assertTrue(deleted.removals().get(0).id().contains("Gadget('g9')"),
+				"the removal names the entity id: " + deleted.removals().get(0).id());
 	}
 
 	private void writeDataFile() throws Exception {

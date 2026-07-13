@@ -25,7 +25,7 @@ Spec documents (OASIS OData **v4.01**):
 | Navigation-property bindings + referential constraints | — | ✅ | CSDL §8.6, §13.4 |
 | Bound operations in `$metadata` | — | ✅ | CSDL §12 |
 | `Core.ODataVersions` + Capabilities annotations | Advertise supported versions/capabilities | ✅ | CSDL §14; Core/Capabilities vocab. |
-| Vocabulary annotation layer (constant terms) | — | ◑ constants; rich `<Record>`/`<Collection>` not emitted | CSDL §14 |
+| Vocabulary annotation layer (constants + rich `<Record>`/`<Collection>`/path forms/`EnumMember`, XML **and** JSON) | — | ✅ (`<Annotations Target>` / container-level still out) | CSDL §14 |
 | CSDL **JSON** representation (`$metadata?$format=json` / Accept) | SHOULD | ✅ (server emits; client reads) | CSDL JSON |
 
 ## System query options
@@ -45,7 +45,8 @@ Spec documents (OASIS OData **v4.01**):
 | Parameter aliases `@name` | 4.01 aliases in options | ✅ | URL Conv. §5.1.1.15 |
 | Case-insensitive, `$`-less option names | 4.01 | ✅ | URL Conv. §5.1 |
 | Unsupported system option → 501; unknown `$x` → 400 | Reject unsupported | ✅ | Protocol §13.1.1/7 |
-| `$skiptoken`/`$deltatoken`/`$index`/`$schemaversion`/`$levels`/`$id` | (various) | ❌ → 501 | URL Conv. §5.1 |
+| `$deltatoken` (follow a delta link) | Change tracking | ✅ | Protocol §11.3 |
+| `$skiptoken`/`$index`/`$schemaversion`/`$levels`/`$id` | (various) | ❌ → 501 | URL Conv. §5.1 |
 
 ## Resource path (URL conventions)
 
@@ -59,7 +60,10 @@ Spec documents (OASIS OData **v4.01**):
 | Container singleton `GET /Me[/…]` | Address a singleton | ✅ (declared via EPackage annotation; backend supplies the instance) | URL Conv. §4.3; CSDL §13.5 |
 | Media entity stream `GET/PUT Set(key)/$value` | HasStream types serve/replace their binary stream | ✅ (via the `MediaService` SPI; 501 without a backend) | Protocol §11.2.4/11.4.7 |
 | `/$ref` | Reference to an entity | ✅ (writes); read → 501 | URL Conv. §4.9 |
-| Key-as-segment | MAY | ❌ | URL Conv. §4.3.1 |
+| Key-as-segment (`Set/key`, also for writes and bound functions) | MAY | ✅ server (client always emits `Set(key)`) | URL Conv. §4.3.1 |
+| Key aliases `Set(@k)` (value from a query parameter) | 4.01 | ✅ | URL Conv. §4.3.1 |
+| Inline `/$filter(…)` path segment | 4.01 | ✅ (in-memory; keyed → 501) | URL Conv. §4.13 |
+| `$crossjoin` / `$all` / `$entity` | MAY | ◑ parse → 501 (no engine) | URL Conv. §4.10/4.14/4.15 |
 
 ## `$filter` / expression surface
 
@@ -75,7 +79,11 @@ Spec documents (OASIS OData **v4.01**):
 | `$count` in a path | ✅ (collection paths) | §5.1.1.14 |
 | Typed literals Date/DateTimeOffset/TimeOfDay/Guid/Duration/enum | ✅ | ABNF |
 | Case-insensitive operators/functions (4.01) | ✅ | §5.1.1 |
-| `$it`/`$this`/`$root`, geo/binary literals, enum flags, `NaN`/`INF`, unary minus | ❌ | ABNF |
+| `$it`/`$this` (request-instance anchor, escapes lambda scopes) | ✅ | §5.1.1.13 |
+| Enum flag combinations, `NaN`/`INF`, unary minus, `binary'…'`, JSON literals (`in [...]`) | ✅ | ABNF |
+| Casts in expression paths (mid-path + terminal), filtered `$count($filter=…)` | ✅ (in-memory; JPA → 501) | §5.1.1.10/14 |
+| Bound functions in member paths (`nav/Ns.Func(...)`) | ✅ | §5.1.1 |
+| `$root`/`$these`, `@Ns.Term` runtime values, geo literals, `case()` (4.02) | ❌ (parse → 501 resp. open) | ABNF |
 
 ## `$apply` (Data Aggregation)
 
@@ -85,7 +93,8 @@ Spec documents (OASIS OData **v4.01**):
 | `aggregate` (`sum min max average countdistinct $count`) | ✅ | §3.1.2 |
 | `compute` | ✅ (JPA pushdown; not after groupby) | §3.4 |
 | `filter` (before/after pipeline) | ✅ | §3.5 |
-| `topcount`/`bottom*`, `concat`, `rollup`, `from`, custom aggregates, `$these` | ❌ | §3 |
+| `topcount`/`topsum`/`toppercent` + `bottom*`, `concat`, `top`/`skip`, `orderby`, `identity`, `rollup` (grouping sets) | ✅ (in-memory; JPA → 501) | §3 |
+| `from`, custom aggregates, `$these`, structure trafos (`nest`/`join`/`traverse`/`rolluprecursive`/…) | ◑ parse → 501 | §3/§6 |
 
 ## Data modification (Updatable Service)
 
@@ -117,14 +126,15 @@ Spec documents (OASIS OData **v4.01**):
 | Feature | Support | Reference |
 |---|---|---|
 | OData-JSON payloads, `odata.metadata=minimal` (default) | ✅ | JSON Format §3 |
-| `odata.metadata=full` (via Accept / `$format`) | ✅ (`none` served as minimal) | JSON Format §3.1 |
+| `odata.metadata=full` / `none` (via Accept / `$format`) | ✅ (real `none`: no context/discriminators; ETag pinned to the minimal form) | JSON Format §3.1 |
 | `OData-Version` / `OData-MaxVersion` negotiation (4.0/4.01) | ✅ | Protocol §8.1.5/8.2.6 |
 | Server-driven paging `@odata.nextLink` | ✅ | Protocol §11.2.5.7 |
 | `#Ns.Type` discriminator for derived types | ✅ | JSON Format §4.5.8 |
-| `Edm.Int64 > 2^53` `IEEE754Compatible` string form | ❌ | JSON Format §4.3 |
+| `IEEE754Compatible=true` (Int64/Decimal as strings: values, `@odata.count`, `$apply` rows; Content-Type echo; payload decode) | ✅ server (client ❌) | JSON Format §4.3/§8.1 |
 | `$batch` JSON (4.01) | ✅ (server + client) | Protocol §11.7 |
 | `$batch` multipart/mixed (4.0, SAP world) | ✅ (server accepts + answers multipart; client `.multipart()`) | Protocol §11.7 |
-| Asynchronous requests, `$delta` / change tracking | ❌ | Protocol §11.6, §11.3 |
+| Change tracking: `Prefer: odata.track-changes`, self-describing delta links, delta payloads (4.01 `@removed` + 4.0 `$deletedEntity`), 410 Gone | ✅ (in-memory backend via `DeltaService`; `$expand` deltas / `PATCH` collection-update / JPA → not applied resp. 501) | Protocol §11.3 |
+| Asynchronous requests | ❌ | Protocol §11.6 |
 | CORS for browser clients (XOData & co.) | ✅ opt-in (`odata.cors.origin`: `*` or allowlist; preflight, expose headers) | (not OData — HTTP) |
 
 ## Client (E8)
@@ -142,7 +152,8 @@ Spec documents (OASIS OData **v4.01**):
 | CSRF (SAP) handshake, SSRF guard, XXE-hardened metadata, size cap | ✅ | — |
 | Container singletons (`singleton(name)` → `GET /Me`) | ✅ | URL Conv. §4.3 |
 | Media entities (`mediaRead`/`mediaWrite` → `Set(key)/$value`) | ✅ | Protocol §11.2.4/11.4.7 |
-| Delta / change tracking | ❌ | — |
+| Delta / change tracking (`trackChanges()` → `ODataPage.deltaLink()`, `changes(link)` → `ODataDelta`; decodes both wire forms) | ✅ | Protocol §11.3 |
+| Key-as-segment URL emission, `IEEE754Compatible` decode | ❌ (server-side only; the client emits canonical `Set(key)` URLs) | URL Conv. §4.3.1; JSON Format §8.1 |
 
 All of the above is proven against real systems: the live interop suite runs the client against
 TripPin, TripPin RESTier, the OData demo and Northwind, and mirrors their schemas onto our
