@@ -156,12 +156,22 @@ the defining query — an entity that changed and no longer matches the filter i
 removed with `reason="changed"`. An aged-out token answers **410 Gone** with the refetch URL in
 `Location`; appending any other query option to a delta link is a 400.
 
-The in-memory backend implements the SPI with a bounded, transaction-aware change journal
-(rolled-back `$batch` change sets never surface). The JPA backend does not implement it, so the
-preference is simply not applied there. `$metadata` advertises the actual support via a
-`Capabilities.ChangeTracking` annotation on the container. Not covered (v1): deltas of
-`$expand`ed relationships (the preference is not applied then), the `PATCH` collection-update
-payload, paging inside a delta response, `/$count` on a delta link (501).
+BOTH backends implement the SPI with a bounded, transaction-aware change journal (rolled-back
+`$batch` change sets never surface). The journals are service-layer: only writes through the
+SPI are tracked — direct database changes bypass the JPA journal. JPA answers a delta with ONE
+pushed-down membership query (`defining filter AND key IN (touched keys)`).
+
+**Expanded defining queries** (4.01 clients, in-memory backend): membership and member changes
+inside an expanded navigation report the OWNER, and the delta serializes it with the FULL
+current representation of the expanded navigation — the spec-legal alternative to nested
+`nav@delta`. 4.0 clients keep the preference unapplied (4.0 requires flattened deltas).
+
+**Collection updates**: `PATCH Set` with a `"@context":"#$delta"` payload applies upserts and
+`@removed` deletes in one request — all-or-nothing on transactional backends. 501: 4.0 link
+objects, nested `nav@delta`, `@odata.bind`, `continue-on-error`.
+
+`$metadata` advertises the actual support via a `Capabilities.ChangeTracking` annotation on the
+container. Not covered: paging inside a delta response, `/$count` on a delta link (501).
 
 ## Backend configuration
 

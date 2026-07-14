@@ -111,7 +111,8 @@ Spec documents (OASIS OData **v4.01**):
 | `@odata.bind` (link to existing on create/update) | SHOULD | ✅ (server receives, client emits) | JSON Format §8.5; Protocol §11.4.2.1 |
 | ETags / `If-Match` (weak, 428/412) | Optimistic concurrency | ✅ | Protocol §11.4.1.1 |
 | `Prefer: return=minimal/representation` | SHOULD | ✅ (server honours; client requests) | Protocol §8.2.8.7 |
-| Deep updates, `PATCH`-delta on collections | SHOULD/MAY | ❌ | Protocol §11.4.3 |
+| `PATCH` collection update (`#$delta` payload: upserts + `@removed` deletes, all-or-nothing) | MAY | ✅ (4.0 link objects / nested `nav@delta` / `continue-on-error` → 501) | JSON Format §15.4 |
+| Deep updates | SHOULD | ❌ | Protocol §11.4.3 |
 
 ## Operations
 
@@ -135,7 +136,7 @@ Spec documents (OASIS OData **v4.01**):
 | `IEEE754Compatible=true` (Int64/Decimal as strings: values, `@odata.count`, `$apply` rows; Content-Type echo; payload decode) | ✅ (client opt-in `ieee754()`) | JSON Format §4.3/§8.1 |
 | `$batch` JSON (4.01) | ✅ (server + client) | Protocol §11.7 |
 | `$batch` multipart/mixed (4.0, SAP world) | ✅ (server accepts + answers multipart; client `.multipart()`) | Protocol §11.7 |
-| Change tracking: `Prefer: odata.track-changes`, self-describing delta links, delta payloads (4.01 `@removed` + 4.0 `$deletedEntity`), 410 Gone | ✅ (in-memory backend via `DeltaService`; `$expand` deltas / `PATCH` collection-update / JPA → not applied resp. 501) | Protocol §11.3 |
+| Change tracking: `Prefer: odata.track-changes`, self-describing delta links, delta payloads (4.01 `@removed` + 4.0 `$deletedEntity`), 410 Gone | ✅ in-memory AND JPA (`ChangeJournal`, service-layer); expanded defining queries serve FULL expanded representations (4.01, in-memory) | Protocol §11.3 |
 | Asynchronous requests | ❌ | Protocol §11.6 |
 | CORS for browser clients (XOData & co.) | ✅ opt-in (`odata.cors.origin`: `*` or allowlist; preflight, expose headers) | (not OData — HTTP) |
 
@@ -155,6 +156,7 @@ Spec documents (OASIS OData **v4.01**):
 | Container singletons (`singleton(name)` → `GET /Me`) | ✅ | URL Conv. §4.3 |
 | Media entities (`mediaRead`/`mediaWrite` → `Set(key)/$value`) | ✅ | Protocol §11.2.4/11.4.7 |
 | Delta / change tracking (`trackChanges()` → `ODataPage.deltaLink()`, `changes(link)` → `ODataDelta`; decodes both wire forms) | ✅ | Protocol §11.3 |
+| Collection update (`updateCollection(upserts, removedIds)` → one `#$delta` PATCH) | ✅ | JSON Format §15.4 |
 | `$ref` reads (`references(key, nav)` → entity ids) | ✅ | Protocol §11.2.8 |
 | Key-as-segment emission (`keyAsSegment()`), `IEEE754Compatible` negotiation + exact decode (`ieee754()`) | ✅ | URL Conv. §4.3.1; JSON Format §8.1 |
 

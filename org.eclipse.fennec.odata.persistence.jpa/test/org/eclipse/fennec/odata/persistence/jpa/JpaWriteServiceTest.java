@@ -23,6 +23,7 @@ import java.util.List;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
 import org.junit.jupiter.api.DisplayName;
@@ -35,6 +36,39 @@ import org.junit.jupiter.api.Test;
  */
 @DisplayName("JPA WriteService: create/update/delete against H2")
 class JpaWriteServiceTest extends JpaWebshopTestBase {
+
+	@Test
+	@DisplayName("delta: changesSince runs as ONE pushed-down membership query")
+	void deltaChanges() {
+		String token = service.trackingToken(productClass);
+		var quiet = service.changesSince(
+				EntityQuery.all(productClass), token);
+		assertTrue(quiet.changed().isEmpty() && quiet.removals().isEmpty(),
+				"nothing was written through the service yet");
+
+		// change Milk (stays above the filter), create a cheap product (below it), delete Salt
+		service.update(productClass, "'p1'", plain("Product", "name", "Milk Fresh"), false);
+		service.create(productClass, plain("Product", "id", "d9", "name", "Gum",
+				"price", new BigDecimal("0.20")));
+		service.delete(productClass, "'p4'");
+
+		var tracked = new EntityQuery(productClass,
+				parser.parseFilter("price gt 1.00", productClass), List.of(), 0, -1, false);
+		var delta = service.changesSince(tracked, token);
+		assertEquals(List.of("Milk Fresh"), delta.changed().stream()
+				.map(e -> e.eGet(productClass.getEStructuralFeature("name"))).toList(),
+				"only the touched entity that MATCHES the defining filter is an upsert");
+		assertEquals(2, delta.removals().size(), delta.removals().toString());
+		assertTrue(delta.removals().stream().anyMatch(r -> "p4".equals(r.keyValues().get("id"))
+						&& "deleted".equals(r.reason())), "Salt was deleted");
+		assertTrue(delta.removals().stream().anyMatch(r -> "d9".equals(r.keyValues().get("id"))
+						&& "changed".equals(r.reason())),
+				"the cheap creation never enters the filtered membership");
+
+		var next = service.changesSince(tracked, delta.nextToken());
+		assertTrue(next.changed().isEmpty() && next.removals().isEmpty(),
+				"the follow-up token is quiet");
+	}
 
 	@Test
 	@DisplayName("create persists attributes and containment children; duplicates → conflict")

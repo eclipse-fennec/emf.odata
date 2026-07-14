@@ -192,6 +192,24 @@ public class ODataClientIntegrationTest {
 		assertEquals("deleted", deleted.removals().get(0).reason());
 		assertTrue(deleted.removals().get(0).id().contains("Gadget('g9')"),
 				"the removal names the entity id: " + deleted.removals().get(0).id());
+
+		// collection update ([OData-JSON] #$delta write payload): one PATCH creates, the next removes —
+		// both transactional in the reference backend, both visible through the delta link
+		EObject bulb = gadget.getEPackage().getEFactoryInstance().create(gadget);
+		bulb.eSet(gadget.getEStructuralFeature("id"), "g10");
+		bulb.eSet(gadget.getEStructuralFeature("name"), "Bulb");
+		bulb.eSet(gadget.getEStructuralFeature("price"), new BigDecimal("3.30"));
+		client.entitySet("Gadget").updateCollection(List.of(bulb), List.of());
+		ODataDelta bulk = request.changes(deleted.deltaLink());
+		assertEquals(List.of("Bulb"), bulk.changed().stream()
+				.map(e -> e.eGet(gadget.getEStructuralFeature("name"))).toList(),
+				"the collection-update upsert lands in the journal");
+
+		client.entitySet("Gadget").updateCollection(List.of(), List.of("Gadget('g10')"));
+		ODataDelta cleanup = request.changes(bulk.deltaLink());
+		assertTrue(cleanup.changed().isEmpty());
+		assertEquals(1, cleanup.removals().size());
+		assertEquals("deleted", cleanup.removals().get(0).reason());
 	}
 
 	private void writeDataFile() throws Exception {

@@ -44,6 +44,18 @@ public interface DeltaService {
 	boolean supports(EClass entityType);
 
 	/**
+	 * Whether this backend can track changes for defining queries WITH {@code $expand}
+	 * ([OData-Protocol] 11.3.1: expanded relationships): a member joining, leaving or changing
+	 * inside an expanded navigation reports the OWNER as changed, and the protocol layer
+	 * serializes it with the FULL current representation of the expanded navigation (the
+	 * spec-legal alternative to nested delta representations). {@code false} (the default)
+	 * keeps the {@code track-changes} preference unapplied for expanding defining queries.
+	 */
+	default boolean supportsExpandTracking() {
+		return false;
+	}
+
+	/**
 	 * The token capturing the CURRENT change state for the entity type — the starting point a
 	 * delta link issued right now would track from.
 	 */

@@ -1754,8 +1754,9 @@ class ODataServletTest {
 
 		assertEquals(405, callWrite("POST", "/Product('p1')",
 				"{}", "application/json").status(), "POST addresses the set");
-		assertEquals(405, callWrite("PATCH", "/Product",
-				"{}", "application/json").status(), "PATCH addresses one entity");
+		assertEquals(400, callWrite("PATCH", "/Product",
+				"{}", "application/json").status(),
+				"PATCH on a set is a collection update and needs the #$delta context");
 		assertEquals(405, callWrite("POST", "/$metadata", "{}", "application/json").status());
 		assertEquals(404, callWrite("POST", "/NoSuchSet", "{}", "application/json").status());
 		assertEquals(404, callWrite("POST", "/Product('absent')/reviews",
@@ -1953,6 +1954,44 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("PATCH Set with a #$delta payload: upserts and @removed deletes")
+	void collectionUpdate() throws Exception {
+		String delta = """
+				{"@context":"#$delta","value":[
+				  {"id":"p1","name":"Milk Fresh"},
+				  {"@id":"Product('p7')","name":"New Thing","price":"2.00"},
+				  {"@removed":{"reason":"deleted"},"@id":"Product('p2')"}
+				]}""";
+		Response ok = callWrite("PATCH", "/Product", delta, "application/json");
+		assertEquals(204, ok.status(), ok.body());
+		assertEquals("'p2'", lastWriteKey.get(),
+				"the removal was applied last — the raw key literal stays quoted (SPI contract)");
+
+		assertEquals(400, callWrite("PATCH", "/Product",
+				"{\"value\":[]}", "application/json").status(),
+				"the #$delta context is mandatory");
+		assertEquals(501, callWrite("PATCH", "/Product", """
+				{"@context":"#$delta","value":[
+				  {"@odata.context":"#Product/$link","source":"a","relationship":"r","target":"b"}
+				]}""", "application/json").status(),
+				"4.0 flattened link objects are honestly unimplemented");
+		assertEquals(501, callWrite("PATCH", "/Product", """
+				{"@context":"#$delta","value":[
+				  {"id":"p1","accessories@delta":[]}
+				]}""", "application/json").status(),
+				"nested delta representations are honestly unimplemented");
+		deleteFound = false;
+		assertEquals(400, callWrite("PATCH", "/Product", """
+				{"@context":"#$delta","value":[
+				  {"@removed":{},"@id":"Product('nope')"}
+				]}""", "application/json").status(),
+				"removing an unknown entity fails the request");
+		deleteFound = true;
+		assertEquals(405, callWrite("PUT", "/Product", delta, "application/json").status(),
+				"PUT stays entity-level only");
+	}
+
+	@Test
 	@DisplayName("nested collection options in $expand and $select (Advanced 9.4–9.7 / 5.2–5.4)")
 	void nestedCollectionOptions() throws Exception {
 		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
@@ -2085,12 +2124,18 @@ class ODataServletTest {
 	private final AtomicReference<String> lastDeltaToken = new AtomicReference<>();
 	private final AtomicReference<EntityQuery> lastDeltaQuery = new AtomicReference<>();
 	private boolean deltaGone = false;
+	private boolean deltaExpandCapable = false;
 
 	private void registerDeltaService() {
 		servlet.addDeltaService(new DeltaService() {
 			@Override
 			public boolean supports(EClass entityType) {
 				return entityType == productClass;
+			}
+
+			@Override
+			public boolean supportsExpandTracking() {
+				return deltaExpandCapable;
 			}
 
 			@Override
@@ -2185,6 +2230,49 @@ class ODataServletTest {
 		assertTrue(delta.body().contains("\"reason\":\"changed\""), delta.body());
 		assertTrue(delta.body().contains("\"id\":\"Product('p9')\""), delta.body());
 		assertFalse(delta.body().contains("@removed"), "4.0 payloads use the context-fragment form");
+	}
+
+	@Test
+	@DisplayName("expanded change tracking (4.01): full expanded representations in the delta")
+	void deltaWithExpand() throws Exception {
+		registerDeltaService();
+		deltaExpandCapable = true;
+		EObject cable = product("p2", "Cable", "1.50", null);
+		EObject milk = product("p1", "Milk", "1.20", null);
+		@SuppressWarnings("unchecked")
+		List<EObject> accessories = (List<EObject>) milk
+				.eGet(productClass.getEStructuralFeature("accessories"));
+		accessories.add(cable);
+		backendResult = List.of(milk);
+		deltaResult = new DeltaService.DeltaResult(List.of(milk), List.of(), "77");
+
+		Response tracked = call("GET", "/Product", Map.of("$expand", "accessories"), null, null,
+				Map.of("Prefer", "odata.track-changes"));
+		assertEquals(200, tracked.status(), tracked.body());
+		assertTrue(tracked.body().contains("\"@odata.deltaLink\""),
+				"an expand-capable backend applies the preference for 4.01 clients: " + tracked.body());
+		assertTrue(tracked.body().contains("$expand=accessories"),
+				"the delta link re-encodes the defining $expand: " + tracked.body());
+
+		Response delta = get("/Product", Map.of("$deltatoken", "42", "$expand", "accessories"));
+		assertEquals(200, delta.status(), delta.body());
+		assertTrue(delta.body().contains("\"Cable\""),
+				"upserts carry the FULL expanded representation: " + delta.body());
+		assertNotNull(lastDeltaQuery.get());
+		assertEquals(Set.of("accessories"), lastDeltaQuery.get().expand(),
+				"the defining query hands the expanded navigations to the backend");
+
+		Response old = call("GET", "/Product",
+				Map.of("$deltatoken", "42", "$expand", "accessories"), null, "4.0");
+		assertEquals(501, old.status(),
+				"4.0 clients need the flattened form we do not emit: " + old.body());
+
+		deltaExpandCapable = false;
+		Response incapable = call("GET", "/Product", Map.of("$expand", "accessories"), null, null,
+				Map.of("Prefer", "odata.track-changes"));
+		assertEquals(200, incapable.status());
+		assertFalse(incapable.body().contains("deltaLink"),
+				"without expand-capable tracking the preference stays unapplied");
 	}
 
 	@Test

@@ -12,13 +12,14 @@
  */
 package org.eclipse.fennec.odata.persistence.inmemory;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -29,7 +30,7 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
-import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
+import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.EntityRepository;
@@ -73,23 +74,7 @@ public class MemoryWriteRepository
 	/** Retention window: tokens older than this many changes answer 410 Gone. */
 	private static final int MAX_JOURNAL_ENTRIES = 10_000;
 
-	/**
-	 * One structural change to a set member. {@code seq} orders the journal; entries buffered
-	 * inside a transaction carry {@code seq = 0} until {@link #commit()} assigns real numbers —
-	 * assigning at write time would let a concurrently issued token overtake the uncommitted
-	 * entries and silently skip them.
-	 */
-	private record Change(long seq, EClass type, String storeKey,
-			Map<String, Object> keyValues, boolean deleted) {
-	}
-
-	/** Global journal; all access synchronizes on the deque itself. */
-	private final Deque<Change> journal = new ArrayDeque<>();
-	private long nextSeq = 1;
-	/** Highest sequence number evicted from the bounded journal — tokens at or below it are gone. */
-	private long evictedUpTo = 0;
-	/** Changes of an open thread-bound transaction — flushed on commit, dropped on rollback. */
-	private final ThreadLocal<List<Change>> pendingJournal = new ThreadLocal<>();
+	private final ChangeJournal journal = new ChangeJournal(MAX_JOURNAL_ENTRIES);
 
 	private final OclEvaluator evaluator = new OclEvaluator();
 
@@ -147,22 +132,18 @@ public class MemoryWriteRepository
 			}
 		});
 		snapshot.set(snap);
-		pendingJournal.set(new ArrayList<>());
+		journal.begin();
 	}
 
 	@Override
 	public void commit() {
-		List<Change> pending = pendingJournal.get();
-		if (pending != null) {
-			append(pending);
-		}
-		pendingJournal.remove();
+		journal.commit();
 		snapshot.remove();
 	}
 
 	@Override
 	public void rollback() {
-		pendingJournal.remove(); // a rolled-back transaction never happened, journal-wise
+		journal.rollback(); // a rolled-back transaction never happened, journal-wise
 		Map<EClass, Map<String, EObject>> snap = snapshot.get();
 		if (snap == null) {
 			return;
@@ -257,7 +238,9 @@ public class MemoryWriteRepository
 		}
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
-			attach(requiredEntity(entities, rawKey), reference, child);
+			EObject owner = requiredEntity(entities, rawKey);
+			attach(owner, reference, child);
+			journal(owner, entityType, unquote(rawKey), false); // expand membership changed
 		}
 		return child;
 	}
@@ -271,7 +254,9 @@ public class MemoryWriteRepository
 		}
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
-			attach(requiredEntity(entities, rawKey), reference, target);
+			EObject owner = requiredEntity(entities, rawKey);
+			attach(owner, reference, target);
+			journal(owner, entityType, unquote(rawKey), false); // expand membership changed
 		}
 	}
 
@@ -281,17 +266,22 @@ public class MemoryWriteRepository
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
 			EObject owner = requiredEntity(entities, rawKey);
+			boolean removed;
 			if (reference.isMany()) {
 				String key = unquote(targetRawKey);
 				@SuppressWarnings("unchecked")
 				List<EObject> members = (List<EObject>) owner.eGet(reference);
-				return members.removeIf(member -> key != null && key.equals(keyString(member)));
+				removed = members.removeIf(member -> key != null && key.equals(keyString(member)));
+			} else if (owner.eGet(reference) == null) {
+				removed = false;
+			} else {
+				owner.eSet(reference, null);
+				removed = true;
 			}
-			if (owner.eGet(reference) == null) {
-				return false;
+			if (removed) {
+				journal(owner, entityType, unquote(rawKey), false); // expand membership changed
 			}
-			owner.eSet(reference, null);
-			return true;
+			return removed;
 		}
 	}
 
@@ -399,44 +389,21 @@ public class MemoryWriteRepository
 
 	@Override
 	public String trackingToken(EClass entityType) {
-		synchronized (journal) {
-			return Long.toString(nextSeq - 1);
-		}
+		return journal.token();
+	}
+
+	@Override
+	public boolean supportsExpandTracking() {
+		return true;
 	}
 
 	@Override
 	public DeltaResult changesSince(EntityQuery query, String token) {
-		long since;
-		try {
-			since = Long.parseLong(token);
-		} catch (RuntimeException e) {
-			throw new DeltaGoneException("the delta token is not valid");
-		}
-		List<Change> relevant = new ArrayList<>();
-		long now;
-		synchronized (journal) {
-			// every change in (since, now] must still be retained — an evicted range means the
-			// client would silently miss changes, so the token is honestly gone (410)
-			if (since < 0 || since > nextSeq - 1 || since < evictedUpTo) {
-				throw new DeltaGoneException("the delta token is no longer valid");
-			}
-			now = nextSeq - 1;
-			for (Change change : journal) {
-				if (change.seq() > since && query.entityType().isSuperTypeOf(change.type())) {
-					relevant.add(change);
-				}
-			}
-		}
-		// multiple changes to one entity collapse into its latest outcome, at its LAST position
-		Map<List<Object>, Change> latest = new LinkedHashMap<>();
-		for (Change change : relevant) {
-			List<Object> key = List.of(change.type(), change.storeKey());
-			latest.remove(key);
-			latest.put(key, change);
-		}
+		ChangeJournal.Window window = journal.since(token, query.entityType());
 		List<EObject> changed = new ArrayList<>();
 		List<Removal> removals = new ArrayList<>();
-		for (Change change : latest.values()) {
+		Set<EObject> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+		for (ChangeJournal.Change change : window.changes()) {
 			EObject current = null;
 			Map<String, EObject> entities = store.get(change.type());
 			if (entities != null) {
@@ -446,6 +413,8 @@ public class MemoryWriteRepository
 			}
 			if (current == null) {
 				removals.add(new Removal(change.keyValues(), REASON_DELETED));
+			} else if (!seen.add(current)) {
+				continue; // already reported (e.g. as an expand owner)
 			} else if (query.castType() != null && !query.castType().isInstance(current)) {
 				removals.add(new Removal(change.keyValues(), REASON_CHANGED));
 			} else if (query.filter() == null || evaluator.matchesNullSafe(query.filter(), current)) {
@@ -454,46 +423,76 @@ public class MemoryWriteRepository
 				removals.add(new Removal(change.keyValues(), REASON_CHANGED));
 			}
 		}
-		return new DeltaResult(changed, removals, Long.toString(now));
-	}
-
-	/**
-	 * Records one mutation; called under the owner's class-store lock. Inside a transaction the
-	 * change is buffered per thread ({@code seq} pending) and only enters the global journal on
-	 * {@link #commit()} — see {@link Change}.
-	 */
-	private void journal(EObject entity, EClass storeType, String storeKey, boolean deleted) {
-		Change change = new Change(0, storeType, storeKey, keyValuesOf(entity), deleted);
-		List<Change> pending = pendingJournal.get();
-		if (pending != null) {
-			pending.add(change);
-			return;
-		}
-		append(List.of(change));
-	}
-
-	/** Assigns sequence numbers and appends, evicting past the retention window. */
-	private void append(List<Change> changes) {
-		synchronized (journal) {
-			for (Change change : changes) {
-				journal.addLast(new Change(nextSeq++, change.type(), change.storeKey(),
-						change.keyValues(), change.deleted()));
-				if (journal.size() > MAX_JOURNAL_ENTRIES) {
-					evictedUpTo = journal.removeFirst().seq();
+		if (!query.expand().isEmpty()) {
+			// expanded tracking (11.3.1): a change to a MEMBER of an expanded navigation reports
+			// the owner — the protocol layer serializes it with the full current representation.
+			// The window is journal-wide here: member changes live under the MEMBER's type.
+			ChangeJournal.Window all = journal.since(token, null); // member changes live under the MEMBER's type
+			for (EObject owner : ownersOfChangedMembers(query, all.changes())) {
+				if (!seen.add(owner)) {
+					continue;
+				}
+				if ((query.castType() == null || query.castType().isInstance(owner))
+						&& (query.filter() == null || evaluator.matchesNullSafe(query.filter(), owner))) {
+					changed.add(owner);
 				}
 			}
 		}
+		return new DeltaResult(changed, removals, window.nextToken());
 	}
 
-	/** Key-property name → value in id-attribute order — the delta layer renders ids from it. */
-	private static Map<String, Object> keyValuesOf(EObject entity) {
-		Map<String, Object> keys = new LinkedHashMap<>();
-		for (EAttribute id : entity.eClass().getEAllAttributes()) {
-			if (id.isID()) {
-				keys.put(id.getName(), entity.eGet(id));
+	/** Tracked-set owners whose EXPANDED navigation contains one of the changed entities. */
+	private List<EObject> ownersOfChangedMembers(EntityQuery query,
+			List<ChangeJournal.Change> changes) {
+		List<EObject> owners = new ArrayList<>();
+		for (Map.Entry<EClass, Map<String, EObject>> entry : store.entrySet()) {
+			if (!query.entityType().isSuperTypeOf(entry.getKey())) {
+				continue;
+			}
+			List<EObject> candidates;
+			synchronized (entry.getValue()) {
+				candidates = new ArrayList<>(entry.getValue().values());
+			}
+			for (EObject owner : candidates) {
+				if (expandedMemberChanged(owner, query.expand(), changes)) {
+					owners.add(owner);
+				}
 			}
 		}
-		return keys;
+		return owners;
+	}
+
+	/** Whether any (first-segment) expanded navigation of the owner holds a changed entity. */
+	private boolean expandedMemberChanged(EObject owner, Set<String> expand,
+			List<ChangeJournal.Change> changes) {
+		for (String path : expand) {
+			int slash = path.indexOf('/');
+			String navigation = slash < 0 ? path : path.substring(0, slash);
+			if (!(owner.eClass().getEStructuralFeature(navigation) instanceof EReference reference)
+					|| reference.isContainment()) {
+				continue; // containment children have no set-level journal entries
+			}
+			Object value = owner.eGet(reference);
+			List<?> members = value instanceof List<?> list ? list
+					: value instanceof EObject single ? List.of(single) : List.of();
+			for (Object member : members) {
+				if (!(member instanceof EObject target)) {
+					continue;
+				}
+				String targetKey = keyString(target);
+				for (ChangeJournal.Change change : changes) {
+					if (change.type() == target.eClass() && change.storeKey().equals(targetKey)) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
+	/** Records one mutation; called under the owner's class-store lock. */
+	private void journal(EObject entity, EClass storeType, String storeKey, boolean deleted) {
+		journal.record(storeType, storeKey, ChangeJournal.keyValuesOf(entity), deleted);
 	}
 
 	// --- media side (HasStream entities, [OData-Protocol] 11.2.4/11.4.7) ---

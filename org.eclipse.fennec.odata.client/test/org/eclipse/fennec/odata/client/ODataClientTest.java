@@ -451,6 +451,25 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("updateCollection() sends one #$delta PATCH with upserts and removals")
+	void collectionUpdate() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EClass product = client.entityType("Product");
+		EObject changed = product.getEPackage().getEFactoryInstance().create(product);
+		changed.eSet(product.getEStructuralFeature("id"), "p1");
+		changed.eSet(product.getEStructuralFeature("name"), "Milk Fresh");
+
+		client.entitySet("Product").updateCollection(List.of(changed), List.of("Product('p2')"));
+
+		assertEquals("PATCH", lastWriteMethod.get());
+		String body = lastWriteBody.get();
+		assertTrue(body.startsWith("{\"@context\":\"#$delta\",\"value\":["), body);
+		assertTrue(body.contains("\"Milk Fresh\""), body);
+		assertTrue(body.contains("{\"@removed\":{\"reason\":\"deleted\"},\"@id\":\"Product('p2')\"}"),
+				body);
+	}
+
+	@Test
 	@DisplayName("references() reads entity ids from $ref — single and collection form")
 	void referenceReads() {
 		ODataClient client = ODataClient.connect(serviceRoot);

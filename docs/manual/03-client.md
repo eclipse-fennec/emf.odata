@@ -94,6 +94,14 @@ Both wire forms decode — the 4.01 `@removed` objects and the 4.0 `#Set/$delete
 form, prefixed or 4.01 prefix-free. A `410 Gone` (the token aged out) surfaces as an
 `ODataClientException` with status 410: refetch the full set and track anew.
 
+The write-side counterpart is `updateCollection` — one `#$delta` PATCH:
+
+```java
+client.entitySet("Product").updateCollection(
+    List.of(changedOrNew),            // PATCH upserts (unknown keys create)
+    List.of("Product('p2')"));        // @removed deletes, by entity id
+```
+
 ## Operations
 
 ```java

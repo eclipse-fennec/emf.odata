@@ -62,10 +62,13 @@ die Expand-/Select-Sub-Optionen 9.4–9.7 und 5.2–5.5 sind seit 2026-07-14 erf
 SHOULD-Ebene (nicht blockierend, aber Advanced-Qualität): async / `Respond-Async` (§13.1.3/13),
 Cross-Join (15), strukturelle Vergleiche (§13.2.2/7), verschachtelte
 Parameter-Aliase und `/$filter`-Pfadsegment (§13.2.2/10-11, §13.2.3/8-9).
-**Delta-Change-Tracking (14) ist seit 2026-07-13 erfüllt** (`Prefer: odata.track-changes`,
-selbstbeschreibende Delta-Links, Delta-Payloads in 4.0- UND 4.01-Form, 410 Gone,
-`Capabilities.ChangeTracking`; v1-Grenzen: keine `$expand`-Deltas, kein PATCH-Collection-Update,
-kein `/$count` auf Delta-Links, kein JPA-Backend — Details `odata-features.md`).
+**Delta-Change-Tracking (14) ist seit 2026-07-13 erfüllt und seit 2026-07-14 AUSGEBAUT**
+(`Prefer: odata.track-changes`, selbstbeschreibende Delta-Links, Delta-Payloads in 4.0- UND
+4.01-Form, 410 Gone, `Capabilities.ChangeTracking`; Ausbau: JPA-`DeltaService`
+[Service-Layer-Journal, Pushdown-Membership], `$expand`-Tracking mit Full-Representation
+[4.01, in-memory], `PATCH`-Collection-Update `#$delta`. Restgrenzen: kein Delta-Paging, kein
+`/$count` auf Delta-Links, keine nested-`nav@delta`-Wire-Form, keine 4.0-flattened-Payloads —
+Details `odata-features.md`).
 
 ### Offene Verifizierungspunkte (eng, prüfenswert)
 

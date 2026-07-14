@@ -136,11 +136,21 @@ body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
   and no longer matches is reported as `@removed` with `reason="changed"`.
 - An aged-out/invalid token → **410 Gone** with the refetch URL in `Location`. Appending other
   query options to a delta link → **400**; `Set/$count?$deltatoken=…` → 501 (MAY).
-- Backends: the in-memory backend journals every structural write (bounded, transaction-aware —
-  rolled-back `$batch` change sets never surface); JPA does not implement the SPI, so the
-  preference is simply not applied there. Not covered (v1): deltas of `$expand`ed relationships
-  (preference not applied when `$expand` is present), the `PATCH` collection-update payload,
-  paging within a delta response.
+- Backends: BOTH ship a bounded, transaction-aware `ChangeJournal` (rolled-back `$batch` change
+  sets never surface). The journals are SERVICE-LAYER: only writes that went through the SPI are
+  visible (direct database changes bypass the JPA journal — documented). JPA answers
+  `changesSince` with ONE pushed-down membership query (`defining filter AND key IN (touched)`).
+- **Expanded defining queries** (`$expand` + `track-changes`, 4.01 clients): membership and
+  member changes inside an expanded navigation report the OWNER, serialized with the FULL
+  current representation of the expanded navigation (the spec-legal alternative to nested
+  `nav@delta`). In-memory only (`DeltaService.supportsExpandTracking()`); 4.0 clients keep the
+  preference unapplied (4.0 requires the flattened form we do not emit).
+- **`PATCH Set` collection updates** ([OData-JSON] `"@context":"#$delta"` write payload):
+  upserts + `@removed` deletes in one request, all-or-nothing on transactional backends.
+  Not implemented (501): 4.0 flattened link objects, nested `nav@delta`, `@odata.bind` inside
+  the payload, `continue-on-error`.
+- Not covered (v1): paging within a delta response, `/$count` on a delta link, nested
+  `nav@delta` on the wire (full representations are emitted instead).
 
 ### Backends (behind the persistence SPIs)
 - **In-memory** (reference semantics): the `OclEvaluator` interprets the IR directly (three-valued
@@ -230,8 +240,10 @@ imports (`action*`, `POST` with a JSON body, `204` → null), bound functions (`
 
 ### Write
 `create` (deep insert of containment children), `update` (PATCH, minimal payload — only `eIsSet`
-features), `replace` (PUT), `delete`, and `$ref` management (`setReference` / `addReference` /
-`removeReference`). `If-Match` is passed through. Encoding uses the same E3 codec.
+features), `replace` (PUT), `delete`, `$ref` management (`setReference` / `addReference` /
+`removeReference`), and **`updateCollection(upserts, removedIds)`** — one `#$delta` PATCH that
+upserts and removes in a single, backend-transactional request. `If-Match` is passed through.
+Encoding uses the same E3 codec.
 
 **`@odata.bind` (2026-07-09):** `create` / `update` / `replace` take an optional
 `Map<String,?> bindings` that links the written entity to **already-existing** related entities —
@@ -258,14 +270,11 @@ origin is refused. `ODataClient` is `AutoCloseable` and closes only an `HttpClie
 ## Known gaps / not yet
 
 **Server:** Advanced is met and claimed on both versions — what remains is SHOULD/MAY-level:
-async / `Respond-Async`, `$crossjoin`/`$all` engines,
-`$top`/`$skip`/`$orderby`/`$count`/`$search`/`$levels` inside `$expand`/`$select`, nested
-parameter aliases. **Delta v1 limits**: no deltas
-of `$expand`ed relationships, no `PATCH` collection-update (`"@context":"#$delta"` write payload),
-no paging inside a delta response, no `/$count` on a delta link, no JPA `DeltaService`; a few 4.01
-Intermediate SHOULDs (query options on nav paths, some in-`$expand` options); the
-`ODataRequestFilter` refactor (req §5.1.1 — wrapping `RequestLimits`/parse validation in a
-whiteboard filter).
+async / `Respond-Async`, `$crossjoin`/`$all` engines, recursive `$levels`, nested parameter
+aliases. **Delta limits**: no paging inside a delta response, no `/$count` on a delta link,
+no nested `nav@delta` wire form (full expanded representations instead), no 4.0 flattened
+delta payloads, JPA expand-tracking; a few 4.01 Intermediate SHOULDs (query options on nav
+paths); the `ODataRequestFilter` refactor (req §5.1.1).
 
 **Client:** the Atlas-backed schema registry impl is downstream (ADR-0007). Decoding a
 `$expand=nav/$ref` response surfaces the references as empty entities (no dedicated

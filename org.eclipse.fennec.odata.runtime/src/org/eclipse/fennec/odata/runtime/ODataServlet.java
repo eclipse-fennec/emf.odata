@@ -271,7 +271,7 @@ public class ODataServlet extends HttpServlet {
 	 * Everything else present on a delta request → 400, the client MUST NOT append options.
 	 */
 	private static final Set<String> DELTA_LINK_OPTIONS = Set.of(
-			"$filter", "$search", "$select", "$compute", "$format");
+			"$filter", "$search", "$select", "$compute", "$format", "$expand");
 
 	/** The {@code odata.metadata=} format parameter of an Accept header or {@code $format}. */
 	private static final java.util.regex.Pattern METADATA_PARAM =
@@ -1264,6 +1264,11 @@ public class ODataServlet extends HttpServlet {
 			}
 			case "PATCH", "PUT" -> {
 				if (path.key() == null) {
+					if ("PATCH".equals(request.getMethod()) && path.segments().isEmpty()) {
+						// [OData-JSON] "Update a Collection of Entities": a delta payload
+						collectionUpdate(entityType, writeService, request, response);
+						return;
+					}
 					error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
 							request.getMethod() + " addresses one entity by key");
 					return;
@@ -1687,6 +1692,155 @@ public class ODataServlet extends HttpServlet {
 	 * extracted BEFORE decoding and returned as raw target keys per navigation.
 	 * Writes the error response and returns null for media-type, size and syntax violations.
 	 */
+	/**
+	 * {@code PATCH Set} with a delta payload ([OData-JSON] "Update a Collection of Entities"):
+	 * the body carries {@code "@context":"#$delta"} and a {@code value} array of added/changed
+	 * entities (applied as PATCH upserts) and {@code @removed} deleted-entity objects (applied
+	 * as deletes). Runs inside a backend transaction when available — without
+	 * {@code continue-on-error} support, the request is all-or-nothing. Not implemented (501):
+	 * 4.0 flattened link objects, nested {@code nav@delta} representations, {@code @odata.bind}.
+	 */
+	private void collectionUpdate(EClass entityType, WriteService writeService,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		String contentType = request.getContentType();
+		if (contentType == null
+				|| !contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
+			error(response, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE,
+					"write payloads must be application/json");
+			return;
+		}
+		byte[] body = request.getInputStream().readNBytes(limits.maxBodyBytes() + 1);
+		if (body.length > limits.maxBodyBytes()) {
+			error(response, 413, "payload exceeds the maximum size of "
+					+ limits.maxBodyBytes() + " bytes");
+			return;
+		}
+		JsonNode document;
+		try {
+			document = body.length == 0 ? null : JSON.readTree(body);
+		} catch (Exception e) {
+			document = null;
+		}
+		if (!(document instanceof ObjectNode envelope)) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+			return;
+		}
+		JsonNode context = envelope.has("@context") ? envelope.get("@context")
+				: envelope.get("@odata.context");
+		if (context == null || !context.asString().endsWith("#$delta")) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"collection updates carry \"@context\":\"#$delta\"");
+			return;
+		}
+		if (!(envelope.get("value") instanceof ArrayNode entries)) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"the delta payload carries no 'value' array");
+			return;
+		}
+		boolean transactional = writeService.transactional();
+		if (transactional) {
+			writeService.begin();
+		}
+		try {
+			for (JsonNode element : entries) {
+				applyDeltaEntry(element, entityType, writeService);
+			}
+			if (transactional) {
+				writeService.commit();
+			}
+		} catch (RuntimeException e) {
+			if (transactional) {
+				writeService.rollback(); // all-or-nothing: no continue-on-error support
+			}
+			throw e; // the write() catches map parse/backend failures to 400/501/409
+		}
+		response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+	}
+
+	/** One delta-payload entry: an {@code @removed} object → delete, anything else → upsert. */
+	private void applyDeltaEntry(JsonNode element, EClass entityType, WriteService writeService)
+			throws IOException {
+		if (!(element instanceof ObjectNode entry)) {
+			throw new IllegalArgumentException("delta entries must be JSON objects");
+		}
+		String entryContext = entry.has("@odata.context") ? entry.get("@odata.context").asString()
+				: entry.has("@context") ? entry.get("@context").asString() : "";
+		if (entryContext.contains("/$link") || entryContext.contains("/$deletedLink")) {
+			throw new UnsupportedOperationException(
+					"4.0 flattened link objects are not implemented");
+		}
+		List<String> members = entry.propertyStream().map(Map.Entry::getKey).toList();
+		for (String member : members) {
+			if (member.endsWith("@delta")) {
+				throw new UnsupportedOperationException(
+						"nested delta representations are not implemented");
+			}
+			if (member.endsWith("@odata.bind") || member.endsWith("@bind")) {
+				throw new UnsupportedOperationException(
+						"@odata.bind inside collection updates is not implemented");
+			}
+		}
+		boolean removed = entry.has("@removed") || entry.has("@odata.removed")
+				|| entryContext.contains("$deletedEntity");
+		if (removed) {
+			if (!writeService.delete(entityType, deltaEntryKey(entry, entityType))) {
+				throw new IllegalArgumentException("the delta removes an entity that does not exist");
+			}
+			return;
+		}
+		ObjectNode plain = entry.deepCopy(); // control information is not entity content
+		members.stream().filter(member -> member.contains("@")).forEach(plain::remove);
+		EObject payload = decodeEntity(JSON.writeValueAsBytes(plain), entityType);
+		writeService.update(entityType, deltaEntryKey(entry, entityType), payload, false);
+	}
+
+	/**
+	 * The addressed key of a delta entry: the {@code @id} control information
+	 * ({@code Set(key)} → the key literal) or the entry's key property. Compound key
+	 * predicates are not supported here (501 — the write SPI is single-raw-key).
+	 */
+	private String deltaEntryKey(ObjectNode entry, EClass entityType) {
+		JsonNode id = entry.has("@id") ? entry.get("@id") : entry.get("@odata.id");
+		if (id != null) {
+			String url = id.asString();
+			int open = url.lastIndexOf('(');
+			if (open < 0 || !url.endsWith(")")) {
+				throw new IllegalArgumentException("the entry's @id is not an entity id");
+			}
+			String literal = url.substring(open + 1, url.length() - 1);
+			if (literal.contains("=")) {
+				throw new UnsupportedOperationException(
+						"compound keys in collection updates are not implemented");
+			}
+			return literal;
+		}
+		EAttribute key = entityType.getEAllAttributes().stream()
+				.filter(EAttribute::isID).findFirst().orElse(null);
+		if (key == null || !entry.hasNonNull(key.getName())) {
+			throw new IllegalArgumentException(
+					"delta entries carry the @id control information or the key property");
+		}
+		return entry.get(key.getName()).asString();
+	}
+
+	/** Decodes one entity payload through the codec ({@code eIsSet} = "was in the payload"). */
+	private EObject decodeEntity(byte[] body, EClass entityType) throws IOException {
+		ODataJsonResourceImpl resource = new ODataJsonResourceImpl(
+				URI.createURI("request.odatajson"), metadataService);
+		Map<Object, Object> options = new HashMap<>();
+		options.put(CodecResource.CODEC_ROOT_TYPE, entityType);
+		try {
+			resource.load(new java.io.ByteArrayInputStream(body), options);
+		} catch (Exception e) {
+			throw new IllegalArgumentException("malformed payload");
+		}
+		if (resource.getContents().isEmpty()
+				|| !(resource.getContents().get(0) instanceof EObject entity)) {
+			throw new IllegalArgumentException("malformed payload");
+		}
+		return entity;
+	}
+
 	private WritePayload readPayload(HttpServletRequest request, HttpServletResponse response,
 			EClass entityType) throws IOException {
 		String contentType = request.getContentType();
@@ -2186,11 +2340,15 @@ public class ODataServlet extends HttpServlet {
 				expand.keySet()); // backends prefetch expanded navigations (no N+1, no lazy proxies)
 
 		// change tracking ([OData-Protocol] 11.3): a preference, applied only when the backend
-		// can track this type and the defining query stays inside the supported shape (no $expand
-		// v1). The token is taken BEFORE the query runs — a write racing the read is re-reported
-		// in the first delta rather than lost.
-		DeltaService deltaService = trackChangesRequested(request) && expand.isEmpty()
-				? deltaService(target.entityType()) : null;
+		// can track this type. Expanding defining queries additionally need an expand-capable
+		// backend AND a 4.01 client — 4.0 REQUIRES the flattened delta payload we do not emit.
+		// The token is taken BEFORE the query runs — a write racing the read is re-reported in
+		// the first delta rather than lost.
+		DeltaService candidate = trackChangesRequested(request)
+				? deltaService(target.entityType(), target.queryService()) : null;
+		DeltaService deltaService = candidate != null && (expand.isEmpty()
+				|| (candidate.supportsExpandTracking() && !"4.0".equals(negotiateVersion(request))))
+				? candidate : null;
 		String deltaToken = deltaService == null ? null
 				: deltaService.trackingToken(target.entityType());
 
@@ -2262,8 +2420,15 @@ public class ODataServlet extends HttpServlet {
 		return false;
 	}
 
-	private DeltaService deltaService(EClass entityType) {
-		return deltaServices.stream().filter(s -> s.supports(entityType)).findFirst().orElse(null);
+	/**
+	 * The delta backend for the type — preferring the one that IS the serving query backend
+	 * (the JPA service implements both), so tokens and data always come from the same journal.
+	 */
+	private DeltaService deltaService(EClass entityType, QueryService queryService) {
+		return deltaServices.stream()
+				.filter(s -> s == queryService).filter(s -> s.supports(entityType)).findFirst()
+				.orElseGet(() -> deltaServices.stream()
+						.filter(s -> s.supports(entityType)).findFirst().orElse(null));
 	}
 
 	/**
@@ -2314,19 +2479,32 @@ public class ODataServlet extends HttpServlet {
 				return;
 			}
 		}
-		DeltaService deltaService = deltaService(target.entityType());
+		DeltaService deltaService = deltaService(target.entityType(), target.queryService());
 		if (deltaService == null) {
 			error(response, 501, "change tracking is not supported for this entity set");
 			return;
 		}
 		EClass context = castType != null ? castType : target.entityType();
+		Map<String, ExpandItem> expand = expandOption(request, context);
+		if (!expand.isEmpty()) {
+			if ("4.0".equals(negotiateVersion(request))) {
+				// 4.0 deltas MUST flatten expanded changes into link objects ([OData-JSON]) —
+				// we emit the 4.01 form (full expanded representations) only
+				error(response, 501, "4.0 flattened delta payloads are not implemented");
+				return;
+			}
+			if (!deltaService.supportsExpandTracking()) {
+				error(response, 501, "expanded change tracking is not supported by this backend");
+				return;
+			}
+		}
 		Map<String, String> aliases = parameterAliases(request);
 		SelectTree select = selectOption(request, context);
 		EntityQuery definingQuery = new EntityQuery(target.entityType(), castType,
 				parseChecked(filterWithSearch(request, context),
 						filter -> aliases.isEmpty() ? parser.parseFilter(filter, context)
 								: parser.parseFilter(filter, context, aliases)),
-				List.of(), 0, -1, false);
+				List.of(), 0, -1, false, expand.keySet());
 
 		DeltaService.DeltaResult delta;
 		try {
@@ -2347,7 +2525,10 @@ public class ODataServlet extends HttpServlet {
 				json.append(',');
 			}
 			first = false;
-			json.append(entityJson(entity, context, select, Map.of()));
+			// upserts ride the regular expand pipeline: an expanding defining query serializes
+			// the FULL current representation of the expanded navigations ([OData-JSON] — the
+			// spec-legal alternative to nested delta representations)
+			json.append(entityJson(entity, context, select, expand));
 		}
 		boolean v40 = "4.0".equals(negotiateVersion(request));
 		for (DeltaService.Removal removal : delta.removals()) {

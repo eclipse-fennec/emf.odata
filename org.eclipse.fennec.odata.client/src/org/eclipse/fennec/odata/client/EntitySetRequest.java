@@ -435,6 +435,39 @@ public final class EntitySetRequest {
 	}
 
 	/**
+	 * Updates the collection with ONE delta request ([OData-JSON] "Update a Collection of
+	 * Entities"): {@code PATCH Set} with a {@code "@context":"#$delta"} payload — the
+	 * {@code upserts} apply as PATCH merges (unknown keys create), the {@code removedIds}
+	 * (entity ids like {@code Products('p1')}) delete. The server applies the batch
+	 * all-or-nothing when its backend is transactional.
+	 */
+	public void updateCollection(List<EObject> upserts, List<String> removedIds) {
+		StringBuilder body = new StringBuilder("{\"@context\":\"#$delta\",\"value\":[");
+		boolean first = true;
+		for (EObject upsert : upserts) {
+			if (!first) {
+				body.append(',');
+			}
+			first = false;
+			body.append(ODataJsonEncoder.encode(upsert, decodeType(), client.metadataService()));
+		}
+		for (String id : removedIds) {
+			if (!first) {
+				body.append(',');
+			}
+			first = false;
+			body.append("{\"@removed\":{\"reason\":\"deleted\"},\"@id\":\"")
+					.append(id.replace("\\", "\\\\").replace("\"", "\\\"")).append("\"}");
+		}
+		body.append("]}");
+		ODataClient.Response response = client.exchange("PATCH", setName, JSON, body.toString(),
+				JSON, writeHeaders(null));
+		if (response.status() != 204) {
+			throw failure("PATCH " + setName, response);
+		}
+	}
+
+	/**
 	 * Requests change tracking ([OData-Protocol] 11.3): {@link #list()} sends
 	 * {@code Prefer: odata.track-changes}; a supporting service answers with an
 	 * {@link ODataPage#deltaLink()} on the last page, to be followed with {@link #changes(String)}.

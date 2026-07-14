@@ -13,9 +13,13 @@
 package org.eclipse.fennec.odata.persistence.jpa;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.eclipse.emf.ecore.EAttribute;
@@ -24,8 +28,18 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
+import org.eclipse.fennec.m2x.model.ocl.CollectionKind;
+import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.OclExpression;
+import org.eclipse.fennec.m2x.model.ocl.OclFactory;
+import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
+import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
+import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
+import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
+import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
@@ -70,9 +84,9 @@ import jakarta.persistence.metamodel.EntityType;
  * without a pushdown raise {@link UnsupportedOperationException} — never a silently wrong
  * result (the servlet answers 501).
  */
-@Component(service = { QueryService.class, WriteService.class }, configurationPid = JpaQueryService.PID,
-		property = "fennec.odata.backend=jpa")
-public class JpaQueryService implements QueryService, WriteService {
+@Component(service = { QueryService.class, WriteService.class, DeltaService.class },
+		configurationPid = JpaQueryService.PID, property = "fennec.odata.backend=jpa")
+public class JpaQueryService implements QueryService, WriteService, DeltaService {
 
 	public static final String PID = "org.eclipse.fennec.odata.persistence.jpa";
 
@@ -95,6 +109,13 @@ public class JpaQueryService implements QueryService, WriteService {
 	 * finish them all. Absent (thread not in a group), each write runs in its own transaction as before.
 	 */
 	private final ThreadLocal<Map<EntityManagerFactory, EntityManager>> ambient = new ThreadLocal<>();
+
+	/**
+	 * Change journal for the {@link DeltaService} ([OData-Protocol] 11.3): records every write
+	 * that goes THROUGH this service — changes applied directly to the database bypass it and
+	 * are invisible to delta clients (documented service-layer tracking).
+	 */
+	private final ChangeJournal journal = new ChangeJournal(10_000);
 
 	@Activate
 	void activate(Map<String, Object> configuration) {
@@ -356,6 +377,7 @@ public class JpaQueryService implements QueryService, WriteService {
 			entity.eSet(keyAttribute(entityType), key); // copyFeatures leaves the key alone
 			em.persist(entity);
 			tx.commit();
+			journal.record(entityType, String.valueOf(key), ChangeJournal.keyValuesOf(entity), false);
 			return entity;
 		}
 	}
@@ -375,11 +397,15 @@ public class JpaQueryService implements QueryService, WriteService {
 				entity.eSet(id, key);
 				em.persist(entity);
 				tx.commit();
+				journal.record(entityType, String.valueOf(key),
+						ChangeJournal.keyValuesOf(entity), false);
 				return new WriteResult(entity, true);
 			}
 			copyFeatures(entityType, payload, existing, factory, replace);
 			existing.eSet(id, key); // the key is immutable
 			tx.commit();
+			journal.record(entityType, String.valueOf(key),
+					ChangeJournal.keyValuesOf(existing), false);
 			return new WriteResult(existing, false);
 		}
 	}
@@ -396,8 +422,10 @@ public class JpaQueryService implements QueryService, WriteService {
 			if (entity == null) {
 				return false; // Tx.close rolls back a private (empty) transaction
 			}
+			Map<String, Object> keyValues = ChangeJournal.keyValuesOf((EObject) entity);
 			em.remove(entity);
 			tx.commit();
+			journal.record(entityType, String.valueOf(key), keyValues, true);
 			return true;
 		}
 	}
@@ -413,6 +441,9 @@ public class JpaQueryService implements QueryService, WriteService {
 			em.persist(instance);
 			attach(owner, reference, instance);
 			tx.commit();
+			journal.record(instance.eClass(),
+					String.valueOf(instance.eGet(keyAttribute(instance.eClass()))),
+					ChangeJournal.keyValuesOf(instance), false);
 			return instance;
 		}
 	}
@@ -458,6 +489,82 @@ public class JpaQueryService implements QueryService, WriteService {
 		}
 	}
 
+	// --- delta side (change tracking, [OData-Protocol] 11.3) ---
+
+	@Override
+	public String trackingToken(EClass entityType) {
+		return journal.token();
+	}
+
+	/**
+	 * Changes since the token. Membership stays PUSHED DOWN: the defining filter is combined
+	 * with a {@code key IN (touched keys)} restriction and runs as ONE criteria query — never a
+	 * scan, never in-memory filtering. Touched keys the query does not return were deleted or
+	 * left the membership.
+	 */
+	@Override
+	public DeltaResult changesSince(EntityQuery query, String token) {
+		ChangeJournal.Window window = journal.since(token, query.entityType());
+		List<Removal> removals = new ArrayList<>();
+		Map<String, ChangeJournal.Change> touched = new LinkedHashMap<>();
+		for (ChangeJournal.Change change : window.changes()) {
+			if (change.deleted()) {
+				removals.add(new Removal(change.keyValues(), REASON_DELETED));
+			} else {
+				touched.put(change.storeKey(), change);
+			}
+		}
+		List<EObject> changed = List.of();
+		if (!touched.isEmpty()) {
+			QueryResult matched = execute(new EntityQuery(query.entityType(), query.castType(),
+					keyRestricted(query, touched.keySet()), List.of(), 0, -1, false));
+			changed = matched.entities();
+			EAttribute id = keyAttribute(query.entityType());
+			Set<String> matchedKeys = new HashSet<>();
+			for (EObject entity : changed) {
+				matchedKeys.add(String.valueOf(entity.eGet(id)));
+			}
+			touched.forEach((storeKey, change) -> {
+				if (!matchedKeys.contains(storeKey)) { // left the tracked membership (11.3.1)
+					removals.add(new Removal(change.keyValues(), REASON_CHANGED));
+				}
+			});
+		}
+		return new DeltaResult(changed, removals, window.nextToken());
+	}
+
+	/**
+	 * {@code <definingFilter> and key IN (touched)} as the OCL IR the translator already pushes
+	 * down ({@code Set{…}->includes(key)}). The defining filter is COPIED before it is combined —
+	 * the parsed AST may be shared through the parser cache, and EMF containment would reparent it.
+	 */
+	private OclExpression keyRestricted(EntityQuery query, Collection<String> storeKeys) {
+		OclFactory factory = OclFactory.eINSTANCE;
+		CollectionLiteralExp keys = factory.createCollectionLiteralExp();
+		keys.setKind(CollectionKind.SET);
+		for (String storeKey : storeKeys) {
+			CollectionItem item = factory.createCollectionItem();
+			StringLiteralExp literal = factory.createStringLiteralExp();
+			literal.setStringSymbol(storeKey); // the translator coerces onto the key's java type
+			item.setOwnedItem(literal);
+			keys.getOwnedParts().add(item);
+		}
+		PropertyCallExp key = factory.createPropertyCallExp();
+		key.setReferredProperty(keyAttribute(query.entityType()));
+		OperationCallExp includes = factory.createOperationCallExp();
+		includes.setName("includes");
+		includes.setOwnedSource(keys);
+		includes.getOwnedArguments().add(key);
+		if (query.filter() == null) {
+			return includes;
+		}
+		OperationCallExp and = factory.createOperationCallExp();
+		and.setName("and");
+		and.setOwnedSource(EcoreUtil.copy(query.filter()));
+		and.getOwnedArguments().add(includes);
+		return and;
+	}
+
 	// --- transactions (thread-bound; atomic $batch change sets) ---
 
 	@Override
@@ -474,16 +581,24 @@ public class JpaQueryService implements QueryService, WriteService {
 			managers.put(factory, em);
 		}
 		ambient.set(managers);
+		journal.begin();
 	}
 
 	@Override
 	public void commit() {
-		finishAmbient(true);
+		try {
+			finishAmbient(true);
+			journal.commit(); // changes become visible only once the database commit held
+		} catch (RuntimeException e) {
+			journal.rollback();
+			throw e;
+		}
 	}
 
 	@Override
 	public void rollback() {
 		finishAmbient(false);
+		journal.rollback();
 	}
 
 	private void finishAmbient(boolean commit) {

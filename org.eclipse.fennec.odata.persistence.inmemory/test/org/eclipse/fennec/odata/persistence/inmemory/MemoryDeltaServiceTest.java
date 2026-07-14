@@ -21,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Set;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
@@ -178,6 +179,50 @@ class MemoryDeltaServiceTest {
 		assertEquals(1, afterCommit.changed().size());
 		assertEquals("Committed",
 				afterCommit.changed().get(0).eGet(productClass.getEStructuralFeature("name")));
+	}
+
+	@Test
+	@DisplayName("expanded tracking: member and membership changes report the OWNER")
+	void expandTracking() {
+		EObject milk = product("p1", "Milk", "1.20");
+		EObject cable = product("p2", "Cable", "1.50");
+		repository.create(productClass, milk);
+		repository.create(productClass, cable);
+		String token = repository.trackingToken(productClass);
+
+		EntityQuery expanded = new EntityQuery(productClass, null,
+				parser.parseFilter("id eq 'p1'", productClass), List.of(), 0, -1, false,
+				Set.of("accessories"));
+
+		// membership change: linking reports the owner
+		repository.link(productClass, "'p1'", "accessories", "'p2'");
+		DeltaService.DeltaResult linked = repository.changesSince(expanded, token);
+		assertEquals(List.of("p1"), linked.changed().stream()
+				.map(e -> e.eGet(productClass.getEStructuralFeature("id"))).toList(),
+				"the owner reports — the payload carries the full expanded membership");
+
+		// member content change: renaming the accessory reports the owner too
+		String token2 = linked.nextToken();
+		repository.update(productClass, "'p2'", product("p2", "Golden Cable", "9.99"), false);
+		DeltaService.DeltaResult renamed = repository.changesSince(expanded, token2);
+		assertTrue(renamed.changed().stream()
+				.anyMatch(e -> "p1".equals(e.eGet(productClass.getEStructuralFeature("id")))),
+				"a change INSIDE the expanded navigation reports the owner: " + renamed.changed());
+
+		// without $expand the same window reports only the accessory itself
+		DeltaService.DeltaResult plain = repository.changesSince(
+				new EntityQuery(productClass, parser.parseFilter("id eq 'p1'", productClass),
+						List.of(), 0, -1, false), token2);
+		assertTrue(plain.changed().isEmpty(), "p2 fails the filter; p1 did not change structurally");
+
+		// unlink reports the owner again
+		String token3 = renamed.nextToken();
+		repository.unlink(productClass, "'p1'", "accessories", "'p2'");
+		DeltaService.DeltaResult unlinked = repository.changesSince(expanded, token3);
+		assertEquals(List.of("p1"), unlinked.changed().stream()
+				.map(e -> e.eGet(productClass.getEStructuralFeature("id"))).toList());
+
+		assertTrue(repository.supportsExpandTracking());
 	}
 
 	@Test

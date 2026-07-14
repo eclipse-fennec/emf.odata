@@ -566,3 +566,35 @@ $metadata, Re-Audit-Nachweis in odata-conformance-status.md):
   Property-Namen gewinnen die Auflösung; unbekannte Segmente bleiben 404.
 - **Client `references(key, nav)`**: `$ref`-Read-Parität — dekodiert Single- und
   Collection-Form (`@odata.id`/`@id`), 204 (null-Nav) → leere Liste.
+
+## Delta-Ausbau (2026-07-14)
+
+Die drei offenen Delta-Pakete:
+
+- **PATCH-Collection-Update** ([OData-JSON] „Update a Collection of Entities"):
+  `PATCH Set` + `"@context":"#$delta"` → `collectionUpdate()` (Route im PATCH/PUT-Zweig VOR dem
+  405): Upserts = PATCH-Merge über den Codec (Kontroll-Member vorher gestrippt, `decodeEntity`
+  aus readPayload extrahiert), `@removed` (beide Formen) = Delete per `@id`-Key oder
+  Key-Property; all-or-nothing via WriteService-Transaktion (Rollback bei jedem Fehler);
+  501 für 4.0-Link-Objekte, nested `nav@delta`, `@odata.bind`; fehlende Entity beim Remove →
+  400 (fail-fast, kein continue-on-error). Client: `updateCollection(upserts, removedIds)`.
+- **JPA-DeltaService**: `ChangeJournal` aus MemoryWriteRepository nach persistence.api
+  EXTRAHIERT (bounded Deque, Seq-Vergabe beim Commit, thread-lokaler Puffer; `since(token,
+  type)` mit null=alle — GOTCHA: `EOBJECT.isSuperTypeOf` greift bei dynamischen Klassen NICHT,
+  impliziter Supertyp). JpaQueryService journalt create/update/delete/createRelated NACH
+  erfolgreichem Commit (ambient Batch-TX: Puffer-Flush erst in commit(), nach dem DB-Commit);
+  `changesSince` = EINE Criteria-Query: Defining-Filter (KOPIERT — der Parser-Cache teilt
+  AST-Instanzen, EMF-Containment würde reparenten!) AND `key IN (touched)` als
+  `Set{…}->includes(key)`-AST → voller Pushdown; nicht gematchte touched Keys → removal.
+  Service-Layer-Journal: direkte DB-Änderungen sind unsichtbar (dokumentiert).
+- **$expand-Deltas** (4.01, in-memory): statt nested `nav@delta` die SPEC-LEGALE
+  Full-Representation (11.3.1/[OData-JSON]: expandierte Nav als vollständige aktuelle
+  Collection — Client wendet Replace an, keine Client-Änderung nötig!).
+  `DeltaService.supportsExpandTracking()` (Default false; Memory true); link/unlink/
+  createRelated journalen den OWNER; `changesSince` mit expand: Owner, deren expandierte Nav
+  ein geändertes Member enthält, werden als changed gemeldet (Journal-weites Fenster + Scan des
+  Tracked-Sets — Referenz-Backend-Semantik). Servlet: `$expand` in DELTA_LINK_OPTIONS,
+  Gate = expand-fähiges Backend UND 4.01-Client (4.0 verlangt flattened → Preference nicht
+  angewendet bzw. Delta-Link-Follow → 501); Upserts laufen durch die REGULÄRE Expand-Pipeline
+  (inkl. Nested-Options/Refs/Counts). DeltaService-Auswahl bevorzugt jetzt das Backend, das
+  auch die Query bedient (JPA implementiert beide — Token und Daten aus demselben Journal).
