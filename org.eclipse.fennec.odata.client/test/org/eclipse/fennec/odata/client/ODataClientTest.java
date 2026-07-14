@@ -246,6 +246,12 @@ class ODataClientTest {
 			} else if (path.endsWith("/Product('p1')/$value")) {
 				answer = "PNGDATA"; // the media entity's binary stream
 				contentType = "image/png";
+			} else if (path.endsWith("/category/$ref")) {
+				answer = "{\"@odata.context\":\"/odata/$metadata#$ref\","
+						+ "\"@odata.id\":\"Category('c1')\"}";
+			} else if (path.endsWith("/reviews/$ref")) {
+				answer = "{\"@odata.context\":\"/odata/$metadata#Collection($ref)\",\"value\":["
+						+ "{\"@odata.id\":\"Review(1)\"},{\"@odata.id\":\"Review(2)\"}]}";
 			} else if (path.endsWith("/name/$value")) {
 				answer = "Milk";
 				contentType = "text/plain;charset=UTF-8";
@@ -442,6 +448,16 @@ class ODataClientTest {
 		ODataClientException gone = assertThrows(ODataClientException.class,
 				() -> client.entitySet("Product").changes("/odata/Product?$deltatoken=gone"));
 		assertEquals(410, gone.status());
+	}
+
+	@Test
+	@DisplayName("references() reads entity ids from $ref — single and collection form")
+	void referenceReads() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		assertEquals(List.of("Category('c1')"),
+				client.entitySet("Product").references("'p1'", "category"));
+		assertEquals(List.of("Review(1)", "Review(2)"),
+				client.entitySet("Product").references("'p1'", "reviews"));
 	}
 
 	@Test

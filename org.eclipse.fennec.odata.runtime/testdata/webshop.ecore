@@ -47,6 +47,8 @@
       <eParameters name="id" lowerBound="1"
           eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
     </eOperations>
+    <eOperations name="summary" lowerBound="1"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
   </eClassifiers>
   <eClassifiers xsi:type="ecore:EClass" name="DiscountedProduct" eSuperTypes="#//Product">
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="discount"

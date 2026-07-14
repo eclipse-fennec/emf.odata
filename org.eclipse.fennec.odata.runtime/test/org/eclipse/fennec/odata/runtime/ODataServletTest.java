@@ -547,8 +547,8 @@ class ODataServletTest {
 		assertTrue(single.body().contains("\"great\"") && !single.body().contains("\"poor\""),
 				"single-entity reads filter the same way: " + single.body());
 
-		assertEquals(501, get("/Product", Map.of("$expand", "reviews($top=1)")).status(),
-				"other nested options are honestly unimplemented");
+		assertEquals(501, get("/Product", Map.of("$expand", "reviews($levels=2)")).status(),
+				"recursive $levels stays honestly unimplemented");
 		assertEquals(400, get("/Product", Map.of("$expand", "category($filter=name eq 'x')")).status(),
 				"nested $filter needs a collection-valued navigation");
 		assertEquals(400, get("/Product", Map.of("$expand", "reviews($filter=nosuch eq 1)")).status(),
@@ -1950,6 +1950,125 @@ class ODataServletTest {
 		reviews.add(review);
 		assertEquals(501, get("/Product", Map.of("$expand", "reviews/$ref")).status(),
 				"keyless containment children have no entity references");
+	}
+
+	@Test
+	@DisplayName("nested collection options in $expand and $select (Advanced 9.4–9.7 / 5.2–5.4)")
+	void nestedCollectionOptions() throws Exception {
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		EObject great = pkg.getEFactoryInstance().create(reviewClass);
+		great.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+		great.eSet(reviewClass.getEStructuralFeature("comment"), "great");
+		EObject good = pkg.getEFactoryInstance().create(reviewClass);
+		good.eSet(reviewClass.getEStructuralFeature("stars"), 4);
+		good.eSet(reviewClass.getEStructuralFeature("comment"), "good");
+		EObject meh = pkg.getEFactoryInstance().create(reviewClass);
+		meh.eSet(reviewClass.getEStructuralFeature("stars"), 2);
+		meh.eSet(reviewClass.getEStructuralFeature("comment"), "meh");
+		EObject milk = product("p1", "Milk", "1.20", null);
+		@SuppressWarnings("unchecked")
+		List<EObject> reviews = (List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews"));
+		reviews.addAll(List.of(meh, great, good));
+		backendResult = List.of(milk);
+
+		Response expand = get("/Product",
+				Map.of("$expand", "reviews($orderby=stars desc;$top=2;$count=true)"));
+		assertEquals(200, expand.status(), expand.body());
+		assertTrue(expand.body().contains("\"reviews@odata.count\":3"),
+				"the inline count is the pre-paging total: " + expand.body());
+		assertTrue(expand.body().indexOf("\"great\"") < expand.body().indexOf("\"good\""),
+				"ordered by stars desc: " + expand.body());
+		assertFalse(expand.body().contains("\"meh\""), "$top=2 drops the 2-star review");
+
+		Response searched = get("/Product", Map.of("$expand", "reviews($search=great)"));
+		assertEquals(200, searched.status(), searched.body());
+		assertTrue(searched.body().contains("\"great\"") && !searched.body().contains("\"good\""),
+				"$search matches the item type's string properties: " + searched.body());
+
+		Response select = get("/Product",
+				Map.of("$select", "name,reviews($orderby=stars asc;$top=1)"));
+		assertEquals(200, select.status(), select.body());
+		assertTrue(select.body().contains("\"meh\"") && !select.body().contains("\"great\""),
+				"selected collections order and page too: " + select.body());
+
+		Response selectCount = get("/Product", Map.of("$select", "name,reviews($count=true)"));
+		assertEquals(200, selectCount.status(), selectCount.body());
+		assertTrue(selectCount.body().contains("\"reviews@odata.count\":3"), selectCount.body());
+
+		Response skipped = get("/Product", Map.of("$expand", "reviews($orderby=stars desc;$skip=2)"));
+		assertTrue(skipped.body().contains("\"meh\"") && !skipped.body().contains("\"great\""),
+				"$skip drops the leading items: " + skipped.body());
+
+		assertEquals(400, get("/Product", Map.of("$select", "tags($search=x)")).status(),
+				"$search over a primitive collection has no property to match");
+		assertEquals(400, get("/Product", Map.of("$expand", "reviews($top=nope)")).status(),
+				"malformed nested $top");
+	}
+
+	@Test
+	@DisplayName("4.01 URL variants (13.2.1/9.3+9.5): parenless and unqualified operation calls")
+	void operationUrlVariants() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		servlet.addOperationHandler(new ODataOperationHandler() {
+			@Override
+			public boolean handles(String qualifiedOperationName) {
+				return qualifiedOperationName.endsWith(".featured")
+						|| qualifiedOperationName.endsWith(".summary")
+						|| qualifiedOperationName.endsWith(".label");
+			}
+
+			@Override
+			public Object invoke(org.eclipse.emf.ecore.EOperation operation, EObject boundInstance,
+					Map<String, Object> parameters) {
+				return switch (operation.getName()) {
+					case "featured" -> product("p9", "Featured", "9.99", null);
+					case "summary" -> "a summary";
+					default -> parameters.getOrDefault("prefix", "?") + ":labelled";
+				};
+			}
+		});
+
+		// 9.3: parameterless function import WITHOUT parentheses
+		Response parenless = get("/featured", Map.of());
+		assertEquals(200, parenless.status(), parenless.body());
+		assertTrue(parenless.body().contains("\"Featured\""), parenless.body());
+
+		// 9.3: parameterless BOUND function without parentheses — qualified and unqualified
+		Response qualified = get("/Product('p1')/webshop.summary", Map.of());
+		assertEquals(200, qualified.status(), qualified.body());
+		assertTrue(qualified.body().contains("a summary"), qualified.body());
+		Response unqualifiedParenless = get("/Product('p1')/summary", Map.of());
+		assertEquals(200, unqualifiedParenless.status(), unqualifiedParenless.body());
+
+		// 9.5: unqualified (default-namespace) bound function WITH parameters
+		Response unqualified = get("/Product('p1')/label(prefix='X')", Map.of());
+		assertEquals(200, unqualified.status(), unqualified.body());
+		assertTrue(unqualified.body().contains("X:labelled"), unqualified.body());
+
+		// 9.5: unqualified bound action (POST, parameters in the body)
+		Response action = callWrite("POST", "/Product('p1')/label",
+				"{\"prefix\":\"Y\"}", "application/json");
+		assertEquals(200, action.status(), action.body());
+		assertTrue(action.body().contains("Y:labelled"), action.body());
+
+		// 9.4: an action import invoked WITHOUT a body (empty parameter set)
+		servlet.addOperationHandler(new ODataOperationHandler() {
+			@Override
+			public boolean handles(String qualifiedOperationName) {
+				return qualifiedOperationName.endsWith(".touch");
+			}
+
+			@Override
+			public Object invoke(org.eclipse.emf.ecore.EOperation operation, EObject boundInstance,
+					Map<String, Object> parameters) {
+				return null; // void action
+			}
+		});
+		assertEquals(204, callWrite("POST", "/touch", "", "application/json").status(),
+				"an empty body is a legal parameterless invocation");
+
+		// properties still win the name lookup — an unknown bare segment stays a 404
+		assertEquals(404, get("/Product('p1')/nosuch", Map.of()).status());
 	}
 
 	@Test

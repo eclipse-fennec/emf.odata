@@ -62,6 +62,35 @@ final class ODataJsonDecoder {
 		return new ODataPage(entities, totalCount, nextLink, link(root, "deltaLink"));
 	}
 
+	/**
+	 * Decodes a {@code $ref} read ([OData-Protocol] 11.2.8): a single entity-reference object
+	 * or a {@code value} collection of them → the entity ids (e.g. {@code Products('p1')}).
+	 */
+	static List<String> referenceIds(String json) {
+		JsonNode root = parse(json);
+		JsonNode value = root.get("value");
+		List<String> ids = new ArrayList<>();
+		if (value != null && value.isArray()) {
+			for (JsonNode element : value) {
+				String id = referenceId(element);
+				if (id != null) {
+					ids.add(id);
+				}
+			}
+			return ids;
+		}
+		String id = referenceId(root);
+		if (id != null) {
+			ids.add(id);
+		}
+		return ids;
+	}
+
+	private static String referenceId(JsonNode node) {
+		JsonNode id = node.has("@odata.id") ? node.get("@odata.id") : node.get("@id");
+		return id == null ? null : id.asString();
+	}
+
 	/** An {@code @odata.}-prefixed or 4.01 prefix-free control link of the envelope, or null. */
 	private static String link(JsonNode root, String name) {
 		JsonNode value = root.has("@odata." + name) ? root.get("@odata." + name)

@@ -292,6 +292,19 @@ public final class EntitySetRequest {
 		return client.fetch(entityPath(keyLiteral) + "/" + property + "/$value", "text/plain");
 	}
 
+	/**
+	 * {@code GET Set(key)/nav/$ref} ([OData-Protocol] 11.2.8): the entity reference id(s) of a
+	 * navigation — ids only, no entity content. A single-valued navigation yields at most one
+	 * id (an empty list when it is null); pass {@code null} to read the entity's own reference.
+	 */
+	public List<String> references(String keyLiteral, String navigation) {
+		String path = entityPath(keyLiteral)
+				+ (navigation == null ? "" : "/" + navigation) + "/$ref";
+		String body = client.fetch(path, jsonAccept());
+		return body == null || body.isBlank() // a null single navigation answers 204
+				? List.of() : ODataJsonDecoder.referenceIds(body);
+	}
+
 	/** {@code GET Set(key)/nav/$count} → the size of a collection-valued navigation. */
 	public long navigationCount(String keyLiteral, String navigation) {
 		String answer = client.fetch(

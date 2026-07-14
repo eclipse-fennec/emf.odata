@@ -544,3 +544,25 @@ $metadata, Re-Audit-Nachweis in odata-conformance-status.md):
   SHOULDs/MAYs: async, Cross-Join, Expand-Sub-Optionen 9.4–9.8, Select-Sub-Optionen 5.2–5.5,
   verschachtelte Parameter-Aliase. `ConformanceLevel`-Annotation: Minimal → (kurz
   Intermediate) → **Advanced**.
+
+
+## Advanced-SHOULDs + Item-9-Varianten + Client-$ref (2026-07-14, nach dem Claim)
+
+- **Expand-/Select-Sub-Optionen (9.4–9.7 / 5.2–5.5)**: gemeinsames `CollectionOptions`-Record
+  (filter/orderBy/skip/top/count; `$search` faltet als AND in den Filter — Mapping über
+  `searchExpression()` = derselbe contains-OR-Trick wie Top-Level) + `Accumulator` für die
+  `;`-Listen; `NestedOptionParser`-Interface (Servlet liefert den geführten Parser, SelectTree
+  bleibt reine Struktur). ANWENDUNG im `EntityShaper` (eigener `OclEvaluator`, die
+  BiPredicate-Callbacks vom 13.07. sind wieder raus): filter → count → orderby → skip/top,
+  VOR dem Pruning; Inline-Counts werden als `name@odata.count` in das Entity-JSON gespliced
+  (IEEE754-bewusst via countValue). Select-`$count` unterhalb Top-Level → 501 (Splice nicht
+  ausdrückbar); `$search` auf primitiven Collections → 400 (keine String-Properties);
+  `$levels`/nested `$select`-in-`$expand` → 501.
+- **4.01-Minimal Item-9-URL-Varianten** (Audit-Caveat zu): parameterlose Imports ohne Klammern
+  (`GET /Func` → functionImport(name+"()")), bound parenlos qualifiziert UND unqualifiziert
+  (walk-Fallbacks: PropertySegment/TypeCastSegment-Miss → Bound-Op-Lookup, `invokeBoundFunction`
+  aus boundFunction extrahiert), unqualifizierte bound ACTIONS (dispatchWrite: PropertySegment
+  ≠ Feature + Bound-Op → boundAction), Action ohne Body (leere Parameter, war schon da).
+  Property-Namen gewinnen die Auflösung; unbekannte Segmente bleiben 404.
+- **Client `references(key, nav)`**: `$ref`-Read-Parität — dekodiert Single- und
+  Collection-Form (`@odata.id`/`@id`), 204 (null-Nav) → leere Liste.

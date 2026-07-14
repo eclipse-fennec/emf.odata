@@ -63,8 +63,8 @@ but unimplemented (`$skiptoken`, `$id`, `$index`, `$schemaversion`, `$levels`) r
 | `$orderby` | multi-key, `asc`/`desc` |
 | `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) |
 | `$count` | `$count=true` inline, the `/$count` path segment (with `$filter`), and filtered/**searched** counts in expressions (`path/$count($filter=…)`, `path/$count($search=…)`) |
-| `$select` | including **nested `$select`** (`SelectTree`, key survives at every level) and **`$filter` on selected collections** (nav collections against the target type, primitive collections via `$it`; filters run BEFORE pruning) |
-| `$expand` | including **`$filter` inside `$expand`** (parsed against the target type, applied to shaped copies), **`nav/$ref`** reference expansion (`{"@odata.id":…}` objects, [OData-URL] 5.1.3.1) and **cast-in-expand** `nav/Ns.Type` (only derived instances, combinable with a nested `$filter` against the derived type); other nested options → 501 |
+| `$select` | **nested `$select`** (`SelectTree`, key survives at every level) plus the collection options **`$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`** on selected collections (nav collections against the target type, primitive collections via `$it`; everything runs BEFORE pruning, so expressions may reference projected-away properties) |
+| `$expand` | nested **`$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`** (applied to shaped copies against the target type; the inline count splices as `nav@odata.count`), **`nav/$ref`** reference expansion (`{"@odata.id":…}` objects) and **cast-in-expand** `nav/Ns.Type` (only derived instances); `$levels`/nested `$select` → 501 |
 | `$search` | server-side, pushed down to both backends |
 | `$compute` | server-side computed properties |
 | `$apply` | aggregation submodel: `groupby` (incl. `rollup` grouping sets), `aggregate` (sum/min/max/average/countdistinct/$count), `compute`, `filter`, `topcount`/`topsum`/`toppercent`+`bottom*`, `concat`, `top`/`skip`, `orderby`, `identity` (in-memory; JPA pushes groupby/aggregate/filter/compute down, rest → 501); `from`/custom aggregates/structure trafos parse → 501; combinable with `$filter`/`$orderby`/`$skip`/`$top`/`$count` (run after the pipeline) |
@@ -120,7 +120,10 @@ Path length and segment count are capped before parsing.
 ### Operations (via `ODataOperationHandler` SPI)
 Unbound **function imports** (`GET Name(p=…)`), unbound **action imports** (`POST Name` with a JSON
 body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
-(`POST Set(key)/Ns.Action` with the parameters in the JSON body).
+(`POST Set(key)/Ns.Action` with the parameters in the JSON body). 4.01 URL variants
+(13.2.1/9.3–9.5): parameterless invocations WITHOUT parentheses (`GET /Func`,
+`Set(key)/[Ns.]Func`), actions without a body, and unqualified default-namespace calls
+(functions and actions).
 
 ### Change tracking ([OData-Protocol] 11.3, via `DeltaService` SPI)
 - `Prefer: odata.track-changes` on a collection GET → `Preference-Applied` and an
@@ -208,6 +211,10 @@ All server query options (`filter`/`orderBy`/`top`/`skip`/`count`/`select`/`expa
 **URL/format opt-ins:** `keyAsSegment()` addresses entities as `Set/key` ([OData-URL] 4.3.1);
 `ieee754()` negotiates `IEEE754Compatible=true` and decodes the string-encoded Int64/Decimal
 values exactly.
+
+**`$ref` reads:** `references(keyLiteral, navigation)` returns the entity ids of a navigation
+(`GET Set(key)/nav/$ref`) — single and collection form, `null` navigation for the entity's own
+reference.
 
 **Change tracking:** `trackChanges()` sends `Prefer: odata.track-changes`; the tracked page's
 `deltaLink()` feeds `changes(deltaLink)` → an `ODataDelta` of upserts (typed `EObject`s with their

@@ -63,6 +63,7 @@ ODataPage next = client.entitySet("Product").nextPage(page);   // follows @odata
 EObject cat  = client.entitySet("Product").navigateEntity("'p1'", "category");
 ODataPage rv = client.entitySet("Product").navigateCollection("'p1'", "reviews");
 String name  = client.entitySet("Product").propertyValue("'p1'", "name");   // /$value
+List<String> refs = client.entitySet("Product").references("'p1'", "reviews"); // /$ref → ids
 
 // $compute / $apply as rows
 List<ComputedRow> rows = client.entitySet("Product").compute("price mul 1.19 as gross").listComputed();

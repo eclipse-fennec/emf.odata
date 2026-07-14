@@ -36,8 +36,8 @@ Spec documents (OASIS OData **v4.01**):
 | `$orderby` | Order a collection | ✅ | URL Conv. §5.1.4 |
 | `$top` / `$skip` | Paging | ✅ | URL Conv. §5.1.5 / §5.1.6 |
 | `$count` (inline + `/$count`) | Count | ✅ | URL Conv. §5.1.7 |
-| `$select` (incl. nested `$select` and `$filter` on selected collections) | Project properties | ✅ | URL Conv. §5.1.3 |
-| `$expand` (incl. `$filter` inside, `nav/$ref` reference expansion, cast-in-expand `nav/Ns.Type`) | Expand related | ✅ (other nested options → 501) | URL Conv. §5.1.2/5.1.3 |
+| `$select` (nested `$select`; `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count` on selected collections) | Project properties | ✅ (`$count` below top level → 501) | URL Conv. §5.1.3 |
+| `$expand` (nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, `nav/$ref` reference expansion, cast-in-expand `nav/Ns.Type`) | Expand related | ✅ (`$levels`/nested `$select` → 501) | URL Conv. §5.1.2/5.1.3 |
 | `$search` | Free-text search | ✅ | URL Conv. §5.1.8 |
 | `$compute` | Computed properties | ✅ | URL Conv. §5.1.9 |
 | `$apply` | Aggregation | ✅ (see below) | Data Aggregation §3 |
@@ -121,6 +121,7 @@ Spec documents (OASIS OData **v4.01**):
 | Unbound action import (`POST Name`) | ✅ | Protocol §11.5.4 |
 | Bound function (`GET Set(key)/Ns.Func(...)`) | ✅ | Protocol §11.5.4.1 |
 | Bound action (`POST Set(key)/Ns.Action`) | ✅ | Protocol §11.5.4.2 |
+| Parenless parameterless calls (`GET /Func`, `Set(key)/Func`) and unqualified default-namespace calls | ✅ (4.01 13.2.1/9.3+9.5) | Protocol §11.5.4 |
 
 ## Formats, headers & versioning
 
@@ -154,6 +155,7 @@ Spec documents (OASIS OData **v4.01**):
 | Container singletons (`singleton(name)` → `GET /Me`) | ✅ | URL Conv. §4.3 |
 | Media entities (`mediaRead`/`mediaWrite` → `Set(key)/$value`) | ✅ | Protocol §11.2.4/11.4.7 |
 | Delta / change tracking (`trackChanges()` → `ODataPage.deltaLink()`, `changes(link)` → `ODataDelta`; decodes both wire forms) | ✅ | Protocol §11.3 |
+| `$ref` reads (`references(key, nav)` → entity ids) | ✅ | Protocol §11.2.8 |
 | Key-as-segment emission (`keyAsSegment()`), `IEEE754Compatible` negotiation + exact decode (`ieee754()`) | ✅ | URL Conv. §4.3.1; JSON Format §8.1 |
 
 All of the above is proven against real systems: the live interop suite runs the client against

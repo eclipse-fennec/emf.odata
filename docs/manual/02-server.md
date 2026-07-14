@@ -57,8 +57,8 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 | `$orderby` | multi-key, `asc`/`desc` |
 | `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) |
 | `$count` | `$count=true` inline, the `/$count` segment, filtered/searched counts in expressions (`$count($filter=…)`, `$count($search=…)`) |
-| `$select` | including **nested** `$select` and **`$filter` on selected collections** (nav collections against the target type, primitive collections via `$it`) |
-| `$expand` | incl. **`$filter` inside**, **`nav/$ref`** reference expansion and **cast-in-expand** `nav/Ns.Type` |
+| `$select` | nested `$select` plus `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count` on selected collections (nav collections against the target type, primitive collections via `$it`) |
+| `$expand` | nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, **`nav/$ref`** reference expansion, **cast-in-expand** `nav/Ns.Type` (`$levels` → 501) |
 | `$search` | free-text, pushed to the backend |
 | `$compute` | server-computed properties (`price mul 1.19 as gross`) |
 | `$apply` | aggregation (see below) |

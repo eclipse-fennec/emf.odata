@@ -13,9 +13,11 @@
 package org.eclipse.fennec.odata.runtime;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.function.BiPredicate;
 
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
@@ -23,7 +25,8 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
-import org.eclipse.fennec.m2x.model.ocl.OclExpression;
+import org.eclipse.fennec.odata.query.OclEvaluator;
+import org.eclipse.fennec.odata.query.OrderBySegment;
 
 /**
  * Applies {@code $select}/{@code $expand} to serialization copies of entities. Copying is
@@ -35,6 +38,9 @@ import org.eclipse.fennec.m2x.model.ocl.OclExpression;
  * ([OData-URL] 5.1.3, 4.01) prune the selected structured values recursively.
  */
 public class EntityShaper {
+
+	/** Evaluates nested collection options on shaped copies (never on backend objects). */
+	private final OclEvaluator evaluator = new OclEvaluator();
 
 	/**
 	 * @param select        validated {@code $select} tree, or null when absent
@@ -49,12 +55,14 @@ public class EntityShaper {
 	}
 
 	/**
-	 * {@link #shape} additionally evaluating nested {@code $select} filters ([OData-URL] 5.1.3,
-	 * 4.01 Advanced): {@code selectFilter} decides whether a collection item stays. The filters
-	 * run BEFORE pruning — their predicates may reference properties the projection drops.
+	 * {@link #shape} additionally evaluating the nested {@code $select} collection options
+	 * ([OData-URL] 5.1.3, 4.01 Advanced §13.2.3/5.1–5.4) — filter/search, ordering and paging
+	 * run BEFORE pruning, so their expressions may reference properties the projection drops.
+	 * {@code selectCounts}, when non-null, receives the requested inline counts of TOP-LEVEL
+	 * selected collections (property name → filtered, pre-paging count).
 	 */
 	public EObject shape(EObject entity, EClass entityType, SelectTree select, Set<String> expand,
-			List<EObject> expandedRoots, BiPredicate<OclExpression, Object> selectFilter) {
+			List<EObject> expandedRoots, Map<String, Long> selectCounts) {
 		EcoreUtil.Copier copier = new EcoreUtil.Copier();
 		EObject copy = copier.copy(entity);
 		for (String name : expand) {
@@ -76,9 +84,7 @@ public class EntityShaper {
 			}
 		}
 		if (select != null) {
-			if (selectFilter != null) {
-				filterSelected(copy, entityType, select, selectFilter);
-			}
+			applySelectOptions(copy, entityType, select, selectCounts);
 			prune(copy, entityType, select, expand);
 		}
 		if (expandedRoots != null) {
@@ -88,12 +94,13 @@ public class EntityShaper {
 	}
 
 	/**
-	 * Nested {@code $select} filters, recursively along the selection tree: collection items
-	 * that fail their filter are removed (navigation targets match against their type,
-	 * primitive items as {@code $it}).
+	 * Nested {@code $select} collection options, recursively along the selection tree:
+	 * filter/search prune items (navigation targets match against their type, primitive items
+	 * as {@code $it}), then ordering and paging apply; requested counts of top-level
+	 * collections land in {@code counts}.
 	 */
-	private void filterSelected(EObject copy, EClass type, SelectTree select,
-			BiPredicate<OclExpression, Object> matcher) {
+	private void applySelectOptions(EObject copy, EClass type, SelectTree select,
+			Map<String, Long> counts) {
 		for (String name : select.names()) {
 			SelectTree child = select.child(name);
 			EStructuralFeature feature = type.getEStructuralFeature(name);
@@ -101,8 +108,11 @@ public class EntityShaper {
 				continue;
 			}
 			Object value = copy.eGet(feature);
-			if (child.filter() != null && value instanceof List<?> items) {
-				items.removeIf(item -> !matcher.test(child.filter(), item));
+			if (value instanceof List<?> items && !child.options().isNone()) {
+				long total = applyOptions(items, child.options());
+				if (child.options().count() && counts != null) {
+					counts.put(name, total);
+				}
 			}
 			if (child.isLeaf() || !(feature.getEType() instanceof EClass childType)) {
 				continue;
@@ -110,13 +120,64 @@ public class EntityShaper {
 			if (value instanceof List<?> items) {
 				for (Object item : items) {
 					if (item instanceof EObject nested) {
-						filterSelected(nested, childType, child, matcher);
+						applySelectOptions(nested, childType, child, null);
 					}
 				}
 			} else if (value instanceof EObject nested) {
-				filterSelected(nested, childType, child, matcher);
+				applySelectOptions(nested, childType, child, null);
 			}
 		}
+	}
+
+	/**
+	 * Applies {@link CollectionOptions} to a shaped, MUTABLE item list in the OData option
+	 * order — filter, count, order, skip/top — and returns the filtered, pre-paging total.
+	 */
+	long applyOptions(List<?> items, CollectionOptions options) {
+		@SuppressWarnings("unchecked")
+		List<Object> mutable = (List<Object>) items;
+		if (options.filter() != null) {
+			mutable.removeIf(item -> !evaluator.matchesNullSafe(options.filter(), item));
+		}
+		long total = mutable.size();
+		if (!options.orderBy().isEmpty()) {
+			mutable.sort(comparator(options.orderBy()));
+		}
+		if (options.skip() > 0 || options.top() >= 0) {
+			int from = Math.min(options.skip(), mutable.size());
+			int to = options.top() < 0 ? mutable.size()
+					: Math.min(from + options.top(), mutable.size());
+			List<Object> page = new ArrayList<>(mutable.subList(from, to));
+			mutable.clear();
+			mutable.addAll(page);
+		}
+		return total;
+	}
+
+	/** Multi-key comparator over the evaluated order-by expressions (null-safe, like SQL). */
+	private Comparator<Object> comparator(List<OrderBySegment> segments) {
+		Comparator<Object> comparator = null;
+		for (OrderBySegment segment : segments) {
+			Comparator<Object> byKey = (a, b) -> compareValues(
+					evaluator.evaluate(segment.expression(), a),
+					evaluator.evaluate(segment.expression(), b));
+			if (!segment.ascending()) {
+				byKey = byKey.reversed();
+			}
+			comparator = comparator == null ? byKey : comparator.thenComparing(byKey);
+		}
+		return comparator;
+	}
+
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private static int compareValues(Object left, Object right) {
+		if (left == null || right == null) {
+			return left == right ? 0 : left == null ? -1 : 1; // nulls first, both directions
+		}
+		if (left instanceof Comparable comparable && right.getClass() == left.getClass()) {
+			return comparable.compareTo(right);
+		}
+		return String.valueOf(left).compareTo(String.valueOf(right));
 	}
 
 	/** Keeps selected/expanded/key features; nested trees prune the structured values. */
@@ -150,16 +211,10 @@ public class EntityShaper {
 	/** All shaped copies plus the expanded targets as extra roots (self-contained document). */
 	public List<EObject> shapeAll(List<EObject> entities, EClass entityType, SelectTree select,
 			Set<String> expand) {
-		return shapeAll(entities, entityType, select, expand, null);
-	}
-
-	/** {@link #shapeAll} additionally evaluating nested {@code $select} filters. */
-	public List<EObject> shapeAll(List<EObject> entities, EClass entityType, SelectTree select,
-			Set<String> expand, BiPredicate<OclExpression, Object> selectFilter) {
 		List<EObject> roots = new ArrayList<>();
 		List<EObject> expandedRoots = new ArrayList<>();
 		for (EObject entity : entities) {
-			roots.add(shape(entity, entityType, select, expand, expandedRoots, selectFilter));
+			roots.add(shape(entity, entityType, select, expand, expandedRoots, null));
 		}
 		roots.addAll(expandedRoots);
 		return roots;
