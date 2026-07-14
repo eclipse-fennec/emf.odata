@@ -111,6 +111,19 @@ class JpaQueryServiceTest extends JpaWebshopTestBase {
 	}
 
 	@Test
+	@DisplayName("rounding functions push down (round = half away from zero)")
+	void roundingFunctions() {
+		assertEquals(List.of("Milk"), names(query("floor(price) eq 1", null, 0, -1, false)),
+				"1.20 floors to 1; 0.90 floors to 0");
+		assertEquals(List.of("Bread"), names(query("ceiling(price) eq 3", null, 0, -1, false)),
+				"2.80 ceils to 3");
+		assertEquals(List.of("Milk", "SaleMilk"),
+				names(query("round(price) eq 1", "name asc", 0, -1, false)),
+				"1.20 and 0.90 both round to 1");
+		assertEquals(List.of("Cheese"), names(query("round(price) gt 2 and rating eq 5", null, 0, -1, false)));
+	}
+
+	@Test
 	@DisplayName("derived-type cast pushes down as TYPE() restriction")
 	void derivedTypeCast() {
 		QueryResult cast = service.execute(new EntityQuery(productClass, discountedClass,

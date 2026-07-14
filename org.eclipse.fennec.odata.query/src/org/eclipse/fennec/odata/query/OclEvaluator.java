@@ -216,6 +216,11 @@ public class OclEvaluator {
 						: evaluate(op.getOwnedSource(), self, bindings);
 				return typeOperation(name, value, args);
 			}
+			case "$it" -> {
+				// bare instance reference ([OData-URL] 5.1.1.13.1): the evaluated row/item
+				// itself — e.g. a primitive collection item in a nested $select filter
+				return self;
+			}
 			default -> { /* fall through to value-based dispatch */ }
 		}
 

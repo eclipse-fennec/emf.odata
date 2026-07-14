@@ -33,6 +33,7 @@ property `fennec.odata.backend=jpa`.
 | `GET /odata/{Set}({key})` | single entity by key |
 | `GET /odata/{Set}({key})/{nav}` | navigation (entity or collection) |
 | `GET /odata/{Set}({key})/{prop}/$value` | raw property/enum value |
+| `GET /odata/{Set}({key})[/{nav}]/$ref` | entity reference(s) — ids only |
 | `GET /odata/{Set}/$count`, `…/{nav}/$count` | count (honours `$filter`) |
 | `GET /odata/{Set}(k1=v1,k2=v2)` | composite / named key predicate |
 | `GET /odata/{Set}/{key}` | key-as-segment (4.01 MAY; properties win on ambiguity) |
@@ -55,9 +56,9 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 | `$filter` | full expression surface → OCL IR (see below) |
 | `$orderby` | multi-key, `asc`/`desc` |
 | `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) |
-| `$count` | `$count=true` inline and the `/$count` segment |
-| `$select` | including **nested** `$select` |
-| `$expand` | including **`$filter` inside `$expand`** (parsed against the target type) |
+| `$count` | `$count=true` inline, the `/$count` segment, filtered/searched counts in expressions (`$count($filter=…)`, `$count($search=…)`) |
+| `$select` | including **nested** `$select` and **`$filter` on selected collections** (nav collections against the target type, primitive collections via `$it`) |
+| `$expand` | incl. **`$filter` inside**, **`nav/$ref`** reference expansion and **cast-in-expand** `nav/Ns.Type` |
 | `$search` | free-text, pushed to the backend |
 | `$compute` | server-computed properties (`price mul 1.19 as gross`) |
 | `$apply` | aggregation (see below) |
@@ -70,7 +71,7 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 **`$filter` surface:** comparison/logical/arithmetic operators (`eq ne gt ge lt le`,
 `and or not`, `add sub mul div mod`, `divby`, unary minus), string functions
 (`contains`/`startswith`/`endswith`/`tolower`/`toupper`/`trim`/`length`/`indexof`/`substring`/`concat`),
-date functions (`year`…`second`), `in` (incl. the JSON-array form), lambdas (`any`/`all`),
+date functions (`year`…`second`), rounding functions (`round`/`floor`/`ceiling`), `in` (incl. the JSON-array form), lambdas (`any`/`all`),
 `cast`/`isof` (also inside expression paths), `$count` on collection paths (incl. filtered
 `$count($filter=…)`), bound functions in member paths, `$it`/`$this`, and typed literals
 (Date/DateTimeOffset/TimeOfDay/Guid/Duration/enum incl. flags, `NaN`/`INF`, `binary'…'`).

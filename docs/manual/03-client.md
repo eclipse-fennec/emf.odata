@@ -70,7 +70,9 @@ List<Map<String,Object>> agg = client.entitySet("Product")
     .apply("groupby((category/name),aggregate(price with sum as Total))");
 ```
 
-Expanded navigations decode inline into the typed `EObject` graph.
+Expanded navigations decode inline into the typed `EObject` graph. Two per-request opt-ins:
+`keyAsSegment()` addresses entities as `Set/key` instead of `Set(key)`, and `ieee754()`
+negotiates `IEEE754Compatible=true` so `Edm.Int64`/`Edm.Decimal` above 2^53 survive exactly.
 
 ## Change tracking
 

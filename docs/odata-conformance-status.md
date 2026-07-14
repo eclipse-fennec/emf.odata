@@ -2,7 +2,9 @@
 
 Status: 2026-07-08 (Neubewertung; siehe **Gesamturteil** unten), nachgeführt 2026-07-13
 (Multipart-`$batch`, CSDL-JSON, `metadata=full/none`, IEEE754Compatible, Key-as-Segment,
-gefiltertes `$count`, `/$filter`-Segment, Delta/Change-Tracking sind seitdem umgesetzt). Bewertet gegen die vendorten Spec-Artefakte in `reference/specs/`:
+gefiltertes `$count`, `/$filter`-Segment, Delta/Change-Tracking sind seitdem umgesetzt).
+**Re-Audit 2026-07-14: 4.0 UND 4.01 Advanced sind klauselweise erfüllt und werden beansprucht**
+(`ConformanceLevel=Advanced` im `$metadata`) — Klausel-Nachweis im Gesamturteil unten. Bewertet gegen die vendorten Spec-Artefakte in `reference/specs/`:
 Part 1 Protocol (§13.1/§13.2), Part 2 URL Conventions, `odata-abnf-construction-rules.txt`
 (normative Grammatik) und `odata-abnf-testcases.xml` (identisch mit der Test-Kopie im
 Query-Bundle, per MD5 verifiziert).
@@ -29,25 +31,32 @@ Bewertet gegen den vollständigen §13-Klauselkatalog (Part 1 Protocol, 4.0-Leve
 | **4.01 Minimal (§13.2.1)** | ✅ **erfüllt** | MUSTs 1–9 erfüllt/N-A; offen nur SHOULD (CSDL-JSON) / MAY |
 | **4.0 Intermediate (§13.1.2)** | ✅ **erfüllt** | alle MUSTs **und** alle SHOULDs (1–17) |
 | **4.01 Intermediate (§13.2.2)** | ✅ **erfüllt** | MUSTs 1–5 erledigt; SHOULDs 6/7/9 teilweise |
-| **4.0 Advanced (§13.1.3)** | ❌ **nicht erfüllt** | MUSTs 9.1, 9.3 fehlen (11 Multipart-`$batch` ✅ 2026-07-09; SHOULD 14 Delta ✅ 2026-07-13; offen SHOULDs 13 async, 15 Cross-Join) |
-| **4.01 Advanced (§13.2.3)** | ❌ **nicht erfüllt** | erbt 4.0-Advanced-Lücke (9.1/9.3); MUST 5.1 fehlt (3 ✅ Welle 1, 6 CSDL-JSON ✅, 7 Multipart ✅) |
+| **4.0 Advanced (§13.1.3)** | ✅ **erfüllt** (Re-Audit 2026-07-14) | MUSTs 1–12 komplett: 1 Intermediate ✅ · 2 CSDL-XML-$metadata (XSD-validiert) · 3 OData-JSON (E3-Codec) · 4 `/$count` auf Navs (walk) · 5 `any`/`all` (Lambdas) · 6–8 `$skip`/`$count`/`$orderby` · 9 `$expand` mit 9.1 `nav/$ref` ✅ 2026-07-13, 9.2 `$filter`-in-Expand, 9.3 Cast-in-Expand ✅ 2026-07-13 · 10 `$search` (beide Backends) · 11 Multipart-`$batch` ✅ 2026-07-09 · 12 Resource-Path-Konventionen (eigener Parser, ABNF-Suite). Offene SHOULDs (nicht blockierend): 13 async, 15 Cross-Join, 9.4–9.8 Expand-Sub-Optionen; 14 Delta ✅ |
+| **4.01 Advanced (§13.2.3)** | ✅ **erfüllt** (Re-Audit 2026-07-14) | MUSTs komplett: 1 4.01 Intermediate ✅ · 2 4.0 Advanced ✅ · 3 Count gefilterter UND gesuchter Collections in Common Expressions (`$count($filter=…)` ✅ Welle 1, `$count($search=…)` ✅ 2026-07-14) · 4 `$compute` ✅ · 5.1 `$filter` auf selektierten Collections ✅ 2026-07-14 · 6 CSDL-JSON ✅ · 7 beide `$batch`-Formate ✅. Offene SHOULDs: 5.2–5.5 Select-Sub-Optionen, 9 verschachtelte Parameter-Aliase; 8 `/$filter`-Segment ✅ |
 
-**Fazit: Ziel „mindestens Intermediate" (Q10/§4.6) erreicht — 4.0 UND 4.01 Intermediate stehen.
-Advanced ist bewusst noch offen.**
+**Fazit: ALLE vier Level stehen — 4.0 und 4.01, Minimal bis ADVANCED (Re-Audit 2026-07-14).
+Das `$metadata` annonciert `Capabilities.ConformanceLevel=Advanced`. Offen sind nur noch
+SHOULDs/MAYs (async, Cross-Join, Expand-/Select-Sub-Optionen 9.4–9.8 bzw. 5.2–5.5,
+verschachtelte Parameter-Aliase).**
 
-### Advanced-Blocker (MUST-Ebene, das hält den Advanced-Anspruch auf)
+### Ehemalige Advanced-Blocker (MUST-Ebene — inzwischen ALLE aufgelöst)
 
 1. ~~**Multipart-`$batch`** (§13.1.3/11, §13.2.3/7)~~ — ✅ 2026-07-09: Server akzeptiert und
    beantwortet `multipart/mixed` (Change-Sets → atomicityGroups, Content-ID-Korrelation).
-2. **`$expand`-Sub-Optionstiefe** (§13.1.3/9): nur verschachteltes `$filter`. **`$expand=nav/$ref`
-   (Referenzen, 9.1)** und **Cast-in-Expand (9.3)** sind MUSTs und fehlen (`ODataServlet.java` — Sub-
-   Optionen außer `$filter` → 501). `$top/$skip/$orderby/$count/$search/$levels`-in-Expand (SHOULD/9.x)
-   ebenfalls nicht; `$levels` → 501.
+2. **`$expand`-Sub-Optionstiefe** (§13.1.3/9): die MUSTs sind seit 2026-07-13 komplett —
+   verschachteltes `$filter` (9.2), **`$expand=nav/$ref`** (Referenz-Expansion, 9.1) und
+   **Cast-in-Expand `nav/Ns.Type`** (9.3, auch kombiniert mit `$filter` gegen den abgeleiteten
+   Typ). Offen bleiben die SHOULDs `$top/$skip/$orderby/$count/$search/$levels`-in-Expand
+   (9.4–9.8) → 501.
 3. ~~**CSDL-JSON-`$metadata`** (§13.2.3/6)~~ — ✅ 2026-07-09: `CsdlJsonWriter`/`CsdlJsonReader`,
    Server emittiert via `$format=json`/Accept, Client liest beide Formen.
 4. ~~**Count einer gefilterten Collection in einer Common Expression** (§13.2.3/3)~~ — ✅ Welle 1
-   (2026-07-10, `$count($filter=…)` → select→size). **`$filter` auf selektierten Collections in
-   `$select`** (§13.2.3/5.1): fehlt weiter (nested `$select` kennt nur `$select`-Sub-Optionen).
+   (2026-07-10, `$count($filter=…)` → select→size); der GESUCHTE Count (`$count($search=…)`) folgte
+   2026-07-14 (Suchworte → `contains`-Disjunktion über die String-Attribute des Element-Typs,
+   gleiche Abbildung wie das Top-Level-`$search`). ~~**`$filter` auf selektierten Collections in
+   `$select`** (§13.2.3/5.1)~~ — ✅ 2026-07-14: `SelectTree` trägt nested `$filter`
+   (Nav-Collections gegen den Zieltyp, primitive Collections via `$it`), Anwendung im
+   `EntityShaper` VOR dem Pruning (Prädikate dürfen wegprojizierte Properties referenzieren).
 
 SHOULD-Ebene (nicht blockierend, aber Advanced-Qualität): async / `Respond-Async` (§13.1.3/13),
 Cross-Join (15), strukturelle Vergleiche (§13.2.2/7), verschachtelte
@@ -65,11 +74,11 @@ kein `/$count` auf Delta-Links, kein JPA-Backend — Details `odata-features.md`
   Function-Imports OHNE Klammern (9.3), Action-Aufruf ohne Body (9.4), unqualifizierte
   Default-Namespace-Aufrufe (9.5) — Functions/Actions sind neu, diese URL-Syntaxvarianten sind
   ungetestet und könnten kleine Lücken sein.
-- **Backend-Paritätslücke (Rest)**: Datumsfunktionen (`year`…`second`) sind seit 2026-07-07 als
-  SQL `EXTRACT` gepusht; `round`/`floor`/`ceiling` fehlen im `OclToCriteriaTranslator` weiterhin
-  → **auf JPA 501**, in-memory ok. Konform („Request abgelehnt"), aber Inkonsistenz — billig zu
-  schließen.
-- **`$ref` auf dem Read-Pfad** → 501, obwohl `$ref`-*Writes* (link/unlink) funktionieren.
+- ~~**Backend-Paritätslücke**~~ — ✅ 2026-07-13: `round`/`floor`/`ceiling` pushen als
+  jakarta-Criteria (Persistence 3.1+) — beide Backends decken jetzt dieselbe Funktionsfläche ab.
+- ~~**`$ref` auf dem Read-Pfad**~~ — ✅ 2026-07-13: `GET …/nav/$ref` liefert
+  Entity-Referenzen (single + collection inkl. `$filter`/Paging; keylose Containment-Kinder
+  ehrlich 501).
 - **Client** („Interoperable OData Client"): stark (typisierte Reads/Writes, Functions/Actions inkl.
   typisierter Varianten, Batch-Builder mit `dependsOn`/`atomicityGroup`, beide `$batch`-Wire-Formen,
   CSRF, Bearer-/Basic-Auth, Schema-Registry, Delta/Change-Tracking); liest CSDL **XML und JSON**
@@ -80,12 +89,14 @@ kein `/$count` auf Delta-Links, kein JPA-Backend — Details `odata-features.md`
 1. ~~**CSDL-JSON-`$metadata`**~~ — ✅ 2026-07-09.
 2. ~~**`metadata=full`**~~ — ✅ 2026-07-09 (+ echtes `none` 2026-07-10).
 3. ~~**Multipart-`$batch`**~~ — ✅ 2026-07-09.
-4. **`$expand`-Sub-Optionen** — `$ref`, Cast, `$top/$skip/$orderby/$count/$levels` in Expand (groß;
-   das größte — und letzte — Advanced-MUST-Bündel).
-5. **`$ref`-Read-Pfad** (mittel; ~~Count gefilterter Collection~~ ✅ Welle 1, ~~`/$filter`-Segment~~
-   ✅ Welle 2/3).
-6. **JPA-Pushdown für round/floor/ceiling** (klein; Paritätsfix — date-Funktionen ✅ 2026-07-07).
+4. ~~**`$expand`-Sub-Optionen (MUSTs)**~~ — ✅ 2026-07-13: `$ref` + Cast; die SHOULDs
+   (`$top/$skip/$orderby/$count/$search/$levels` in Expand) bleiben 501.
+5. ~~**`$ref`-Read-Pfad**~~ — ✅ 2026-07-13 (~~Count gefilterter Collection~~ ✅ Welle 1,
+   ~~`/$filter`-Segment~~ ✅ Welle 2/3).
+6. ~~**JPA-Pushdown für round/floor/ceiling**~~ — ✅ 2026-07-13 (date-Funktionen ✅ 2026-07-07).
 7. async / ~~Delta~~ (✅ 2026-07-13) / Cross-Join (SHOULDs).
+8. ~~**4.01-Advanced-MUST 5.1**~~ — ✅ 2026-07-14 (womit ALLE Advanced-MUSTs stehen; siehe
+   Gesamturteil).
 
 ## 13.1.1 — OData 4.0 Minimal Conformance (read-only-relevante Items)
 

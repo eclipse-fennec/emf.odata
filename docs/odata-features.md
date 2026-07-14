@@ -1,6 +1,6 @@
 # Fennec OData — Feature Reference (Server & Client)
 
-Status: 2026-07-13. This document describes the **current, implemented** capabilities of the
+Status: 2026-07-14. This document describes the **current, implemented** capabilities of the
 Fennec OData server and client. It is a capability reference, not a changelog — for the dated
 implementation history and the architecture rationale see
 [`odata-architecture.md`](odata-architecture.md); for the clause-by-clause conformance verdict see
@@ -62,9 +62,9 @@ but unimplemented (`$skiptoken`, `$id`, `$index`, `$schemaversion`, `$levels`) r
 | `$filter` | OData expression → typed OCL IR; property paths resolved eagerly against the context EClass |
 | `$orderby` | multi-key, `asc`/`desc` |
 | `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) |
-| `$count` | `$count=true` inline and the `/$count` path segment (with `$filter`) |
-| `$select` | including **nested `$select`** (`SelectTree`, key survives at every level) |
-| `$expand` | including **`$filter` inside `$expand`** (parsed against the target type, applied to shaped copies) |
+| `$count` | `$count=true` inline, the `/$count` path segment (with `$filter`), and filtered/**searched** counts in expressions (`path/$count($filter=…)`, `path/$count($search=…)`) |
+| `$select` | including **nested `$select`** (`SelectTree`, key survives at every level) and **`$filter` on selected collections** (nav collections against the target type, primitive collections via `$it`; filters run BEFORE pruning) |
+| `$expand` | including **`$filter` inside `$expand`** (parsed against the target type, applied to shaped copies), **`nav/$ref`** reference expansion (`{"@odata.id":…}` objects, [OData-URL] 5.1.3.1) and **cast-in-expand** `nav/Ns.Type` (only derived instances, combinable with a nested `$filter` against the derived type); other nested options → 501 |
 | `$search` | server-side, pushed down to both backends |
 | `$compute` | server-side computed properties |
 | `$apply` | aggregation submodel: `groupby` (incl. `rollup` grouping sets), `aggregate` (sum/min/max/average/countdistinct/$count), `compute`, `filter`, `topcount`/`topsum`/`toppercent`+`bottom*`, `concat`, `top`/`skip`, `orderby`, `identity` (in-memory; JPA pushes groupby/aggregate/filter/compute down, rest → 501); `from`/custom aggregates/structure trafos parse → 501; combinable with `$filter`/`$orderby`/`$skip`/`$top`/`$count` (run after the pipeline) |
@@ -78,7 +78,8 @@ but unimplemented (`$skiptoken`, `$id`, `$index`, `$schemaversion`, `$levels`) r
 Filter/query expression coverage: comparison + logical + arithmetic operators (incl. unary
 minus), canonical string functions (`contains`/`startswith`/`endswith`/`tolower`/`toupper`/
 `trim`/`length`/`indexof`/`substring` incl. negative index/`concat`), date functions
-(`year`…`second` → SQL `EXTRACT` on JPA), `in` (incl. JSON-array form `in [...]` and the empty
+(`year`…`second` → SQL `EXTRACT` on JPA), rounding functions (`round`/`floor`/`ceiling`,
+JPA pushdown via jakarta Criteria), `in` (incl. JSON-array form `in [...]` and the empty
 list), lambdas (`any`/`all`), `cast`/`isof` **including casts inside expression paths** (mid-path
 and terminal), `$count` on collection paths **including filtered `$count($filter=…)`**, bound
 functions in member paths, `$it`/`$this` (request-instance anchor, escapes lambda scopes), typed
@@ -95,7 +96,8 @@ verified / 13 skips** across the three OASIS suites.
 key predicates (`(k1=v1,k2=v2)`, reads and entity-level writes; type-mismatched key literals → 400),
 **key-as-segment** (`Set/key`, 4.01 MAY — properties win on ambiguity; also for writes and bound
 functions), **key aliases** (`Set(@k)` with the value in a query parameter), inline **`/$filter(…)`
-segments** (in-memory executable; keyed → 501), and `/$ref`.
+segments** (in-memory executable; keyed → 501), and `/$ref` — reads (single and collection
+entity references, with `$filter`/paging on collections) as well as the reference writes.
 `$crossjoin`/`$all`/`$entity` parse but have no engine yet (501).
 Path length and segment count are capped before parsing.
 
@@ -150,9 +152,10 @@ body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
   tests mirror the in-memory reference against H2.
 
 ### Conformance (see `odata-conformance-status.md`)
-**4.0 Minimal ✅** (incl. Updatable), **4.01 Minimal ✅**, **4.0 Intermediate ✅** (all MUSTs + all
-SHOULDs), **4.01 Intermediate ✅** (all MUSTs; SHOULDs 6/7/9 partial). Advanced is not met
-(remaining: async, `$crossjoin`/`$all`; the delta/change-tracking SHOULD is covered).
+**All four levels hold: 4.0 and 4.01, Minimal through ADVANCED** (clause re-audit 2026-07-14;
+`$metadata` advertises `ConformanceLevel=Advanced`). Remaining SHOULDs/MAYs: async,
+`$crossjoin`/`$all` engines, `$orderby`/`$top`/`$skip`/`$count`/`$search`/`$levels` inside
+`$expand`/`$select`, nested parameter aliases.
 
 ### Security defaults (PID `org.eclipse.fennec.odata.servlet`)
 Pre-parse limits (`$top` ceiling `odata.max.top`=1000, expression length
@@ -202,6 +205,10 @@ All server query options (`filter`/`orderBy`/`top`/`skip`/`count`/`select`/`expa
 `navigateEntity` / `navigateCollection` / `propertyValue` (`/$value`) / `navigationCount`
 (`/$count`). Expanded navigations decode inline into the typed `EObject` graph.
 
+**URL/format opt-ins:** `keyAsSegment()` addresses entities as `Set/key` ([OData-URL] 4.3.1);
+`ieee754()` negotiates `IEEE754Compatible=true` and decodes the string-encoded Int64/Decimal
+values exactly.
+
 **Change tracking:** `trackChanges()` sends `Prefer: odata.track-changes`; the tracked page's
 `deltaLink()` feeds `changes(deltaLink)` → an `ODataDelta` of upserts (typed `EObject`s with their
 current state) and `Removal`s (id + reason). Both the 4.01 `@removed` and the 4.0
@@ -243,16 +250,19 @@ origin is refused. `ODataClient` is `AutoCloseable` and closes only an `HttpClie
 
 ## Known gaps / not yet
 
-**Server:** Advanced conformance (async / `Respond-Async`, `$crossjoin`/`$all` engines,
-`$expand=nav/$ref` + cast-in-expand); **delta v1 limits**: no deltas
+**Server:** Advanced is met and claimed on both versions — what remains is SHOULD/MAY-level:
+async / `Respond-Async`, `$crossjoin`/`$all` engines,
+`$top`/`$skip`/`$orderby`/`$count`/`$search`/`$levels` inside `$expand`/`$select`, nested
+parameter aliases. **Delta v1 limits**: no deltas
 of `$expand`ed relationships, no `PATCH` collection-update (`"@context":"#$delta"` write payload),
 no paging inside a delta response, no `/$count` on a delta link, no JPA `DeltaService`; a few 4.01
 Intermediate SHOULDs (query options on nav paths, some in-`$expand` options); the
 `ODataRequestFilter` refactor (req §5.1.1 — wrapping `RequestLimits`/parse validation in a
 whiteboard filter).
 
-**Client:** key-as-segment URL emission and `IEEE754Compatible` decode (both are server-side
-only); the Atlas-backed schema registry impl is downstream (ADR-0007).
+**Client:** the Atlas-backed schema registry impl is downstream (ADR-0007). Decoding a
+`$expand=nav/$ref` response surfaces the references as empty entities (no dedicated
+reference-object accessor yet).
 
 Media entities are supported on both sides: a `HasStream` type's binary stream is served and
 replaced at `GET/PUT Set(key)/$value` (server: `MediaService` SPI, in-memory reference impl;

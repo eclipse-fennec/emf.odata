@@ -20,6 +20,8 @@
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="color" eType="#//Color"/>
     <eStructuralFeatures xsi:type="ecore:EReference" name="reviews" upperBound="-1"
         containment="true" eType="#//Review"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="accessories" upperBound="-1"
+        eType="#//Product"/>
     <eOperations name="doubleOf" lowerBound="1"
         eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt">
       <eAnnotations source="https://eclipse.org/fennec/odata">

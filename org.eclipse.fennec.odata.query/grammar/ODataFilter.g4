@@ -203,8 +203,9 @@ pathStep     : IDENT keyPredicate? | boundCall | castName | ANNOTATION | ALIAS |
 lastSegment  : IDENT keyPredicate? | boundCall | castName | ANNOTATION | ALIAS | filterSegment ;
 // inline collection filter ([OData-URL] 4.12): Products/$filter(Age gt 3)[(key)]
 filterSegment : FILTERQ LPAREN expr RPAREN keyPredicate? ;
-// path/$count with the optional filtered form path/$count($filter=...) ([OData-URL] 4.8)
-countCall    : COUNT (LPAREN FILTERQ EQUALS expr RPAREN)? ;
+// path/$count with the optional filtered/searched forms path/$count($filter=...) and
+// path/$count($search=...) ([OData-URL] 4.8, 5.1.1.14; the searched count is §13.2.3/3)
+countCall    : COUNT (LPAREN (FILTERQ EQUALS expr | SEARCHQ EQUALS searchExpr) RPAREN)? ;
 // the name may be unqualified (4.01 allows it when unambiguous); at the EXPRESSION HEAD a
 // simple call parses as functionCall first (canonical functions win the ambiguity there)
 boundCall    : IDENT (DOT IDENT)* LPAREN boundCallArgs? RPAREN ;
@@ -271,6 +272,7 @@ COUNT : '$count' ;
 VALUE : '$value' ;
 REF   : '$ref' ;
 FILTERQ : '$filter' ;
+SEARCHQ : '$search' ;
 WITH : 'with' ;
 AS   : 'as' ;
 FROM : 'from' ;

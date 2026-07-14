@@ -36,8 +36,8 @@ Spec documents (OASIS OData **v4.01**):
 | `$orderby` | Order a collection | ✅ | URL Conv. §5.1.4 |
 | `$top` / `$skip` | Paging | ✅ | URL Conv. §5.1.5 / §5.1.6 |
 | `$count` (inline + `/$count`) | Count | ✅ | URL Conv. §5.1.7 |
-| `$select` (incl. nested) | Project properties | ✅ | URL Conv. §5.1.3 |
-| `$expand` (incl. `$filter` inside) | Expand related | ✅ / ◑ nested options | URL Conv. §5.1.2 |
+| `$select` (incl. nested `$select` and `$filter` on selected collections) | Project properties | ✅ | URL Conv. §5.1.3 |
+| `$expand` (incl. `$filter` inside, `nav/$ref` reference expansion, cast-in-expand `nav/Ns.Type`) | Expand related | ✅ (other nested options → 501) | URL Conv. §5.1.2/5.1.3 |
 | `$search` | Free-text search | ✅ | URL Conv. §5.1.8 |
 | `$compute` | Computed properties | ✅ | URL Conv. §5.1.9 |
 | `$apply` | Aggregation | ✅ (see below) | Data Aggregation §3 |
@@ -59,8 +59,8 @@ Spec documents (OASIS OData **v4.01**):
 | Derived-type cast `Set/Ns.Type[(key)]` | Type-cast segments | ✅ (one cast per step) | URL Conv. §4.11 |
 | Container singleton `GET /Me[/…]` | Address a singleton | ✅ (declared via EPackage annotation; backend supplies the instance) | URL Conv. §4.3; CSDL §13.5 |
 | Media entity stream `GET/PUT Set(key)/$value` | HasStream types serve/replace their binary stream | ✅ (via the `MediaService` SPI; 501 without a backend) | Protocol §11.2.4/11.4.7 |
-| `/$ref` | Reference to an entity | ✅ (writes); read → 501 | URL Conv. §4.9 |
-| Key-as-segment (`Set/key`, also for writes and bound functions) | MAY | ✅ server (client always emits `Set(key)`) | URL Conv. §4.3.1 |
+| `/$ref` | Reference to an entity | ✅ reads (single, collection with `$filter`/paging) and writes | URL Conv. §4.9 |
+| Key-as-segment (`Set/key`, also for writes and bound functions) | MAY | ✅ (client opt-in `keyAsSegment()`) | URL Conv. §4.3.1 |
 | Key aliases `Set(@k)` (value from a query parameter) | 4.01 | ✅ | URL Conv. §4.3.1 |
 | Inline `/$filter(…)` path segment | 4.01 | ✅ (in-memory; keyed → 501) | URL Conv. §4.13 |
 | `$crossjoin` / `$all` / `$entity` | MAY | ◑ parse → 501 (no engine) | URL Conv. §4.10/4.14/4.15 |
@@ -74,9 +74,10 @@ Spec documents (OASIS OData **v4.01**):
 | `has`, `in` | ✅ | §5.1.1.1 |
 | String funcs `contains startswith endswith tolower toupper trim length indexof substring concat` | ✅ | §5.1.1.5 |
 | Date/time funcs `year month day hour minute second …` | ✅ (EXTRACT on JPA) | §5.1.1.7 |
+| Rounding funcs `round floor ceiling` | ✅ (JPA pushdown too) | §5.1.1.8 |
 | Lambda `any`/`all` | ✅ | §5.1.1.13 |
 | `cast` / `isof` | ✅ | §5.1.1.10/11 |
-| `$count` in a path | ✅ (collection paths) | §5.1.1.14 |
+| `$count` in a path (incl. `$count($filter=…)` / `$count($search=…)`) | ✅ (collection paths) | §5.1.1.14 |
 | Typed literals Date/DateTimeOffset/TimeOfDay/Guid/Duration/enum | ✅ | ABNF |
 | Case-insensitive operators/functions (4.01) | ✅ | §5.1.1 |
 | `$it`/`$this` (request-instance anchor, escapes lambda scopes) | ✅ | §5.1.1.13 |
@@ -130,7 +131,7 @@ Spec documents (OASIS OData **v4.01**):
 | `OData-Version` / `OData-MaxVersion` negotiation (4.0/4.01) | ✅ | Protocol §8.1.5/8.2.6 |
 | Server-driven paging `@odata.nextLink` | ✅ | Protocol §11.2.5.7 |
 | `#Ns.Type` discriminator for derived types | ✅ | JSON Format §4.5.8 |
-| `IEEE754Compatible=true` (Int64/Decimal as strings: values, `@odata.count`, `$apply` rows; Content-Type echo; payload decode) | ✅ server (client ❌) | JSON Format §4.3/§8.1 |
+| `IEEE754Compatible=true` (Int64/Decimal as strings: values, `@odata.count`, `$apply` rows; Content-Type echo; payload decode) | ✅ (client opt-in `ieee754()`) | JSON Format §4.3/§8.1 |
 | `$batch` JSON (4.01) | ✅ (server + client) | Protocol §11.7 |
 | `$batch` multipart/mixed (4.0, SAP world) | ✅ (server accepts + answers multipart; client `.multipart()`) | Protocol §11.7 |
 | Change tracking: `Prefer: odata.track-changes`, self-describing delta links, delta payloads (4.01 `@removed` + 4.0 `$deletedEntity`), 410 Gone | ✅ (in-memory backend via `DeltaService`; `$expand` deltas / `PATCH` collection-update / JPA → not applied resp. 501) | Protocol §11.3 |
@@ -153,7 +154,7 @@ Spec documents (OASIS OData **v4.01**):
 | Container singletons (`singleton(name)` → `GET /Me`) | ✅ | URL Conv. §4.3 |
 | Media entities (`mediaRead`/`mediaWrite` → `Set(key)/$value`) | ✅ | Protocol §11.2.4/11.4.7 |
 | Delta / change tracking (`trackChanges()` → `ODataPage.deltaLink()`, `changes(link)` → `ODataDelta`; decodes both wire forms) | ✅ | Protocol §11.3 |
-| Key-as-segment URL emission, `IEEE754Compatible` decode | ❌ (server-side only; the client emits canonical `Set(key)` URLs) | URL Conv. §4.3.1; JSON Format §8.1 |
+| Key-as-segment emission (`keyAsSegment()`), `IEEE754Compatible` negotiation + exact decode (`ieee754()`) | ✅ | URL Conv. §4.3.1; JSON Format §8.1 |
 
 All of the above is proven against real systems: the live interop suite runs the client against
 TripPin, TripPin RESTier, the OData demo and Northwind, and mirrors their schemas onto our

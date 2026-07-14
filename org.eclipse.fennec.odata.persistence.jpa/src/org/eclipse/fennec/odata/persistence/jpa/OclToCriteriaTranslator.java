@@ -250,6 +250,8 @@ public class OclToCriteriaTranslator {
 			case "year", "month", "day", "hour", "minute", "second" ->
 				new Expr(extractDatePart(name, op, ctx));
 
+			case "round", "floor", "ceiling" -> new Expr(rounding(name, op, ctx));
+
 			default -> throw new UnsupportedOperationException(
 					"operation '" + name + "' has no JPA pushdown");
 		};
@@ -270,6 +272,21 @@ public class OclToCriteriaTranslator {
 		return jpaBuilder.fromExpression(
 				jpaBuilder.toExpression(source).extract(part.toUpperCase(Locale.ROOT)),
 				Integer.class);
+	}
+
+	/**
+	 * OData rounding functions ([OData-URL] 5.1.1.8): {@code round} is "half away from zero",
+	 * which is what SQL ROUND does — jakarta {@code CriteriaBuilder} carries all three since
+	 * Persistence 3.1.
+	 */
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private Expression<?> rounding(String name, OperationCallExp op, Context ctx) {
+		Expression source = numeric(operand(op.getOwnedSource(), ctx), ctx.cb());
+		return switch (name) {
+			case "floor" -> ctx.cb().floor(source);
+			case "ceiling" -> ctx.cb().ceiling(source);
+			default -> ctx.cb().round(source, 0);
+		};
 	}
 
 	/** {@code eq/ne} incl. the null forms ({@code IS [NOT] NULL} — also on navigations). */

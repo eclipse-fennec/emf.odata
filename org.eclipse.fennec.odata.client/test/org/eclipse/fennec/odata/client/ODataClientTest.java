@@ -266,6 +266,16 @@ class ODataClientTest {
 						+ "\"rating\":4,\"active\":true,\"discount\":20}"; // keyed derived-type cast
 			} else if (path.endsWith("/Product('bad')")) {
 				answer = "this is not json"; // a 200 with an undecodable body
+			} else if (path.endsWith("/Product/p1")) {
+				// key-as-segment addressing ([OData-URL] 4.3.1)
+				answer = "{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"1.20\",\"rating\":3,\"active\":true}";
+			} else if (path.endsWith("/Product") && "application/json;IEEE754Compatible=true"
+					.equals(exchange.getRequestHeaders().getFirst("Accept"))) {
+				// IEEE754Compatible: Int64/Decimal as strings, count above 2^53
+				contentType = "application/json;odata.metadata=minimal;IEEE754Compatible=true;charset=UTF-8";
+				answer = "{\"@odata.count\":\"9007199254740993\",\"value\":["
+						+ "{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"4111111111111111.25\","
+						+ "\"rating\":3,\"active\":true}]}";
 			} else if (path.endsWith("/Product(id='p1')")) {
 				answer = "{\"id\":\"p1\",\"name\":\"Milk\",\"price\":\"1.20\",\"rating\":3,\"active\":true}";
 			} else if (path.endsWith("/Product('p1')")) {
@@ -432,6 +442,30 @@ class ODataClientTest {
 		ODataClientException gone = assertThrows(ODataClientException.class,
 				() -> client.entitySet("Product").changes("/odata/Product?$deltatoken=gone"));
 		assertEquals(410, gone.status());
+	}
+
+	@Test
+	@DisplayName("keyAsSegment() addresses entities as Set/key")
+	void keyAsSegmentAddressing() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		EObject milk = client.entitySet("Product").keyAsSegment().get("'p1'");
+		assertEquals("Milk", milk.eGet(milk.eClass().getEStructuralFeature("name")));
+		assertTrue(lastRequest.get().getPath().endsWith("/Product/p1"),
+				"the key travels as a path segment, unquoted: " + lastRequest.get());
+	}
+
+	@Test
+	@DisplayName("ieee754() negotiates string-encoded Int64/Decimal and decodes them exactly")
+	void ieee754Negotiation() {
+		ODataClient client = ODataClient.connect(serviceRoot);
+		ODataPage page = client.entitySet("Product").ieee754().count().list();
+		assertEquals(9007199254740993L, page.totalCount(),
+				"a count above 2^53 survives exactly (the stub only answers this to the "
+						+ "IEEE754Compatible Accept header)");
+		assertEquals(0, new BigDecimal("4111111111111111.25").compareTo(
+				(BigDecimal) page.entities().get(0)
+						.eGet(page.entities().get(0).eClass().getEStructuralFeature("price"))),
+				"the string-encoded decimal decodes exactly");
 	}
 
 	@Test

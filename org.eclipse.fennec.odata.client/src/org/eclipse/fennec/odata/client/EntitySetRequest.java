@@ -44,6 +44,10 @@ public final class EntitySetRequest {
 	private String returnPreference;
 	/** Whether {@link #list()} asks for change tracking ({@code Prefer: odata.track-changes}). */
 	private boolean trackChanges;
+	/** Whether entity URLs use the key-as-segment form ({@code Set/key}, 4.01 MAY). */
+	private boolean keyAsSegment;
+	/** Whether reads negotiate {@code IEEE754Compatible=true} (Int64/Decimal as strings). */
+	private boolean ieee754;
 
 	EntitySetRequest(ODataClient client, String setName, EClass entityType) {
 		this.client = client;
@@ -124,6 +128,49 @@ public final class EntitySetRequest {
 	}
 
 	/**
+	 * Addresses entities in the key-as-segment form ({@code Set/key} instead of {@code Set(key)},
+	 * [OData-URL] 4.3.1 — a 4.01 MAY some services prefer). Applies to reads, writes, navigation
+	 * paths and bound operations with a SINGLE key; compound key predicates keep the
+	 * parenthesized form (key-as-segment cannot express them).
+	 */
+	public EntitySetRequest keyAsSegment() {
+		this.keyAsSegment = true;
+		return this;
+	}
+
+	/**
+	 * Negotiates {@code IEEE754Compatible=true} on reads ([OData-JSON] 8.1): the service sends
+	 * {@code Edm.Int64}/{@code Edm.Decimal} values (incl. {@code @odata.count}) as strings, so
+	 * values above 2^53 survive JSON exactly. The decoder accepts both wire forms.
+	 */
+	public EntitySetRequest ieee754() {
+		this.ieee754 = true;
+		return this;
+	}
+
+	/** The JSON Accept header of this request's reads. */
+	private String jsonAccept() {
+		return ieee754 ? "application/json;IEEE754Compatible=true" : "application/json";
+	}
+
+	/** The key step of an entity URL: {@code (key)} or, opted in, {@code /key}. */
+	private String keyPath(String keyLiteral) {
+		if (!keyAsSegment) {
+			return "(" + encodeKey(keyLiteral) + ")";
+		}
+		return "/" + encode(unquoteKey(keyLiteral));
+	}
+
+	/** Strips the OData string-literal quotes for the segment form ({@code 'O''Neil'} → {@code O'Neil}). */
+	private static String unquoteKey(String keyLiteral) {
+		if (keyLiteral != null && keyLiteral.length() >= 2
+				&& keyLiteral.startsWith("'") && keyLiteral.endsWith("'")) {
+			return keyLiteral.substring(1, keyLiteral.length() - 1).replace("''", "'");
+		}
+		return keyLiteral;
+	}
+
+	/**
 	 * Restricts the set to a derived type via a type-cast segment ([OData-URL] 4.11):
 	 * {@link #list()} addresses {@code Set/Ns.Type}, {@link #get(String)} addresses
 	 * {@code Set/Ns.Type(key)}, and both decode into the derived type. {@code qualifiedTypeName} is
@@ -155,7 +202,7 @@ public final class EntitySetRequest {
 	 */
 	public List<Map<String, Object>> apply(String applyExpression) {
 		options.put("$apply", applyExpression);
-		return ODataJsonDecoder.rows(client.fetch(setName + queryString(), "application/json"));
+		return ODataJsonDecoder.rows(client.fetch(setName + queryString(), jsonAccept()));
 	}
 
 	/** Executes the request and decodes one page. */
@@ -167,9 +214,9 @@ public final class EntitySetRequest {
 	/** A collection GET, carrying {@code Prefer: odata.track-changes} when requested. */
 	private String read(String relative) {
 		if (!trackChanges) {
-			return client.fetch(relative, "application/json");
+			return client.fetch(relative, jsonAccept());
 		}
-		ODataClient.Response response = client.exchange("GET", relative, "application/json", null,
+		ODataClient.Response response = client.exchange("GET", relative, jsonAccept(), null,
 				null, Map.of("Prefer", "odata.track-changes"));
 		if (response.status() / 100 != 2) {
 			throw failure("GET " + relative, response);
@@ -184,7 +231,7 @@ public final class EntitySetRequest {
 	 * together with the computed aliases.
 	 */
 	public List<Map<String, Object>> listRaw() {
-		return ODataJsonDecoder.rows(client.fetch(setName + queryString(), "application/json"));
+		return ODataJsonDecoder.rows(client.fetch(setName + queryString(), jsonAccept()));
 	}
 
 	/**
@@ -194,7 +241,7 @@ public final class EntitySetRequest {
 	 * {@link #listRaw()} when the entity itself is wanted typed alongside the computed values.
 	 */
 	public List<ComputedRow> listComputed() {
-		return ODataJsonDecoder.computedRows(client.fetch(setName + queryString(), "application/json"),
+		return ODataJsonDecoder.computedRows(client.fetch(setName + queryString(), jsonAccept()),
 				entityType, client.metadataService());
 	}
 
@@ -204,7 +251,7 @@ public final class EntitySetRequest {
 	 */
 	public EObject get(String keyLiteral) {
 		return ODataJsonDecoder.entity(client.fetch(
-				collectionPath() + "(" + encodeKey(keyLiteral) + ")" + queryString(), "application/json"),
+				collectionPath() + keyPath(keyLiteral) + queryString(), jsonAccept()),
 				decodeType(), client.metadataService());
 	}
 
@@ -218,7 +265,7 @@ public final class EntitySetRequest {
 				.map(component -> component.getKey() + "=" + encodeKey(literal(component.getValue())))
 				.collect(Collectors.joining(","));
 		return ODataJsonDecoder.entity(client.fetch(
-				collectionPath() + "(" + predicate + ")" + queryString(), "application/json"),
+				collectionPath() + "(" + predicate + ")" + queryString(), jsonAccept()),
 				decodeType(), client.metadataService());
 	}
 
@@ -228,7 +275,7 @@ public final class EntitySetRequest {
 	public EObject navigateEntity(String keyLiteral, String navigation) {
 		EClass target = referenceTarget(navigation);
 		return ODataJsonDecoder.entity(client.fetch(
-				entityPath(keyLiteral) + "/" + navigation + queryString(), "application/json"),
+				entityPath(keyLiteral) + "/" + navigation + queryString(), jsonAccept()),
 				target, client.metadataService());
 	}
 
@@ -236,7 +283,7 @@ public final class EntitySetRequest {
 	public ODataPage navigateCollection(String keyLiteral, String navigation) {
 		EClass target = referenceTarget(navigation);
 		return ODataJsonDecoder.page(client.fetch(
-				entityPath(keyLiteral) + "/" + navigation + queryString(), "application/json"),
+				entityPath(keyLiteral) + "/" + navigation + queryString(), jsonAccept()),
 				target, client.metadataService());
 	}
 
@@ -370,7 +417,7 @@ public final class EntitySetRequest {
 		if (!page.hasMore()) {
 			throw new ODataClientException("the page has no @odata.nextLink");
 		}
-		return ODataJsonDecoder.page(client.fetch(relativize(page.nextLink()), "application/json"),
+		return ODataJsonDecoder.page(client.fetch(relativize(page.nextLink()), jsonAccept()),
 				entityType, client.metadataService());
 	}
 
@@ -393,7 +440,7 @@ public final class EntitySetRequest {
 		if (deltaLink == null || deltaLink.isBlank()) {
 			throw new ODataClientException("the page has no @odata.deltaLink");
 		}
-		return ODataJsonDecoder.delta(client.fetch(relativize(deltaLink), "application/json"),
+		return ODataJsonDecoder.delta(client.fetch(relativize(deltaLink), jsonAccept()),
 				decodeType(), client.metadataService());
 	}
 
@@ -585,7 +632,7 @@ public final class EntitySetRequest {
 	}
 
 	private String entityPath(String keyLiteral) {
-		return setName + "(" + encodeKey(keyLiteral) + ")";
+		return setName + keyPath(keyLiteral);
 	}
 
 	private String refPath(String keyLiteral, String navigation) {

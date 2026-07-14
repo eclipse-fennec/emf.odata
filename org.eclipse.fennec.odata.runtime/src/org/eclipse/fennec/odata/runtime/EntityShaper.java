@@ -15,6 +15,7 @@ package org.eclipse.fennec.odata.runtime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BiPredicate;
 
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
@@ -22,6 +23,7 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 
 /**
  * Applies {@code $select}/{@code $expand} to serialization copies of entities. Copying is
@@ -43,6 +45,16 @@ public class EntityShaper {
 	 */
 	public EObject shape(EObject entity, EClass entityType, SelectTree select, Set<String> expand,
 			List<EObject> expandedRoots) {
+		return shape(entity, entityType, select, expand, expandedRoots, null);
+	}
+
+	/**
+	 * {@link #shape} additionally evaluating nested {@code $select} filters ([OData-URL] 5.1.3,
+	 * 4.01 Advanced): {@code selectFilter} decides whether a collection item stays. The filters
+	 * run BEFORE pruning — their predicates may reference properties the projection drops.
+	 */
+	public EObject shape(EObject entity, EClass entityType, SelectTree select, Set<String> expand,
+			List<EObject> expandedRoots, BiPredicate<OclExpression, Object> selectFilter) {
 		EcoreUtil.Copier copier = new EcoreUtil.Copier();
 		EObject copy = copier.copy(entity);
 		for (String name : expand) {
@@ -64,12 +76,47 @@ public class EntityShaper {
 			}
 		}
 		if (select != null) {
+			if (selectFilter != null) {
+				filterSelected(copy, entityType, select, selectFilter);
+			}
 			prune(copy, entityType, select, expand);
 		}
 		if (expandedRoots != null) {
 			collectExpandedTargets(copy, entityType, expand, expandedRoots);
 		}
 		return copy;
+	}
+
+	/**
+	 * Nested {@code $select} filters, recursively along the selection tree: collection items
+	 * that fail their filter are removed (navigation targets match against their type,
+	 * primitive items as {@code $it}).
+	 */
+	private void filterSelected(EObject copy, EClass type, SelectTree select,
+			BiPredicate<OclExpression, Object> matcher) {
+		for (String name : select.names()) {
+			SelectTree child = select.child(name);
+			EStructuralFeature feature = type.getEStructuralFeature(name);
+			if (feature == null) {
+				continue;
+			}
+			Object value = copy.eGet(feature);
+			if (child.filter() != null && value instanceof List<?> items) {
+				items.removeIf(item -> !matcher.test(child.filter(), item));
+			}
+			if (child.isLeaf() || !(feature.getEType() instanceof EClass childType)) {
+				continue;
+			}
+			if (value instanceof List<?> items) {
+				for (Object item : items) {
+					if (item instanceof EObject nested) {
+						filterSelected(nested, childType, child, matcher);
+					}
+				}
+			} else if (value instanceof EObject nested) {
+				filterSelected(nested, childType, child, matcher);
+			}
+		}
 	}
 
 	/** Keeps selected/expanded/key features; nested trees prune the structured values. */
@@ -103,10 +150,16 @@ public class EntityShaper {
 	/** All shaped copies plus the expanded targets as extra roots (self-contained document). */
 	public List<EObject> shapeAll(List<EObject> entities, EClass entityType, SelectTree select,
 			Set<String> expand) {
+		return shapeAll(entities, entityType, select, expand, null);
+	}
+
+	/** {@link #shapeAll} additionally evaluating nested {@code $select} filters. */
+	public List<EObject> shapeAll(List<EObject> entities, EClass entityType, SelectTree select,
+			Set<String> expand, BiPredicate<OclExpression, Object> selectFilter) {
 		List<EObject> roots = new ArrayList<>();
 		List<EObject> expandedRoots = new ArrayList<>();
 		for (EObject entity : entities) {
-			roots.add(shape(entity, entityType, select, expand, expandedRoots));
+			roots.add(shape(entity, entityType, select, expand, expandedRoots, selectFilter));
 		}
 		roots.addAll(expandedRoots);
 		return roots;

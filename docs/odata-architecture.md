@@ -485,3 +485,62 @@ Die letzte beidseitige Client/Server-Lücke ist geschlossen ([OData-Protocol] 11
 - **Bewusst v1-außen-vor** (dokumentiert in features/conformance): `$expand`-Deltas (nested
   `@delta`/Links), `PATCH`-Collection-Update (`"@context":"#$delta"`), Delta-Paging,
   `/$count` auf Delta-Links, JPA-`DeltaService` (bräuchte DB-Change-Log/Envers-Äquivalent).
+
+## „Reste"-Paket (2026-07-13, nach Delta)
+
+Vier Punkte aus dem Konformanz-Backlog, damit sind ALLE 4.0-Advanced-MUSTs implementiert:
+
+- **JPA round/floor/ceiling**: `OclToCriteriaTranslator.rounding()` — jakarta-Criteria
+  `cb.floor/ceiling/round(x,0)` (Persistence 3.1+; round = half away from zero wie SQL und
+  der In-Memory-Evaluator). Differentialtests in JpaQueryServiceTest.
+- **`$ref`-Read-Pfad** ([OData-Protocol] 11.2.8): `RefSegment`-Case im walk() — single
+  (`#$ref`-Kontext) und Collection (`#Collection($ref)`, mit `$filter`/`$orderby`/Paging über
+  die bestehende Nav-Collection-Pipeline); null-Nav → 204. NEU: `entityIdOf(EObject)` +
+  `setNameOf(EClass)` (kanonische Id `Set(key)`, Set-Renames invertiert; Derived-Instanzen
+  referenzieren ihr most-derived Set — jede nicht-abstrakte Klasse IST ein Set). Keylose
+  Containment-Kinder → UOE → ehrlich 501. Fixture: webshop.ecore hat jetzt
+  `Product.accessories` (non-containment many, Product→Product).
+- **Client Key-as-Segment + IEEE754**: `keyAsSegment()` (Opt-in; `keyPath()` baut `Set/key`,
+  unquoted+URL-encoded; Compound-Keys bleiben Klammerform) und `ieee754()` (Accept
+  `application/json;IEEE754Compatible=true`; Decode der String-Formen läuft über die
+  bestehenden Codec-Reader — Test mit @odata.count > 2^53 und Decimal-String exakt).
+- **`$expand`-Sub-Optionen 9.1/9.3** (die letzten 4.0-Advanced-MUSTs): `expandOption` liefert
+  jetzt `ExpandItem(filter, refOnly, cast)`. `nav/$ref` → Referenz-Expansion: Nav wird NICHT
+  geshaped/serialisiert, stattdessen `{"@odata.id":…}`-Objekte aus dem ORIGINAL-Entity
+  gespliced (withExpandedRefs, Muster withComputed); Backend-Prefetch enthält refOnly-Navs
+  weiter (kein N+1). `nav/Ns.Type` → Cast-in-Expand: applyNestedFilters entfernt
+  Nicht-Instanzen (single-valued → eUnset), nested `$filter` parst gegen den ABGELEITETEN
+  Typ. Optionen auf `/$ref`-Items → 501; unbekannter Cast → 400. XML-Pfade shapen nur
+  `inlineNavs` (refOnly raus).
+- **ConformanceLevel-Annotation** im $metadata von Minimal auf **Intermediate** angehoben
+  (war eine Untertreibung — Intermediate ist seit 2026-07-08 belegt). Der formale
+  **4.0-Advanced-Claim** (alle MUSTs ✅) wartet auf ein Klausel-Re-Audit; bei 4.01-Advanced
+  fehlt als EINZIGER Advanced-MUST noch 5.1 (`$filter` auf selektierten Collections in
+  `$select`).
+
+## Advanced-Claim (2026-07-14)
+
+Beide Vorschläge aus dem Reste-Paket umgesetzt — **ALLE OData-Conformance-Level stehen und
+werden beansprucht** (4.0 + 4.01, Minimal bis Advanced; `ConformanceLevel=Advanced` im
+$metadata, Re-Audit-Nachweis in odata-conformance-status.md):
+
+- **§13.2.3/5.1 `$filter` in `$select`**: `SelectTree` trägt jetzt pro Knoten einen nested
+  `$filter` (BiFunction-Callback parst über den geführten Parser; Nav-Collections gegen den
+  Zieltyp, primitive Collections via `$it` mit dem OWNER als Parse-Kontext). ANWENDUNG IM
+  `EntityShaper` VOR dem Pruning (`filterSelected`, neuer shape/shapeAll-Overload mit
+  `BiPredicate<OclExpression,Object>`) — GOTCHA: nach dem Pruning fehlen wegprojizierte
+  Properties und `stars ge 4` würde als `null ge 4` ALLES entfernen. Select-Bodies binden das
+  Element an die Iterator-VARIABLE (nicht self) — hand-gebaute Prädikate brauchen
+  `VariableExp`-Quellen. FUND dabei: bare `$it` (ganzer Operand) fehlte im `OclEvaluator` →
+  Case ergänzt (self).
+- **§13.2.3/3 gesuchter Count**: Grammatik `countCall` um `$search`-Alternative erweitert
+  (neues Token SEARCHQ, ANTLR-Regen — Rezept im bnd.bnd; Tool-CP braucht antlr4 UND
+  antlr4-runtime UND ST4 UND antlr-runtime-3.5.3), Builder `selectOverSearch`/`searchPredicate`:
+  Suchwort → `contains`-Disjunktion über die String-Attribute des Element-Typs (dieselbe
+  Abbildung wie Top-Level-`$search`), Atome AND-verknüpft, `not`/Klammern rekursiv; kein
+  String-Attribut → `false`-Literal. JPA: filtered/searched Count bleibt ehrlich 501.
+- **Audit**: 4.0 §13.1.3 MUSTs 1–12 ✅ (Nachweise: XSD-Roundtrip, walk-/Lambda-/Expand-Tests,
+  Multipart-Batch-Tests, ABNF-resourcePath-Suite); 4.01 §13.2.3 MUSTs 1–7 ✅. Offen NUR
+  SHOULDs/MAYs: async, Cross-Join, Expand-Sub-Optionen 9.4–9.8, Select-Sub-Optionen 5.2–5.5,
+  verschachtelte Parameter-Aliase. `ConformanceLevel`-Annotation: Minimal → (kurz
+  Intermediate) → **Advanced**.

@@ -22,6 +22,7 @@ import java.util.function.Function;
 
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.TerminalNode;
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EEnum;
@@ -518,14 +519,16 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 				throw new ODataQueryParseException("'$count' requires a collection-valued path");
 			}
 			OclExpression collection = source;
-			if (ctx.countCall().expr() != null) {
-				// $count($filter=…) → size over select: the body resolves against the
-				// collection's ELEMENT type, rooted in the select iterator's variable
+			if (ctx.countCall().expr() != null || ctx.countCall().searchExpr() != null) {
+				// $count($filter=…)/$count($search=…) → size over select: the body resolves
+				// against the collection's ELEMENT type, rooted in the select iterator's variable
 				if (!(valueType instanceof EClass elementClass)) {
 					throw new ODataQueryParseException(
 							"filtered '$count' requires a collection of structured type");
 				}
-				collection = selectOver(source, elementClass, ctx.countCall().expr());
+				collection = ctx.countCall().expr() != null
+						? selectOver(source, elementClass, ctx.countCall().expr())
+						: selectOverSearch(source, elementClass, ctx.countCall().searchExpr());
 			}
 			OperationCallExp size = FACTORY.createOperationCallExp();
 			size.setName("size");
@@ -533,6 +536,93 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 			return size;
 		}
 		return source;
+	}
+
+	/**
+	 * {@code path/$count($search=…)} ([OData-URL] 5.1.1.14, §13.2.3/3): the search words become
+	 * a {@code contains} disjunction over the element type's string attributes — the same
+	 * free-text mapping the protocol layer applies to a top-level {@code $search} — wrapped in
+	 * a {@code select} like the filtered count. Terms combine with AND, {@code not} negates,
+	 * parenthesized groups nest.
+	 */
+	private OclExpression selectOverSearch(OclExpression source, EClass elementClass,
+			ODataFilterParser.SearchExprContext searchExpr) {
+		Variable variable = FACTORY.createVariable();
+		variable.setName("$e");
+		var variableType = FACTORY.createClassifierType();
+		variableType.setReferredClassifier(elementClass);
+		variableType.setName(elementClass.getName());
+		variable.setType(variableType);
+		IteratorExp select = FACTORY.createIteratorExp();
+		select.setName("select");
+		select.setOwnedSource(source);
+		select.getOwnedIterators().add(variable);
+		select.setOwnedBody(searchPredicate(searchExpr, elementClass, variable));
+		return select;
+	}
+
+	/** The search words of one {@code searchExpr}, AND-combined. */
+	private OclExpression searchPredicate(ODataFilterParser.SearchExprContext ctx,
+			EClass element, Variable variable) {
+		OclExpression result = null;
+		for (ODataFilterParser.SearchAtomContext atom : ctx.searchAtom()) {
+			OclExpression predicate = searchAtom(atom, element, variable);
+			result = result == null ? predicate : binary("and", result, predicate);
+		}
+		return result;
+	}
+
+	private OclExpression searchAtom(ODataFilterParser.SearchAtomContext atom,
+			EClass element, Variable variable) {
+		OclExpression predicate;
+		if (atom.searchExpr() != null) {
+			predicate = searchPredicate(atom.searchExpr(), element, variable);
+		} else {
+			String term = searchTerm(atom);
+			predicate = null;
+			for (EAttribute attribute : element.getEAllAttributes()) {
+				if (attribute.isMany() || attribute.getEAttributeType() == null
+						|| !String.class.equals(attribute.getEAttributeType().getInstanceClass())) {
+					continue;
+				}
+				VariableExp self = FACTORY.createVariableExp();
+				self.setReferredVariable(variable);
+				PropertyCallExp property = FACTORY.createPropertyCallExp();
+				property.setOwnedSource(self);
+				property.setReferredProperty(attribute);
+				StringLiteralExp literal = FACTORY.createStringLiteralExp();
+				literal.setStringSymbol(term);
+				OperationCallExp contains = binary("contains", property, literal);
+				predicate = predicate == null ? contains : binary("or", predicate, contains);
+			}
+			if (predicate == null) { // no string properties → the term matches nothing
+				BooleanLiteralExp none = FACTORY.createBooleanLiteralExp();
+				none.setBooleanSymbol(false);
+				predicate = none;
+			}
+		}
+		if (atom.NOT() != null) {
+			OperationCallExp not = FACTORY.createOperationCallExp();
+			not.setName("not");
+			not.setOwnedSource(predicate);
+			predicate = not;
+		}
+		return predicate;
+	}
+
+	/** The raw search term of an atom — OData strings lose their quotes. */
+	private static String searchTerm(ODataFilterParser.SearchAtomContext atom) {
+		String text = (atom.IDENT() != null ? atom.IDENT()
+				: atom.STRING() != null ? atom.STRING()
+				: atom.DQSTRING() != null ? atom.DQSTRING()
+				: atom.INT() != null ? atom.INT() : atom.DECIMAL()).getText();
+		if (text.length() >= 2 && text.startsWith("'") && text.endsWith("'")) {
+			return text.substring(1, text.length() - 1).replace("''", "'");
+		}
+		if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+			return text.substring(1, text.length() - 1).replace("\\\"", "\"");
+		}
+		return text;
 	}
 
 	/** {@code select(element | body)} over a collection; the body resolves against the element type. */

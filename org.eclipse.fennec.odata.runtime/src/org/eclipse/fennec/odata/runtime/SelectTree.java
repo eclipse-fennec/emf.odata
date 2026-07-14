@@ -17,17 +17,22 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.regex.Pattern;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 
 /**
  * Parsed and model-validated {@code $select} tree ([OData-URL] 5.1.3): plain properties are
  * leaves, structured properties (complex or navigation) may carry a nested
- * {@code ($select=…)} option list — the 4.01 Intermediate MUST. Other nested options
- * ({@code $filter}, {@code $top}, …) are recognized and rejected as unimplemented.
+ * {@code ($select=…)} option list — the 4.01 Intermediate MUST — and collection-valued
+ * properties a nested {@code ($filter=…)} — the 4.01 Advanced MUST (§13.2.3/5.1). A
+ * navigation-collection filter parses against the target type; a primitive-collection filter
+ * addresses the item as {@code $it} (e.g. {@code tags($filter=$it eq 'sale')}). Other nested
+ * options ({@code $top}, {@code $orderby}, …) are recognized and rejected as unimplemented.
  *
  * <p>Validation happens during parsing against the context {@link EClass}, recursively
  * against the target type of each structured property — unknown names fail the parse
@@ -35,21 +40,36 @@ import org.eclipse.fennec.odata.query.ODataQueryParseException;
  */
 public final class SelectTree {
 
-	private static final SelectTree LEAF = new SelectTree(Map.of());
-	/** Nested option name incl. 4.01 variants: {@code $select=} / {@code select=} / case-insensitive. */
+	private static final SelectTree LEAF = new SelectTree(Map.of(), null);
+	/** Nested option names incl. 4.01 variants: {@code $select=} / {@code select=} / case-insensitive. */
 	private static final Pattern NESTED_SELECT = Pattern.compile("(?i)^\\$?select=");
+	private static final Pattern NESTED_FILTER = Pattern.compile("(?i)^\\$?filter=");
 	private static final Pattern NESTED_KNOWN = Pattern.compile(
 			"(?i)^\\$?(filter|orderby|top|skip|count|expand|search|compute|levels)=");
 
 	private final Map<String, SelectTree> children;
+	/** Filter over the selected collection's items, or null ([OData-URL] 5.1.3, 4.01 Advanced). */
+	private final OclExpression filter;
 
-	private SelectTree(Map<String, SelectTree> children) {
+	private SelectTree(Map<String, SelectTree> children, OclExpression filter) {
 		this.children = children;
+		this.filter = filter;
 	}
 
-	/** Parses and validates a {@code $select} value against the entity type. */
+	/** Parses and validates a {@code $select} value; nested {@code $filter} options → 501. */
 	public static SelectTree parse(String select, EClass entityType) {
-		return new SelectTree(items(select, entityType));
+		return parse(select, entityType, null);
+	}
+
+	/**
+	 * Parses and validates a {@code $select} value. {@code filterParser} turns a nested
+	 * {@code $filter} expression into the predicate IR for the given item context (the target
+	 * type of a navigation collection, the OWNING type for a primitive collection whose items
+	 * are addressed as {@code $it}); {@code null} rejects nested filters as unimplemented.
+	 */
+	public static SelectTree parse(String select, EClass entityType,
+			BiFunction<String, EClass, OclExpression> filterParser) {
+		return new SelectTree(items(select, entityType, filterParser), null);
 	}
 
 	/** The sub-tree selected under {@code name}, or null when the property is not selected. */
@@ -67,7 +87,13 @@ public final class SelectTree {
 		return children.keySet();
 	}
 
-	private static Map<String, SelectTree> items(String value, EClass type) {
+	/** The nested {@code $filter} over this selected collection's items, or null. */
+	public OclExpression filter() {
+		return filter;
+	}
+
+	private static Map<String, SelectTree> items(String value, EClass type,
+			BiFunction<String, EClass, OclExpression> filterParser) {
 		Map<String, SelectTree> items = new LinkedHashMap<>();
 		for (String item : splitTopLevel(value, ',')) {
 			String trimmed = item.trim();
@@ -85,37 +111,62 @@ public final class SelectTree {
 			}
 			String name = trimmed.substring(0, paren).trim();
 			EStructuralFeature feature = feature(type, name);
-			if (!(feature.getEType() instanceof EClass target)) {
-				throw new ODataQueryParseException(
-						"nested $select requires a structured property, '" + name + "' is primitive");
-			}
-			items.put(name, new SelectTree(
-					nestedItems(trimmed.substring(paren + 1, trimmed.length() - 1), target)));
+			items.put(name, nested(trimmed.substring(paren + 1, trimmed.length() - 1),
+					feature, filterParser));
 		}
 		return items;
 	}
 
-	/** The parenthesized option list: {@code ;}-separated, v1 implements only {@code $select}. */
-	private static Map<String, SelectTree> nestedItems(String optionList, EClass target) {
+	/**
+	 * The parenthesized option list ({@code ;}-separated): {@code $select} on structured
+	 * properties, {@code $filter} on collection-valued ones.
+	 */
+	private static SelectTree nested(String optionList, EStructuralFeature feature,
+			BiFunction<String, EClass, OclExpression> filterParser) {
 		Map<String, SelectTree> nested = null;
+		OclExpression filter = null;
 		for (String option : splitTopLevel(optionList, ';')) {
 			String trimmed = option.trim();
 			var select = NESTED_SELECT.matcher(trimmed);
 			if (select.find()) {
+				if (!(feature.getEType() instanceof EClass target)) {
+					throw new ODataQueryParseException("nested $select requires a structured property, '"
+							+ feature.getName() + "' is primitive");
+				}
 				if (nested != null) {
 					throw new ODataQueryParseException("duplicate nested $select");
 				}
-				nested = items(trimmed.substring(select.end()), target);
+				nested = items(trimmed.substring(select.end()), target, filterParser);
+				continue;
+			}
+			var filterOption = NESTED_FILTER.matcher(trimmed);
+			if (filterOption.find()) {
+				if (filterParser == null) {
+					throw new UnsupportedOperationException(
+							"$filter inside $select is not supported here");
+				}
+				if (!feature.isMany()) {
+					throw new ODataQueryParseException(
+							"$filter inside $select applies to collection-valued properties");
+				}
+				if (filter != null) {
+					throw new ODataQueryParseException("duplicate nested $filter");
+				}
+				// navigation collections filter against the target type; primitive collections
+				// have no type of their own — their items are addressed as $it
+				EClass context = feature.getEType() instanceof EClass target ? target
+						: feature.getEContainingClass();
+				filter = filterParser.apply(trimmed.substring(filterOption.end()), context);
 				continue;
 			}
 			throw new ODataQueryParseException(NESTED_KNOWN.matcher(trimmed).find()
-					? "nested $select supports only $select sub-options (v1)"
+					? "this nested $select option is not implemented"
 					: "unknown nested $select option: " + trimmed);
 		}
-		if (nested == null || nested.isEmpty()) {
+		if ((nested == null || nested.isEmpty()) && filter == null) {
 			throw new ODataQueryParseException("empty nested $select option list");
 		}
-		return nested;
+		return new SelectTree(nested == null ? Map.of() : nested, filter);
 	}
 
 	private static EStructuralFeature feature(EClass type, String name) {

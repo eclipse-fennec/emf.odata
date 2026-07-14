@@ -390,7 +390,7 @@ class ODataServletTest {
 		assertTrue(metadata.body().indexOf("edmx:Reference") < metadata.body().indexOf("DataServices"),
 				"the Core vocabulary reference precedes DataServices");
 		assertTrue(metadata.body().contains("Org.OData.Capabilities.V1.ConformanceLevel")
-				&& metadata.body().contains("ConformanceLevelType/Minimal"),
+				&& metadata.body().contains("ConformanceLevelType/Advanced"),
 				"the conformance level is advertised (12 / 13.2.1 SHOULD)");
 		assertTrue(metadata.body().contains("Org.OData.Capabilities.V1.BatchSupported")
 				&& metadata.body().contains("Org.OData.Capabilities.V1.AsynchronousRequestsSupported"),
@@ -1412,13 +1412,53 @@ class ODataServletTest {
 		// recognized-but-unsupported and malformed nested options fail the request
 		assertEquals(400, get("/Product",
 				Map.of("$select", "category($filter=name eq 'x')")).status(),
-				"nested non-$select options are rejected, not ignored");
+				"$filter inside $select needs a COLLECTION-valued property");
 		assertEquals(400, get("/Product", Map.of("$select", "name($select=x)")).status(),
 				"nested select on a primitive property");
 		assertEquals(400, get("/Product", Map.of("$select", "category($select=nosuch)")).status(),
 				"unknown nested property");
 		assertEquals(400, get("/Product", Map.of("$select", "category($select=name")).status(),
 				"unbalanced parentheses");
+	}
+
+	@Test
+	@DisplayName("$filter on selected collections ([OData-URL] 5.1.3, 4.01 Advanced §13.2.3/5.1)")
+	void selectFilters() throws Exception {
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		EObject great = pkg.getEFactoryInstance().create(reviewClass);
+		great.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+		great.eSet(reviewClass.getEStructuralFeature("comment"), "great");
+		EObject meh = pkg.getEFactoryInstance().create(reviewClass);
+		meh.eSet(reviewClass.getEStructuralFeature("stars"), 2);
+		meh.eSet(reviewClass.getEStructuralFeature("comment"), "meh");
+		EObject milk = product("p1", "Milk", "1.20", null);
+		@SuppressWarnings("unchecked")
+		List<EObject> reviews = (List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews"));
+		reviews.addAll(List.of(great, meh));
+		@SuppressWarnings("unchecked")
+		List<String> tags = (List<String>) milk.eGet(productClass.getEStructuralFeature("tags"));
+		tags.addAll(List.of("sale", "new"));
+		backendResult = List.of(milk);
+
+		Response filtered = get("/Product", Map.of("$select", "name,reviews($filter=stars ge 4)"));
+		assertEquals(200, filtered.status(), filtered.body());
+		assertTrue(filtered.body().contains("\"great\""), filtered.body());
+		assertFalse(filtered.body().contains("\"meh\""),
+				"the nav-collection filter runs against the target type: " + filtered.body());
+
+		Response combined = get("/Product",
+				Map.of("$select", "reviews($select=comment;$filter=stars ge 4)"));
+		assertEquals(200, combined.status(), combined.body());
+		assertTrue(combined.body().contains("\"great\"") && !combined.body().contains("\"meh\""),
+				combined.body());
+		assertFalse(combined.body().contains("\"stars\""),
+				"the sibling $select still projects: " + combined.body());
+
+		Response primitive = get("/Product", Map.of("$select", "name,tags($filter=$it eq 'sale')"));
+		assertEquals(200, primitive.status(), primitive.body());
+		assertTrue(primitive.body().contains("\"sale\""), primitive.body());
+		assertFalse(primitive.body().contains("\"new\""),
+				"primitive-collection items are addressed as $it: " + primitive.body());
 	}
 
 	@Test
@@ -1811,10 +1851,105 @@ class ODataServletTest {
 		assertEquals("0", navCount.body(), "empty collection counts 0");
 
 		assertEquals(404, get("/Product('p1')/nosuch", Map.of()).status(), "unknown segment");
-		assertEquals(501, get("/Product('p1')/category/$ref", Map.of()).status(), "$ref later");
 		assertEquals(501, get("/Product('p1')/category", Map.of("$select", "name")).status(),
 				"unimplemented query options on navigation paths → 501");
 		assertEquals(404, get("/NoSet('x')/name", Map.of()).status());
+	}
+
+	@Test
+	@DisplayName("$ref reads: entity references for single and collection navigations")
+	void refReads() throws Exception {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		EObject cable = product("p2", "Cable", "1.50", null);
+		EObject milk = product("p1", "Milk", "1.20", dairy);
+		@SuppressWarnings("unchecked")
+		List<EObject> accessories = (List<EObject>) milk
+				.eGet(productClass.getEStructuralFeature("accessories"));
+		accessories.add(cable);
+		EObject review = pkg.getEFactoryInstance().create(EcoreHelper.getEClass(pkg, "Review"));
+		@SuppressWarnings("unchecked")
+		List<EObject> reviews = (List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews"));
+		reviews.add(review);
+		backendResult = List.of(milk, cable);
+
+		Response single = get("/Product('p1')/category/$ref", Map.of());
+		assertEquals(200, single.status(), single.body());
+		assertTrue(single.body().contains("$metadata#$ref"), single.body());
+		assertTrue(single.body().contains("\"@odata.id\":\"Category('c1')\""), single.body());
+
+		Response collection = get("/Product('p1')/accessories/$ref", Map.of());
+		assertEquals(200, collection.status(), collection.body());
+		assertTrue(collection.body().contains("$metadata#Collection($ref)"), collection.body());
+		assertTrue(collection.body().contains("\"@odata.id\":\"Product('p2')\""), collection.body());
+
+		Response self = get("/Product('p1')/$ref", Map.of());
+		assertEquals(200, self.status(), self.body());
+		assertTrue(self.body().contains("\"@odata.id\":\"Product('p1')\""), self.body());
+
+		assertEquals(501, get("/Product('p1')/reviews/$ref", Map.of()).status(),
+				"keyless containment children have no canonical URL — honest 501");
+
+		EObject lonely = product("p3", "Lonely", "1.00", null);
+		backendResult = List.of(lonely);
+		assertEquals(204, get("/Product('p3')/category/$ref", Map.of()).status(),
+				"a null single navigation has no reference");
+	}
+
+	@Test
+	@DisplayName("$expand=nav/$ref and cast-in-expand ([OData-URL] 5.1.3.1/5.1.3.2)")
+	void expandRefsAndCasts() throws Exception {
+		EClass discounted = EcoreHelper.getEClass(pkg, "DiscountedProduct");
+		EObject sale = pkg.getEFactoryInstance().create(discounted);
+		sale.eSet(discounted.getEStructuralFeature("id"), "d1");
+		sale.eSet(discounted.getEStructuralFeature("name"), "SaleMilk");
+		sale.eSet(discounted.getEStructuralFeature("discount"), 20);
+		EObject bargain = pkg.getEFactoryInstance().create(discounted);
+		bargain.eSet(discounted.getEStructuralFeature("id"), "d2");
+		bargain.eSet(discounted.getEStructuralFeature("name"), "Bargain");
+		bargain.eSet(discounted.getEStructuralFeature("discount"), 5);
+		EObject cable = product("p2", "Cable", "1.50", null);
+		EObject milk = product("p1", "Milk", "1.20", null);
+		@SuppressWarnings("unchecked")
+		List<EObject> accessories = (List<EObject>) milk
+				.eGet(productClass.getEStructuralFeature("accessories"));
+		accessories.addAll(List.of(cable, sale, bargain));
+		backendResult = List.of(milk);
+
+		Response refs = get("/Product", Map.of("$expand", "accessories/$ref"));
+		assertEquals(200, refs.status(), refs.body());
+		assertTrue(refs.body().contains("\"accessories\":[{\"@odata.id\":\"Product('p2')\"},"
+				+ "{\"@odata.id\":\"DiscountedProduct('d1')\"},{\"@odata.id\":\"DiscountedProduct('d2')\"}"),
+				"derived instances reference their most-derived set (each non-abstract type is one): "
+						+ refs.body());
+		assertFalse(refs.body().contains("\"Cable\""),
+				"reference expansion carries ids only, no entity content: " + refs.body());
+
+		Response cast = get("/Product", Map.of("$expand", "accessories/webshop.DiscountedProduct"));
+		assertEquals(200, cast.status(), cast.body());
+		assertTrue(cast.body().contains("\"SaleMilk\"") && cast.body().contains("\"Bargain\""),
+				cast.body());
+		assertFalse(cast.body().contains("\"Cable\""),
+				"cast-in-expand keeps only derived instances: " + cast.body());
+
+		Response filtered = get("/Product",
+				Map.of("$expand", "accessories/webshop.DiscountedProduct($filter=discount gt 10)"));
+		assertEquals(200, filtered.status(), filtered.body());
+		assertTrue(filtered.body().contains("\"SaleMilk\""), filtered.body());
+		assertFalse(filtered.body().contains("\"Bargain\""),
+				"the nested filter runs against the derived type: " + filtered.body());
+
+		assertEquals(400, get("/Product", Map.of("$expand", "accessories/webshop.NoSuch")).status(),
+				"unknown cast type in $expand");
+		assertEquals(501, get("/Product", Map.of("$expand", "accessories/$ref($filter=active eq true)"))
+				.status(), "options on a /$ref expansion are not implemented");
+		EObject review = pkg.getEFactoryInstance().create(EcoreHelper.getEClass(pkg, "Review"));
+		@SuppressWarnings("unchecked")
+		List<EObject> reviews = (List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews"));
+		reviews.add(review);
+		assertEquals(501, get("/Product", Map.of("$expand", "reviews/$ref")).status(),
+				"keyless containment children have no entity references");
 	}
 
 	@Test

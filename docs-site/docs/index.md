@@ -52,7 +52,7 @@ features:
     linkText: Live interop findings
   - icon: ✅
     title: Conformance-tracked
-    details: "4.0 and 4.01 Minimal and Intermediate are met (incl. the Updatable Service), verified clause-by-clause against the OASIS spec and thousands of ABNF acceptance cases."
+    details: "All four levels are met — 4.0 and 4.01, Minimal through ADVANCED (incl. the Updatable Service) — verified clause-by-clause against the OASIS spec and thousands of ABNF acceptance cases."
     link: /guides/05-conformance
     linkText: Conformance levels
   - icon: 📐

@@ -164,6 +164,15 @@ class InMemoryQueryServiceTest {
 		assertEquals(List.of("Milk", "Cheese"), names(query("category/name eq 'Dairy'", null, 0, -1, false)));
 		assertEquals(List.of("Cheese"), names(query("reviews/any(r: r/stars ge 5)", null, 0, -1, false)));
 		assertEquals(List.of("Cheese"), names(query("reviews/$count gt 1", null, 0, -1, false)));
+		// filtered/searched count in a common expression (4.01 Advanced §13.2.3/3)
+		assertEquals(List.of("Cheese"), names(query("reviews/$count($filter=stars ge 5) eq 1",
+				null, 0, -1, false)));
+		assertEquals(List.of("Cheese"), names(query("reviews/$count($search=great) gt 0",
+				null, 0, -1, false)),
+				"the search words match against the element type's string properties");
+		assertEquals(List.of("Milk", "Bread", "Salt"),
+				names(query("reviews/$count($search=not great) eq 0", null, 0, -1, false)),
+				"Cheese has one non-'great' review; the reviewless products count 0");
 		assertEquals(List.of("Cheese"), names(query("contains(tolower(name), 'e') and active eq true",
 				null, 0, -1, false)), "Bread contains 'e' but is inactive");
 		assertEquals(List.of("Cheese"), names(query("color eq webshop.Color'Green'", null, 0, -1, false)));

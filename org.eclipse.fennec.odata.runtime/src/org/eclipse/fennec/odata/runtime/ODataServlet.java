@@ -25,6 +25,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.ArrayList;
 import java.util.List;
@@ -1985,9 +1986,10 @@ public class ODataServlet extends HttpServlet {
 			HttpServletRequest request, HttpServletResponse response) throws IOException {
 		response.setHeader("ETag", etagOf(entity, type));
 		SelectTree select = selectOption(request, type);
-		Map<String, OclExpression> expand = expandOption(request, type);
+		Map<String, ExpandItem> expand = expandOption(request, type);
 		if (wantsXml(request)) {
-			List<EObject> copies = shaper.shapeAll(List.of(entity), type, select, expand.keySet());
+			List<EObject> copies = shaper.shapeAll(List.of(entity), type, select, inlineNavs(expand),
+					expandFilterEvaluator::matchesNullSafe);
 			copies.forEach(copy -> applyNestedFilters(copy, expand));
 			writeXmi(response, copies);
 			return;
@@ -2036,7 +2038,10 @@ public class ODataServlet extends HttpServlet {
 				// what this v1 read-only service can and cannot do (12/13.2.1 advertisement)
 				AnnotationType conformance = EdmFactory.eINSTANCE.createAnnotationType();
 				conformance.setTerm("Org.OData.Capabilities.V1.ConformanceLevel");
-				conformance.setEnumMember1(List.of("Org.OData.Capabilities.V1.ConformanceLevelType/Minimal"));
+				// every 4.0 AND 4.01 Advanced MUST is implemented and clause-audited
+				// (docs/odata-conformance-status.md, re-audit 2026-07-14)
+				conformance.setEnumMember1(
+						List.of("Org.OData.Capabilities.V1.ConformanceLevelType/Advanced"));
 				container.getAnnotation().add(conformance);
 				container.getAnnotation().add(
 						boolCapability("Org.OData.Capabilities.V1.BatchSupported", true));
@@ -2147,7 +2152,7 @@ public class ODataServlet extends HttpServlet {
 		ApplyPipeline computePipeline = computePipeline(request, context);
 		Map<String, OclExpression> computeAliases = computeAliasMap(computePipeline);
 		SelectTree select = selectOption(request, context, computeAliases.keySet());
-		Map<String, OclExpression> expand = expandOption(request, context);
+		Map<String, ExpandItem> expand = expandOption(request, context);
 		Map<String, String> aliases = parameterAliases(request);
 
 		List<OrderBySegment> orderBy = parseChecked(option(request, "$orderby"),
@@ -2185,7 +2190,8 @@ public class ODataServlet extends HttpServlet {
 		List<EObject> page = hasMore ? result.entities().subList(0, top) : result.entities();
 
 		if (xml) { // XMI is a non-OData projection — trimmed, but without an embedded link
-			List<EObject> copies = shaper.shapeAll(page, context, select, expand.keySet());
+			List<EObject> copies = shaper.shapeAll(page, context, select, inlineNavs(expand),
+					expandFilterEvaluator::matchesNullSafe);
 			copies.forEach(copy -> applyNestedFilters(copy, expand));
 			writeXmi(response, copies);
 			return;
@@ -2364,6 +2370,37 @@ public class ODataServlet extends HttpServlet {
 	 * ({@code ''}-escaped), composite keys as named pairs — the same forms {@code keyEquals}
 	 * accepts back.
 	 */
+	/** The canonical entity id ({@code Set(key)}) — used by `$ref` reads and reference payloads. */
+	private String entityIdOf(EObject entity) {
+		Map<String, Object> keyValues = new LinkedHashMap<>();
+		for (EAttribute id : entity.eClass().getEAllAttributes()) {
+			if (id.isID()) {
+				keyValues.put(id.getName(), entity.eGet(id));
+			}
+		}
+		if (keyValues.isEmpty()) { // keyless (containment-only) types have no canonical URL
+			throw new UnsupportedOperationException(
+					"the type '" + entity.eClass().getName() + "' has no key — no entity reference");
+		}
+		return setNameOf(entity.eClass()) + "(" + keyLiteral(keyValues) + ")";
+	}
+
+	/** The container set name serving the given type — honours per-package set renames. */
+	private String setNameOf(EClass entityType) {
+		for (EPackage pkg : packages) {
+			EAnnotation sets = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
+			if (sets == null) {
+				continue;
+			}
+			for (Map.Entry<String, String> entry : sets.getDetails()) {
+				if (entry.getValue().equals(entityType.getName())) {
+					return entry.getKey(); // set name -> type name, inverted
+				}
+			}
+		}
+		return entityType.getName();
+	}
+
 	private static String keyLiteral(Map<String, Object> keyValues) {
 		StringBuilder literal = new StringBuilder();
 		boolean named = keyValues.size() > 1;
@@ -3250,7 +3287,39 @@ public class ODataServlet extends HttpServlet {
 					return;
 				}
 				case ResourcePath.RefSegment ref -> {
-					error(response, 501, "$ref is not implemented");
+					// entity reference(s) of the addressed resource ([OData-Protocol] 11.2.8):
+					// ids only, no entity content — the read counterpart of the $ref writes
+					if (current == null) {
+						response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+						return;
+					}
+					if (current instanceof List<?> collection) {
+						List<?> shaped = pageCollection(
+								orderCollection(filterCollection(collection, request), request), request);
+						StringBuilder json = envelopeHead(
+								contextRoot(request) + "/$metadata#Collection($ref)");
+						envelopeProperty(json).append("\"value\":[");
+						for (int r = 0; r < shaped.size(); r++) {
+							if (r > 0) {
+								json.append(',');
+							}
+							json.append("{\"@odata.id\":\"")
+									.append(ODataJson.sanitize(entityIdOf((EObject) shaped.get(r))))
+									.append("\"}");
+						}
+						json.append("]}");
+						response.setContentType(contentTypeJson());
+						response.getWriter().write(json.toString());
+						return;
+					}
+					if (current instanceof EObject entity && !(entity instanceof Enumerator)) {
+						response.setContentType(contentTypeJson());
+						response.getWriter().write(withContext(contextRoot(request) + "/$metadata#$ref",
+								"{\"@odata.id\":\"" + ODataJson.sanitize(entityIdOf(entity)) + "\"}"));
+						return;
+					}
+					error(response, HttpServletResponse.SC_BAD_REQUEST,
+							"$ref requires an entity or an entity collection");
 					return;
 				}
 			}
@@ -3418,10 +3487,10 @@ public class ODataServlet extends HttpServlet {
 		// optimistic concurrency (13.1.1/26): the served ETag is the write preconditions' ETag
 		response.setHeader("ETag", etagOf(entity, entityType));
 		SelectTree select = selectOption(request, entityType);
-		Map<String, OclExpression> expand = expandOption(request, entityType);
+		Map<String, ExpandItem> expand = expandOption(request, entityType);
 		if (wantsXml(request)) {
 			List<EObject> copies = shaper.shapeAll(List.of(entity), entityType, select,
-					expand.keySet());
+					inlineNavs(expand), expandFilterEvaluator::matchesNullSafe);
 			copies.forEach(copy -> applyNestedFilters(copy, expand));
 			writeXmi(response, copies);
 			return;
@@ -3839,17 +3908,35 @@ public class ODataServlet extends HttpServlet {
 			}
 			select = String.join(",", realProperties);
 		}
-		return SelectTree.parse(select, entityType);
+		// nested $filter over selected collections ([OData-URL] 5.1.3, 4.01 Advanced §13.2.3/5.1)
+		// parses through the same guarded parser as every other expression
+		return SelectTree.parse(select, entityType, (expression, context) -> {
+			limits.checkExpression(expression);
+			return parser.parseFilter(expression, context);
+		});
 	}
 
 	/**
-	 * Validated {@code $expand} items ([OData-URL] 5.1.3): navigation name → nested
-	 * {@code $filter} IR (null without one). Only {@code $filter} is supported as a nested
-	 * option (on collection-valued navigations); other nested options answer 501.
+	 * One validated {@code $expand} item ([OData-URL] 5.1.3):
+	 *
+	 * @param filter  nested {@code $filter} IR, or null
+	 * @param refOnly {@code nav/$ref} ([OData-URL] 5.1.3.1): only entity REFERENCES are
+	 *                expanded — the response carries {@code {"@odata.id": …}} objects
+	 * @param cast    {@code nav/Ns.Type} (5.1.3.2): only related instances of the derived type
+	 *                are expanded; null without a cast
 	 */
-	private Map<String, OclExpression> expandOption(HttpServletRequest request, EClass entityType) {
+	private record ExpandItem(OclExpression filter, boolean refOnly, EClass cast) {
+	}
+
+	/**
+	 * Validated {@code $expand} items: navigation name → {@link ExpandItem}. Supported item
+	 * shapes: {@code nav}, {@code nav($filter=…)}, {@code nav/$ref} and {@code nav/Ns.Type}
+	 * (optionally with a nested {@code $filter} against the derived type); other nested
+	 * options answer 501.
+	 */
+	private Map<String, ExpandItem> expandOption(HttpServletRequest request, EClass entityType) {
 		String expand = option(request, "$expand");
-		Map<String, OclExpression> items = new LinkedHashMap<>();
+		Map<String, ExpandItem> items = new LinkedHashMap<>();
 		if (expand == null || expand.isBlank()) {
 			return items;
 		}
@@ -3863,16 +3950,51 @@ public class ODataServlet extends HttpServlet {
 				name = trimmed.substring(0, paren).trim();
 				nested = trimmed.substring(paren + 1, trimmed.length() - 1).trim();
 			}
+			boolean refOnly = false;
+			String castName = null;
+			int slash = name.indexOf('/');
+			if (slash >= 0) { // nav/$ref or nav/Ns.Type
+				String suffix = name.substring(slash + 1).trim();
+				name = name.substring(0, slash).trim();
+				if ("$ref".equals(suffix)) {
+					refOnly = true;
+				} else {
+					castName = suffix;
+				}
+			}
 			if (!(entityType.getEStructuralFeature(name) instanceof EReference reference)) {
 				throw new ODataQueryParseException("unknown $expand navigation '" + name + "'");
 			}
-			items.put(name, nested == null ? null : nestedExpandFilter(nested, reference));
+			if (refOnly && nested != null) {
+				throw new UnsupportedOperationException(
+						"options on $expand=nav/$ref are not implemented");
+			}
+			EClass cast = null;
+			if (castName != null) {
+				cast = resolveCastType(castName, null);
+				if (cast == null || !reference.getEReferenceType().isSuperTypeOf(cast)) {
+					throw new ODataQueryParseException("'" + castName
+							+ "' is not a derived type of the '" + name + "' navigation");
+				}
+			}
+			EClass filterContext = cast != null ? cast : reference.getEReferenceType();
+			items.put(name, new ExpandItem(
+					nested == null ? null : nestedExpandFilter(nested, reference, filterContext),
+					refOnly, cast));
 		}
 		return items;
 	}
 
+	/** The navigations rendered INLINE — everything except the {@code /$ref} items. */
+	private static Set<String> inlineNavs(Map<String, ExpandItem> expand) {
+		return expand.entrySet().stream()
+				.filter(item -> !item.getValue().refOnly())
+				.map(Map.Entry::getKey)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+	}
+
 	/** One parenthesized expand option block — {@code $filter=<expr>} is the supported shape. */
-	private OclExpression nestedExpandFilter(String nested, EReference reference) {
+	private OclExpression nestedExpandFilter(String nested, EReference reference, EClass context) {
 		int equals = nested.indexOf('=');
 		String optionName = equals < 0 ? nested : nested.substring(0, equals).trim();
 		if (!"$filter".equalsIgnoreCase(optionName) && !"filter".equalsIgnoreCase(optionName)) {
@@ -3885,7 +4007,7 @@ public class ODataServlet extends HttpServlet {
 		}
 		String nestedFilter = nested.substring(equals + 1).trim();
 		limits.checkExpression(nestedFilter); // defence in depth: guard the inner filter too
-		return parser.parseFilter(nestedFilter, reference.getEReferenceType());
+		return parser.parseFilter(nestedFilter, context);
 	}
 
 	/** Top-level comma split of {@code $expand} — parens and string literals stay intact. */
@@ -3911,16 +4033,28 @@ public class ODataServlet extends HttpServlet {
 		return items;
 	}
 
-	/** Nested {@code $expand} filters run on the SHAPED copy — never on backend objects. */
-	private void applyNestedFilters(EObject copy, Map<String, OclExpression> expand) {
-		for (Map.Entry<String, OclExpression> item : expand.entrySet()) {
-			if (item.getValue() == null) {
+	/** Nested {@code $expand} casts and filters run on the SHAPED copy — never on backend objects. */
+	private void applyNestedFilters(EObject copy, Map<String, ExpandItem> expand) {
+		for (Map.Entry<String, ExpandItem> entry : expand.entrySet()) {
+			ExpandItem item = entry.getValue();
+			if (item.refOnly() || (item.cast() == null && item.filter() == null)) {
 				continue;
 			}
-			EStructuralFeature feature = copy.eClass().getEStructuralFeature(item.getKey());
-			if (feature != null && copy.eGet(feature) instanceof List<?> children) {
-				children.removeIf(child -> !expandFilterEvaluator
-						.matchesNullSafe(item.getValue(), child));
+			EStructuralFeature feature = copy.eClass().getEStructuralFeature(entry.getKey());
+			if (feature == null) {
+				continue;
+			}
+			if (copy.eGet(feature) instanceof List<?> children) {
+				if (item.cast() != null) { // cast-in-expand: only derived instances stay (5.1.3.2)
+					children.removeIf(child -> !item.cast().isInstance(child));
+				}
+				if (item.filter() != null) {
+					children.removeIf(child -> !expandFilterEvaluator
+							.matchesNullSafe(item.filter(), child));
+				}
+			} else if (item.cast() != null && copy.eGet(feature) instanceof EObject child
+					&& !item.cast().isInstance(child)) {
+				copy.eUnset(feature); // single-valued: a non-matching instance is not expanded
 			}
 		}
 	}
@@ -3931,12 +4065,56 @@ public class ODataServlet extends HttpServlet {
 				entityType, expand);
 	}
 
-	/** {@link #entityJson} for parsed expand specs: applies nested filters after shaping. */
+	/** {@link #entityJson} for parsed expand specs: applies nested casts/filters after shaping. */
 	private String entityJson(EObject entity, EClass entityType, SelectTree select,
-			Map<String, OclExpression> expand) throws IOException {
-		EObject copy = shaper.shape(entity, entityType, select, expand.keySet(), null);
+			Map<String, ExpandItem> expand) throws IOException {
+		Set<String> inline = inlineNavs(expand);
+		EObject copy = shaper.shape(entity, entityType, select, inline, null,
+				expandFilterEvaluator::matchesNullSafe);
 		applyNestedFilters(copy, expand);
-		return serializeEntity(entity, copy, entityType, expand.keySet());
+		return withExpandedRefs(serializeEntity(entity, copy, entityType, inline), entity, expand);
+	}
+
+	/**
+	 * Splices {@code $expand=nav/$ref} members into the entity JSON ([OData-URL] 5.1.3.1):
+	 * entity-reference objects built from the ORIGINAL entity's navigation values — full
+	 * entities are neither shaped nor serialized for these navigations.
+	 */
+	private String withExpandedRefs(String entityJson, EObject entity,
+			Map<String, ExpandItem> expand) {
+		StringBuilder members = new StringBuilder();
+		for (Map.Entry<String, ExpandItem> entry : expand.entrySet()) {
+			if (!entry.getValue().refOnly()) {
+				continue;
+			}
+			EStructuralFeature feature = entity.eClass().getEStructuralFeature(entry.getKey());
+			if (feature == null) {
+				continue;
+			}
+			members.append(",\"").append(entry.getKey()).append("\":");
+			if (entity.eGet(feature) instanceof List<?> children) {
+				members.append('[');
+				for (int i = 0; i < children.size(); i++) {
+					if (i > 0) {
+						members.append(',');
+					}
+					members.append("{\"@odata.id\":\"")
+							.append(ODataJson.sanitize(entityIdOf((EObject) children.get(i))))
+							.append("\"}");
+				}
+				members.append(']');
+			} else if (entity.eGet(feature) instanceof EObject child) {
+				members.append("{\"@odata.id\":\"")
+						.append(ODataJson.sanitize(entityIdOf(child))).append("\"}");
+			} else {
+				members.append("null"); // no related entity ([OData-JSON] expanded references)
+			}
+		}
+		if (members.isEmpty()) {
+			return entityJson;
+		}
+		String inner = entityJson.substring(1, entityJson.length() - 1);
+		return "{" + (inner.isEmpty() ? members.substring(1) : inner + members) + "}";
 	}
 
 	private String serializeEntity(EObject entity, EObject copy, EClass entityType,
