@@ -45,8 +45,12 @@ public final class ChangeJournal {
 			Map<String, Object> keyValues, boolean deleted) {
 	}
 
-	/** The deduplicated changes of one token window plus the follow-up token. */
-	public record Window(List<Change> changes, String nextToken) {
+	/**
+	 * The deduplicated changes of one token window plus the follow-up token; {@code more} marks
+	 * a TRUNCATED window (the span cap hit before "now" — the next window continues from
+	 * {@code nextToken}).
+	 */
+	public record Window(List<Change> changes, String nextToken, boolean more) {
 	}
 
 	private final Deque<Change> journal = new ArrayDeque<>();
@@ -108,6 +112,16 @@ public final class ChangeJournal {
 	 *                            retention window
 	 */
 	public Window since(String token, EClass entityType) {
+		return since(token, entityType, Long.MAX_VALUE);
+	}
+
+	/**
+	 * {@link #since(String, EClass)} bounded to a RAW-JOURNAL span: the window covers at most
+	 * {@code maxSpan} sequence numbers past the token, so every caller using the same token and
+	 * span sees the SAME upper bound (delta pages stay consistent across the per-type and
+	 * expand-owner sub-queries).
+	 */
+	public Window since(String token, EClass entityType, long maxSpan) {
 		long sinceSeq;
 		try {
 			sinceSeq = Long.parseLong(token);
@@ -123,12 +137,14 @@ public final class ChangeJournal {
 				throw new DeltaGoneException("the delta token is no longer valid");
 			}
 			now = nextSeq - 1;
+			long upper = maxSpan >= now - sinceSeq ? now : sinceSeq + maxSpan;
 			for (Change change : journal) {
-				if (change.seq() > sinceSeq
+				if (change.seq() > sinceSeq && change.seq() <= upper
 						&& (entityType == null || entityType.isSuperTypeOf(change.type()))) {
 					relevant.add(change);
 				}
 			}
+			now = upper; // the window's follow-up token is its own upper bound
 		}
 		Map<List<Object>, Change> latest = new LinkedHashMap<>();
 		for (Change change : relevant) {
@@ -136,7 +152,11 @@ public final class ChangeJournal {
 			latest.remove(key);
 			latest.put(key, change); // the LAST outcome, at its last position
 		}
-		return new Window(List.copyOf(latest.values()), Long.toString(now));
+		boolean more;
+		synchronized (journal) {
+			more = now < nextSeq - 1;
+		}
+		return new Window(List.copyOf(latest.values()), Long.toString(now), more);
 	}
 
 	private void append(List<Change> changes) {

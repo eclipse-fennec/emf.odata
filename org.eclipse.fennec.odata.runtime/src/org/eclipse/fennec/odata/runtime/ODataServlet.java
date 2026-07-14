@@ -416,6 +416,8 @@ public class ODataServlet extends HttpServlet {
 				serviceDocument(request, response);
 			} else if ("/$metadata".equals(path)) {
 				metadataDocument(request, response);
+			} else if (path.startsWith("/$async/")) {
+				asyncMonitor(path.substring("/$async/".length()), response); // status monitor (11.6)
 			} else {
 				resource(path.substring(1), request, response);
 			}
@@ -454,7 +456,15 @@ public class ODataServlet extends HttpServlet {
 				return;
 			}
 			switch (request.getMethod()) {
-				case "GET" -> super.service(request, response);
+				case "GET" -> {
+					// Prefer: respond-async ([OData-Protocol] 11.6, Advanced SHOULD 13.1.3/13):
+					// the request runs to completion, only DELIVERY moves to a status monitor
+					if (respondAsyncRequested(request) && !pathInfo.startsWith("/$async")) {
+						respondAsync(request, response);
+					} else {
+						super.service(request, response);
+					}
+				}
 				case "POST", "PATCH", "PUT", "DELETE" -> write(request, response);
 				default -> {
 					response.setHeader("OData-Version", negotiateVersion(request));
@@ -1038,6 +1048,90 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/** Synthetic response that captures status, headers and body of one batch sub-request. */
+	// --- asynchronous responses ([OData-Protocol] 11.6): Prefer: respond-async ---
+
+	/** A completed response parked behind its status monitor ({@code /$async/<id>}). */
+	private record AsyncResult(int status, Map<String, String> headers, byte[] body) {
+	}
+
+	/** Parked async results, bounded LRU — unclaimed monitors age out. */
+	private final Map<String, AsyncResult> asyncResults =
+			Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+				private static final long serialVersionUID = 1L;
+
+				@Override
+				protected boolean removeEldestEntry(Map.Entry<String, AsyncResult> eldest) {
+					return size() > 100;
+				}
+			});
+
+	/** Whether the client sent {@code Prefer: respond-async} ([OData-Protocol] 8.2.8.8). */
+	private static boolean respondAsyncRequested(HttpServletRequest request) {
+		String prefer = request.getHeader("Prefer");
+		if (prefer == null) {
+			return false;
+		}
+		for (String preference : prefer.split(",")) {
+			if ("respond-async".equals(preference.trim().toLowerCase(Locale.ROOT))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Runs the GET to completion against a capturing response, parks the result behind a fresh
+	 * status monitor and answers {@code 202 Accepted} — spec-conform: {@code respond-async}
+	 * governs the DELIVERY, not the execution ([OData-Protocol] 11.6).
+	 */
+	private void respondAsync(HttpServletRequest request, HttpServletResponse response)
+			throws jakarta.servlet.ServletException, IOException {
+		BatchHttpResponse captured = new BatchHttpResponse(response);
+		super.service(request, captured);
+		captured.flushBufferQuietly();
+		String id = java.util.UUID.randomUUID().toString();
+		asyncResults.put(id, new AsyncResult(captured.status(),
+				new LinkedHashMap<>(captured.headers()), captured.body()));
+		response.setStatus(HttpServletResponse.SC_ACCEPTED);
+		response.setHeader("Location", contextRoot(request) + "/$async/" + id);
+		response.setHeader("Preference-Applied", "respond-async");
+	}
+
+	/**
+	 * {@code GET /$async/<id>}: the parked response as an {@code application/http} message
+	 * ([OData-Protocol] 11.6.1); ONE-shot — the monitor is gone once the result is retrieved.
+	 * Unknown/expired monitors answer 404.
+	 */
+	private void asyncMonitor(String id, HttpServletResponse response) throws IOException {
+		AsyncResult result = asyncResults.remove(id);
+		if (result == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
+			return;
+		}
+		response.setStatus(HttpServletResponse.SC_OK);
+		response.setContentType("application/http");
+		response.setHeader("AsyncResult", String.valueOf(result.status()));
+		StringBuilder message = new StringBuilder("HTTP/1.1 ").append(result.status())
+				.append(' ').append(reasonPhrase(result.status())).append("\r\n");
+		result.headers().forEach((name, value) ->
+				message.append(name).append(": ").append(value).append("\r\n"));
+		message.append("\r\n");
+		response.getOutputStream().write(message.toString().getBytes(StandardCharsets.UTF_8));
+		response.getOutputStream().write(result.body());
+	}
+
+	private static String reasonPhrase(int status) {
+		return switch (status) {
+			case 200 -> "OK";
+			case 204 -> "No Content";
+			case 400 -> "Bad Request";
+			case 404 -> "Not Found";
+			case 410 -> "Gone";
+			case 501 -> "Not Implemented";
+			default -> "";
+		};
+	}
+
 	private static final class BatchHttpResponse extends HttpServletResponseWrapper {
 		private int status = HttpServletResponse.SC_OK;
 		private final Map<String, String> headers = new LinkedHashMap<>(); // keys lower-cased
@@ -1173,6 +1267,16 @@ public class ODataServlet extends HttpServlet {
 	private void dispatchWrite(HttpServletRequest request, HttpServletResponse response)
 			throws IOException {
 		String rawPath = request.getPathInfo() == null ? "/" : request.getPathInfo();
+		if ("DELETE".equals(request.getMethod()) && rawPath.startsWith("/$async/")) {
+			// cancelling a not-yet-retrieved async result discards it (11.6: DELETE the monitor)
+			boolean removed = asyncResults.remove(rawPath.substring("/$async/".length())) != null;
+			if (removed) {
+				response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+			} else {
+				error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
+			}
+			return;
+		}
 		if ("/".equals(rawPath) || rawPath.startsWith("/$")) {
 			error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
 					"this resource is not writable");
@@ -2152,7 +2256,7 @@ public class ODataServlet extends HttpServlet {
 		SelectTree select = selectOption(request, type);
 		Map<String, ExpandItem> expand = expandOption(request, type);
 		if (wantsXml(request)) {
-			List<EObject> copies = shaper.shapeAll(List.of(entity), type, select, inlineNavs(expand));
+			List<EObject> copies = shaper.shapeAll(List.of(entity), type, select, shapePaths(expand));
 			copies.forEach(copy -> applyNestedFilters(copy, expand));
 			writeXmi(response, copies);
 			return;
@@ -2210,7 +2314,7 @@ public class ODataServlet extends HttpServlet {
 						boolCapability("Org.OData.Capabilities.V1.BatchSupported", true));
 				container.getAnnotation().add(changeTrackingCapability(!deltaServices.isEmpty()));
 				container.getAnnotation().add(
-						boolCapability("Org.OData.Capabilities.V1.AsynchronousRequestsSupported", false));
+						boolCapability("Org.OData.Capabilities.V1.AsynchronousRequestsSupported", true));
 				container.getAnnotation().add(
 						boolCapability("Org.OData.Capabilities.V1.KeyAsSegmentSupported", false));
 			}
@@ -2337,7 +2441,7 @@ public class ODataServlet extends HttpServlet {
 				orderBy == null ? List.of() : orderBy,
 				skip, top + 1,
 				"true".equals(option(request, "$count")),
-				expand.keySet()); // backends prefetch expanded navigations (no N+1, no lazy proxies)
+				shapePaths(expand)); // backends prefetch expanded navigations (no N+1, no lazy proxies)
 
 		// change tracking ([OData-Protocol] 11.3): a preference, applied only when the backend
 		// can track this type. Expanding defining queries additionally need an expand-capable
@@ -2357,7 +2461,7 @@ public class ODataServlet extends HttpServlet {
 		List<EObject> page = hasMore ? result.entities().subList(0, top) : result.entities();
 
 		if (xml) { // XMI is a non-OData projection — trimmed, but without an embedded link
-			List<EObject> copies = shaper.shapeAll(page, context, select, inlineNavs(expand));
+			List<EObject> copies = shaper.shapeAll(page, context, select, shapePaths(expand));
 			copies.forEach(copy -> applyNestedFilters(copy, expand));
 			writeXmi(response, copies);
 			return;
@@ -2508,7 +2612,12 @@ public class ODataServlet extends HttpServlet {
 
 		DeltaService.DeltaResult delta;
 		try {
-			delta = deltaService.changesSince(definingQuery, option(request, "$deltatoken"));
+			// Prefer: maxpagesize pages the delta response server-driven (11.3.2): a truncated
+			// window's follow-up link is a NEXT link; the final page carries the delta link
+			int span = maxPageSizePreference(request);
+			delta = span > 0
+					? deltaService.changesSince(definingQuery, option(request, "$deltatoken"), span)
+					: deltaService.changesSince(definingQuery, option(request, "$deltatoken"));
 		} catch (DeltaGoneException e) {
 			// the client refetches the full set: the defining query without the token (11.3.2)
 			response.setHeader("Location", definingUrl(request));
@@ -2547,7 +2656,7 @@ public class ODataServlet extends HttpServlet {
 			}
 		}
 		json.append(']');
-		json.append(",\"@odata.deltaLink\":\"")
+		json.append(delta.truncated() ? ",\"@odata.nextLink\":\"" : ",\"@odata.deltaLink\":\"")
 				.append(ODataJson.sanitize(deltaLink(request, delta.nextToken()))).append('"');
 		json.append('}');
 		response.setContentType(contentTypeJson());
@@ -2761,12 +2870,12 @@ public class ODataServlet extends HttpServlet {
 	/** {@code GET Set/$count}: the (optionally filtered, optionally cast) total as text/plain. */
 	private void setCount(String setName, EClass castType, HttpServletRequest request,
 			HttpServletResponse response) throws IOException {
-		if (option(request, "$deltatoken") != null) { // 11.3.2 allows /$count on a delta link (MAY)
-			error(response, 501, "the count of changes on a delta link is not implemented");
-			return;
-		}
 		Target target = resolveTarget(setName, response);
 		if (target == null) {
+			return;
+		}
+		if (option(request, "$deltatoken") != null) {
+			deltaCount(target, castType, request, response); // /$count on a delta link (11.3.2 MAY)
 			return;
 		}
 		EClass context = castType != null ? castType : target.entityType();
@@ -2777,6 +2886,36 @@ public class ODataServlet extends HttpServlet {
 				List.of(), 0, 0, true));
 		response.setContentType("text/plain;charset=UTF-8");
 		response.getWriter().write(String.valueOf(result.totalCount()));
+	}
+
+	/**
+	 * {@code GET Set/$count?$deltatoken=…} ([OData-Protocol] 11.3.2): the number of changes the
+	 * delta link would return — added, changed and deleted entities.
+	 */
+	private void deltaCount(Target target, EClass castType, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
+		DeltaService deltaService = deltaService(target.entityType(), target.queryService());
+		if (deltaService == null) {
+			error(response, 501, "change tracking is not supported for this entity set");
+			return;
+		}
+		EClass context = castType != null ? castType : target.entityType();
+		Map<String, String> aliases = parameterAliases(request);
+		EntityQuery definingQuery = new EntityQuery(target.entityType(), castType,
+				parseChecked(filterWithSearch(request, context),
+						filter -> aliases.isEmpty() ? parser.parseFilter(filter, context)
+								: parser.parseFilter(filter, context, aliases)),
+				List.of(), 0, -1, false);
+		DeltaService.DeltaResult delta;
+		try {
+			delta = deltaService.changesSince(definingQuery, option(request, "$deltatoken"));
+		} catch (DeltaGoneException e) {
+			response.setHeader("Location", definingUrl(request));
+			error(response, 410, "the delta token is no longer valid");
+			return;
+		}
+		response.setContentType("text/plain;charset=UTF-8");
+		response.getWriter().write(String.valueOf(delta.changed().size() + delta.removals().size()));
 	}
 
 	// --- function/action invocation (unbound function imports, GET) ---
@@ -3716,7 +3855,7 @@ public class ODataServlet extends HttpServlet {
 		Map<String, ExpandItem> expand = expandOption(request, entityType);
 		if (wantsXml(request)) {
 			List<EObject> copies = shaper.shapeAll(List.of(entity), entityType, select,
-					inlineNavs(expand));
+					shapePaths(expand));
 			copies.forEach(copy -> applyNestedFilters(copy, expand));
 			writeXmi(response, copies);
 			return;
@@ -3894,9 +4033,19 @@ public class ODataServlet extends HttpServlet {
 	 * caps the page below the {@code $top}/ceiling value and echoes {@code Preference-Applied}.
 	 */
 	private static int pageSize(HttpServletRequest request, HttpServletResponse response, int top) {
+		int maxPageSize = maxPageSizePreference(request);
+		if (maxPageSize > 0 && maxPageSize < top) {
+			response.setHeader("Preference-Applied", "odata.maxpagesize=" + maxPageSize);
+			return maxPageSize;
+		}
+		return top;
+	}
+
+	/** The {@code Prefer: (odata.)maxpagesize} value, or {@code -1} when absent/malformed. */
+	private static int maxPageSizePreference(HttpServletRequest request) {
 		String prefer = request.getHeader("Prefer");
 		if (prefer == null) {
-			return top;
+			return -1;
 		}
 		for (String preference : prefer.split(",")) {
 			String[] nameValue = preference.trim().split("=", 2);
@@ -3906,15 +4055,14 @@ public class ODataServlet extends HttpServlet {
 			}
 			try {
 				int maxPageSize = Integer.parseInt(nameValue.length > 1 ? nameValue[1].trim() : "");
-				if (maxPageSize > 0 && maxPageSize < top) {
-					response.setHeader("Preference-Applied", "odata.maxpagesize=" + maxPageSize);
+				if (maxPageSize > 0) {
 					return maxPageSize;
 				}
 			} catch (NumberFormatException e) {
 				// preferences are hints — a malformed value is ignored, not an error
 			}
 		}
-		return top;
+		return -1;
 	}
 
 	/**
@@ -4141,7 +4289,7 @@ public class ODataServlet extends HttpServlet {
 		}
 		// nested collection options over selected collections ([OData-URL] 5.1.3, 4.01 Advanced
 		// §13.2.3/5.1–5.4) parse through the same guarded parser as every other expression
-		return SelectTree.parse(select, entityType, nestedOptionParser);
+		return SelectTree.parse(select, entityType, nestedOptions(request));
 	}
 
 	/**
@@ -4154,28 +4302,37 @@ public class ODataServlet extends HttpServlet {
 	 * @param cast    {@code nav/Ns.Type} (5.1.3.2): only related instances of the derived type
 	 *                are expanded; null without a cast
 	 */
-	private record ExpandItem(CollectionOptions options, boolean refOnly, EClass cast) {
+	private record ExpandItem(CollectionOptions options, boolean refOnly, EClass cast, int levels) {
 	}
 
-	/** The guarded parser behind every expression-valued nested option. */
-	private final NestedOptionParser nestedOptionParser = new NestedOptionParser() {
-		@Override
-		public OclExpression filter(String expression, EClass context) {
-			limits.checkExpression(expression);
-			return parser.parseFilter(expression, context);
-		}
+	/**
+	 * The guarded parser behind every expression-valued nested option — request-scoped so the
+	 * request's {@code @}-parameter aliases resolve inside nested {@code $filter}/{@code $orderby}
+	 * too ([OData-Protocol] 13.2.3/9).
+	 */
+	private NestedOptionParser nestedOptions(HttpServletRequest request) {
+		Map<String, String> aliases = parameterAliases(request);
+		return new NestedOptionParser() {
+			@Override
+			public OclExpression filter(String expression, EClass context) {
+				limits.checkExpression(expression);
+				return aliases.isEmpty() ? parser.parseFilter(expression, context)
+						: parser.parseFilter(expression, context, aliases);
+			}
 
-		@Override
-		public List<OrderBySegment> orderBy(String expression, EClass context) {
-			limits.checkExpression(expression);
-			return parser.parseOrderBy(expression, context);
-		}
+			@Override
+			public List<OrderBySegment> orderBy(String expression, EClass context) {
+				limits.checkExpression(expression);
+				return aliases.isEmpty() ? parser.parseOrderBy(expression, context)
+						: parser.parseOrderBy(expression, context, aliases);
+			}
 
-		@Override
-		public OclExpression search(String term, EClass context) {
-			return filter(searchExpression(term, context), context);
-		}
-	};
+			@Override
+			public OclExpression search(String term, EClass context) {
+				return filter(searchExpression(term, context), context);
+			}
+		};
+	}
 
 	/**
 	 * Validated {@code $expand} items: navigation name → {@link ExpandItem}. Supported item
@@ -4226,31 +4383,63 @@ public class ODataServlet extends HttpServlet {
 							+ "' is not a derived type of the '" + name + "' navigation");
 				}
 			}
-			items.put(name, new ExpandItem(
-					nested == null ? CollectionOptions.NONE
-							: expandItemOptions(nested, reference,
-									cast != null ? cast : reference.getEReferenceType()),
-					refOnly, cast));
+			items.put(name, nested == null
+					? new ExpandItem(CollectionOptions.NONE, refOnly, cast, 1)
+					: expandItemOptions(nested, reference,
+							cast != null ? cast : reference.getEReferenceType(),
+							nestedOptions(request), refOnly, cast));
 		}
 		return items;
 	}
 
+	/** Recursion cap for {@code $levels=max} ([OData-URL] 5.1.2 expandOption). */
+	private static final int MAX_EXPAND_LEVELS = 8;
+
 	/**
 	 * The {@code ;}-separated option list of one {@code $expand} item — the collection options
-	 * (Advanced 9.2/9.4–9.7); {@code $select}/{@code $expand}/{@code $levels}/{@code $compute}
-	 * inside {@code $expand} answer 501.
+	 * (Advanced 9.2/9.4–9.7) plus {@code $levels} for SELF-RECURSIVE navigations (9.8);
+	 * {@code $select}/{@code $expand}/{@code $compute} inside {@code $expand} answer 501.
 	 */
-	private CollectionOptions expandItemOptions(String optionList, EReference reference,
-			EClass context) {
+	private ExpandItem expandItemOptions(String optionList, EReference reference,
+			EClass context, NestedOptionParser optionParser, boolean refOnly, EClass cast) {
 		CollectionOptions.Accumulator options = new CollectionOptions.Accumulator();
+		int levels = 1;
 		for (String option : SelectTree.splitTopLevel(optionList, ';')) {
 			String trimmed = option.trim();
-			if (!options.accept(trimmed, reference, context, nestedOptionParser)) {
+			java.util.regex.Matcher matcher = NESTED_LEVELS.matcher(trimmed);
+			if (matcher.find()) {
+				String value = trimmed.substring(matcher.end()).trim();
+				levels = "max".equalsIgnoreCase(value) ? MAX_EXPAND_LEVELS
+						: parsedLevels(value);
+				if (!(reference.getEReferenceType()
+						.getEStructuralFeature(reference.getName()) instanceof EReference)) {
+					throw new ODataQueryParseException(
+							"$levels requires a self-recursive navigation");
+				}
+				continue;
+			}
+			if (!options.accept(trimmed, reference, context, optionParser)) {
 				throw new UnsupportedOperationException(
 						"this nested $expand option is not implemented");
 			}
 		}
-		return options.build();
+		return new ExpandItem(options.build(), refOnly, cast, levels);
+	}
+
+	private static final java.util.regex.Pattern NESTED_LEVELS =
+			java.util.regex.Pattern.compile("(?i)^\\$?levels=");
+
+	private static int parsedLevels(String value) {
+		try {
+			int levels = Integer.parseInt(value);
+			if (levels < 1 || levels > MAX_EXPAND_LEVELS) {
+				throw new NumberFormatException();
+			}
+			return levels;
+		} catch (NumberFormatException e) {
+			throw new ODataQueryParseException(
+					"$levels takes 1.." + MAX_EXPAND_LEVELS + " or 'max'");
+		}
 	}
 
 	/** The navigations rendered INLINE — everything except the {@code /$ref} items. */
@@ -4259,6 +4448,26 @@ public class ODataServlet extends HttpServlet {
 				.filter(item -> !item.getValue().refOnly())
 				.map(Map.Entry::getKey)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
+	}
+
+	/**
+	 * The paths the SHAPER co-copies (and backends prefetch): the inline navigation names plus
+	 * the self-recursive {@code $levels} chains ({@code nav}, {@code nav/nav}, …).
+	 */
+	private static Set<String> shapePaths(Map<String, ExpandItem> expand) {
+		Set<String> paths = new LinkedHashSet<>();
+		expand.forEach((name, item) -> {
+			if (item.refOnly()) {
+				return;
+			}
+			StringBuilder chain = new StringBuilder(name);
+			paths.add(chain.toString());
+			for (int level = 2; level <= item.levels(); level++) {
+				chain.append('/').append(name);
+				paths.add(chain.toString());
+			}
+		});
+		return paths;
 	}
 
 	/** Top-level comma split of {@code $expand} — parens and string literals stay intact. */
@@ -4327,7 +4536,7 @@ public class ODataServlet extends HttpServlet {
 			Map<String, ExpandItem> expand) throws IOException {
 		Set<String> inline = inlineNavs(expand);
 		Map<String, Long> counts = new LinkedHashMap<>();
-		EObject copy = shaper.shape(entity, entityType, select, inline, null, counts);
+		EObject copy = shaper.shape(entity, entityType, select, shapePaths(expand), null, counts);
 		counts.putAll(applyNestedFilters(copy, expand));
 		return withExpandedRefs(withNestedCounts(
 				serializeEntity(entity, copy, entityType, inline), counts), entity, expand);

@@ -547,8 +547,8 @@ class ODataServletTest {
 		assertTrue(single.body().contains("\"great\"") && !single.body().contains("\"poor\""),
 				"single-entity reads filter the same way: " + single.body());
 
-		assertEquals(501, get("/Product", Map.of("$expand", "reviews($levels=2)")).status(),
-				"recursive $levels stays honestly unimplemented");
+		assertEquals(400, get("/Product", Map.of("$expand", "reviews($levels=2)")).status(),
+				"$levels needs a self-recursive navigation");
 		assertEquals(400, get("/Product", Map.of("$expand", "category($filter=name eq 'x')")).status(),
 				"nested $filter needs a collection-valued navigation");
 		assertEquals(400, get("/Product", Map.of("$expand", "reviews($filter=nosuch eq 1)")).status(),
@@ -1805,7 +1805,7 @@ class ODataServletTest {
 				"the applied preference is echoed (8.2.8.7)");
 
 		Response prefixless = call("GET", "/Product", Map.of(), null, null,
-				Map.of("Prefer", "respond-async, maxpagesize=2"));
+				Map.of("Prefer", "odata.track-changes-unknown, maxpagesize=2"));
 		assertEquals(200, prefixless.status());
 		assertFalse(prefixless.body().contains("\"Bread\""),
 				"prefix-less preference name works too (13.2.1/4)");
@@ -2045,6 +2045,72 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("$expand=nav($levels=N) expands self-recursive navigations N deep (9.8)")
+	void expandLevels() throws Exception {
+		EObject l3 = product("p3", "Level3", "3.00", null);
+		EObject l2 = product("p2", "Level2", "2.00", null);
+		EObject l1 = product("p1", "Level1", "1.00", null);
+		@SuppressWarnings("unchecked")
+		List<EObject> a1 = (List<EObject>) l1.eGet(productClass.getEStructuralFeature("accessories"));
+		a1.add(l2);
+		@SuppressWarnings("unchecked")
+		List<EObject> a2 = (List<EObject>) l2.eGet(productClass.getEStructuralFeature("accessories"));
+		a2.add(l3);
+		backendResult = List.of(l1);
+
+		Response one = get("/Product('p1')", Map.of("$expand", "accessories"));
+		assertTrue(one.body().contains("\"Level2\"") && !one.body().contains("\"Level3\""),
+				"a plain expand stays one level deep: " + one.body());
+
+		Response two = get("/Product('p1')", Map.of("$expand", "accessories($levels=2)"));
+		assertEquals(200, two.status(), two.body());
+		assertTrue(two.body().contains("\"Level2\"") && two.body().contains("\"Level3\""),
+				"$levels=2 expands the chain two levels deep: " + two.body());
+
+		Response max = get("/Product('p1')", Map.of("$expand", "accessories($levels=max)"));
+		assertEquals(200, max.status(), max.body());
+		assertTrue(max.body().contains("\"Level3\""), max.body());
+
+		assertEquals(400, get("/Product('p1')",
+				Map.of("$expand", "accessories($levels=0)")).status(), "levels below 1");
+		assertEquals(400, get("/Product('p1')",
+				Map.of("$expand", "accessories($levels=99)")).status(), "levels above the cap");
+	}
+
+	@Test
+	@DisplayName("nested @parameter aliases resolve inside $expand/$select options (13.2.3/9)")
+	void nestedParameterAliases() throws Exception {
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		EObject great = pkg.getEFactoryInstance().create(reviewClass);
+		great.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+		great.eSet(reviewClass.getEStructuralFeature("comment"), "great");
+		EObject meh = pkg.getEFactoryInstance().create(reviewClass);
+		meh.eSet(reviewClass.getEStructuralFeature("stars"), 2);
+		meh.eSet(reviewClass.getEStructuralFeature("comment"), "meh");
+		EObject milk = product("p1", "Milk", "1.20", null);
+		@SuppressWarnings("unchecked")
+		List<EObject> reviews = (List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews"));
+		reviews.addAll(List.of(great, meh));
+		backendResult = List.of(milk);
+
+		Response expanded = get("/Product",
+				Map.of("$expand", "reviews($filter=stars ge @min)", "@min", "4"));
+		assertEquals(200, expanded.status(), expanded.body());
+		assertTrue(expanded.body().contains("\"great\"") && !expanded.body().contains("\"meh\""),
+				"the alias value reaches the nested filter: " + expanded.body());
+
+		Response selected = get("/Product",
+				Map.of("$select", "name,reviews($filter=stars ge @min)", "@min", "4"));
+		assertEquals(200, selected.status(), selected.body());
+		assertTrue(selected.body().contains("\"great\"") && !selected.body().contains("\"meh\""),
+				selected.body());
+
+		assertEquals(400, get("/Product",
+				Map.of("$expand", "reviews($filter=stars ge @missing)")).status(),
+				"an unresolved alias fails the parse");
+	}
+
+	@Test
 	@DisplayName("4.01 URL variants (13.2.1/9.3+9.5): parenless and unqualified operation calls")
 	void operationUrlVariants() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));
@@ -2108,6 +2174,38 @@ class ODataServletTest {
 
 		// properties still win the name lookup — an unknown bare segment stays a 404
 		assertEquals(404, get("/Product('p1')/nosuch", Map.of()).status());
+	}
+
+	@Test
+	@DisplayName("Prefer: respond-async parks the result behind a one-shot status monitor (11.6)")
+	void asyncResponses() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		Response accepted = call("GET", "/Product", Map.of(), null, null,
+				Map.of("Prefer", "respond-async"));
+		assertEquals(202, accepted.status(), accepted.body());
+		assertEquals("respond-async", accepted.headers().get("Preference-Applied"));
+		String monitor = accepted.headers().get("Location");
+		assertNotNull(monitor);
+		assertTrue(monitor.contains("/$async/"), monitor);
+
+		String monitorPath = monitor.substring("/odata".length());
+		Response result = get(monitorPath, Map.of());
+		assertEquals(200, result.status(), result.body());
+		assertTrue(result.headers().get("Content-Type").startsWith("application/http"),
+				"the parked response travels as an application/http message");
+		assertTrue(result.body().startsWith("HTTP/1.1 200 OK"), result.body());
+		assertTrue(result.body().contains("\"Milk\""), result.body());
+
+		assertEquals(404, get(monitorPath, Map.of()).status(),
+				"the monitor is one-shot — gone once retrieved");
+
+		// DELETE cancels an unretrieved result
+		Response accepted2 = call("GET", "/Product", Map.of(), null, null,
+				Map.of("Prefer", "respond-async"));
+		String monitorPath2 = accepted2.headers().get("Location").substring("/odata".length());
+		assertEquals(204, callWrite("DELETE", monitorPath2, "", "application/json").status());
+		assertEquals(404, get(monitorPath2, Map.of()).status());
 	}
 
 	@Test
@@ -2276,6 +2374,30 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("delta paging and /$count on a delta link")
+	void deltaPagingAndCount() throws Exception {
+		registerDeltaService();
+		deltaResult = new DeltaService.DeltaResult(
+				List.of(product("p1", "Milk", "1.20", null)),
+				List.of(new DeltaService.Removal(Map.of("id", "p9"), DeltaService.REASON_DELETED)),
+				"77", true);
+
+		Response paged = call("GET", "/Product", Map.of("$deltatoken", "42"), null, null,
+				Map.of("Prefer", "odata.maxpagesize=1"));
+		assertEquals(200, paged.status(), paged.body());
+		assertTrue(paged.body().contains("\"@odata.nextLink\""),
+				"a truncated window continues with a NEXT link: " + paged.body());
+		assertFalse(paged.body().contains("@odata.deltaLink"),
+				"the delta link only appears on the final page");
+		assertTrue(paged.body().contains("$deltatoken=77"),
+				"the next link carries the page-boundary token: " + paged.body());
+
+		Response count = get("/Product/$count", Map.of("$deltatoken", "42"));
+		assertEquals(200, count.status(), count.body());
+		assertEquals("2", count.body(), "added/changed + deleted entities count (11.3.2)");
+	}
+
+	@Test
 	@DisplayName("an aged-out token answers 410 Gone with the refetch URL")
 	void deltaGone() throws Exception {
 		registerDeltaService();
@@ -2296,8 +2418,6 @@ class ODataServletTest {
 				"clients MUST NOT append options to a delta link");
 		assertEquals(400, get("/Product('p1')", Map.of("$deltatoken", "42")).status(),
 				"a delta link addresses a SET");
-		assertEquals(501, get("/Product/$count", Map.of("$deltatoken", "42")).status(),
-				"count-of-changes is not implemented");
 	}
 
 	@Test

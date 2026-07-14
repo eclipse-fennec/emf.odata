@@ -598,3 +598,37 @@ Die drei offenen Delta-Pakete:
   angewendet bzw. Delta-Link-Follow → 501); Upserts laufen durch die REGULÄRE Expand-Pipeline
   (inkl. Nested-Options/Refs/Counts). DeltaService-Auswahl bevorzugt jetzt das Backend, das
   auch die Query bedient (JPA implementiert beide — Token und Daten aus demselben Journal).
+
+## Letzte Reste: Delta-Feinschliff + finale SHOULDs (2026-07-14)
+
+- **`/$count` auf Delta-Links** (11.3.2 MAY): `deltaCount()` in setCount — Änderungszahl
+  (Upserts + Removals) als text/plain; 410-Handling wie deltaResponse.
+- **JPA-Expand-Tracking**: link/unlink/createRelated journalen den OWNER; Owner-Detection =
+  EINE Criteria-Query pro expandierter Nav (`SELECT DISTINCT o FROM Owner o JOIN o.nav m
+  WHERE m.key IN (geänderte Member-Keys)`) → Owner-Keys fließen in die bestehende
+  Membership-Query (touched-Map). Grenze: ein OHNE unlink gelöschtes Member ist per JOIN
+  nicht mehr findbar (Zeile weg) — dokumentiert.
+- **Delta-Paging**: `ChangeJournal.since(token, type, maxSpan)` — Fenster über ROH-Seq-Spannen
+  (deterministisch: Typed-Window und Owner-Scan teilen dieselbe Obergrenze);
+  `DeltaResult.truncated` + Kompat-Konstruktor; Servlet: `Prefer: maxpagesize` → Span,
+  truncated → `@odata.nextLink` (Boundary-Token, Follow setzt das Fenster fort), letzte Seite
+  → `@odata.deltaLink`. Ein Entity, das über die Grenze hinweg NOCHMAL geändert wird,
+  erscheint auf beiden Seiten — konsistent (Client re-applies).
+- **Nested Parameter-Aliase** (13.2.3/9): `NestedOptionParser` ist jetzt REQUEST-scoped
+  (`nestedOptions(request)`) und reicht die @-Aliase in nested `$filter`/`$orderby` von
+  `$expand`/`$select` durch.
+- **`$levels`** (9.8): nur selbstrekursive Navs (Ziel-Typ deklariert dieselbe Nav; sonst 400),
+  1..8 oder `max`; Shaper co-copiert Slash-KETTEN (`nav`, `nav/nav`, …) frontier-weise.
+  **FUND: `EcoreUtil.Copier` default `useOriginalReferences=true`** — nicht kopierte Ziele
+  blieben als ORIGINALE referenziert (Tiefe war bei selbstrekursiven Navs nie begrenzt,
+  Originale leakten in die Serialisierung) → `Copier(true, false)`: gedroppte Refs = exakt der
+  Rekursions-Cutoff UND erzwungene Payload-Internität. Prefetch/XML-Pfade nutzen dieselben
+  Ketten (`shapePaths`).
+- **async / `Respond-Async`** (13.1.3/13): delivery-async — der GET läuft INLINE gegen die
+  wiederverwendete `BatchHttpResponse`-Capture, das Ergebnis parkt hinter `/$async/<id>`
+  (bounded LRU 100); 202+Location+Preference-Applied; Monitor-GET liefert die Antwort als
+  `application/http` GENAU EINMAL (dann 404), DELETE storniert. Capability
+  `AsynchronousRequestsSupported=true`. GOTCHA: alter maxpagesize-Test nutzte
+  `respond-async` als „wird-ignoriert"-Beifang → Header bereinigt.
+- **Damit ist 15 Cross-Join der EINZIGE offene Spec-SHOULD** ($crossjoin-Engine bräuchte einen
+  synthetischen Tupel-EClass als Ausdruckskontext — bewusst separates Paket; parst → 501).

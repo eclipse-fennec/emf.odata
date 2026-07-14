@@ -40,8 +40,9 @@ Ecore↔EDM conversion against the OASIS CSDL model (no intermediate EDM object 
 ### Metadata & model
 - **`GET /$metadata`** → CSDL XML, multi-schema, one EDM schema per EPackage. Emits
   `Core.ODataVersions="4.0 4.01"` and Capabilities annotations on the entity container
-  (`ConformanceLevel`, `BatchSupported=true`, `AsynchronousRequestsSupported=false`,
-  `KeyAsSegmentSupported=false`, `ChangeTracking` with the backend's actual support) plus the
+  (`ConformanceLevel=Advanced`, `BatchSupported=true`,
+  `KeyAsSegmentSupported=false`, `AsynchronousRequestsSupported=true`, `ChangeTracking` with
+  the backend's actual support) plus the
   Core/Capabilities `edmx:Reference`s.
 - **`GET /`** → service document.
 - Ecore↔EDM covers entity/complex types, properties, navigation properties, enums, single
@@ -64,7 +65,7 @@ but unimplemented (`$skiptoken`, `$id`, `$index`, `$schemaversion`, `$levels`) r
 | `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) |
 | `$count` | `$count=true` inline, the `/$count` path segment (with `$filter`), and filtered/**searched** counts in expressions (`path/$count($filter=…)`, `path/$count($search=…)`) |
 | `$select` | **nested `$select`** (`SelectTree`, key survives at every level) plus the collection options **`$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`** on selected collections (nav collections against the target type, primitive collections via `$it`; everything runs BEFORE pruning, so expressions may reference projected-away properties) |
-| `$expand` | nested **`$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`** (applied to shaped copies against the target type; the inline count splices as `nav@odata.count`), **`nav/$ref`** reference expansion (`{"@odata.id":…}` objects) and **cast-in-expand** `nav/Ns.Type` (only derived instances); `$levels`/nested `$select` → 501 |
+| `$expand` | nested **`$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`** (applied to shaped copies against the target type; the inline count splices as `nav@odata.count`), **`$levels`** on self-recursive navigations (1..8 or `max`; the shaper's reference-dropping copier IS the recursion cutoff), **`nav/$ref`** reference expansion and **cast-in-expand**; nested `$select`-in-`$expand` → 501 |
 | `$search` | server-side, pushed down to both backends |
 | `$compute` | server-side computed properties |
 | `$apply` | aggregation submodel: `groupby` (incl. `rollup` grouping sets), `aggregate` (sum/min/max/average/countdistinct/$count), `compute`, `filter`, `topcount`/`topsum`/`toppercent`+`bottom*`, `concat`, `top`/`skip`, `orderby`, `identity` (in-memory; JPA pushes groupby/aggregate/filter/compute down, rest → 501); `from`/custom aggregates/structure trafos parse → 501; combinable with `$filter`/`$orderby`/`$skip`/`$top`/`$count` (run after the pipeline) |
@@ -72,7 +73,7 @@ but unimplemented (`$skiptoken`, `$id`, `$index`, `$schemaversion`, `$levels`) r
 | `$deltatoken` | follows a delta link (see **Change tracking**) |
 | `odata.metadata=minimal/full/none` | via Accept/`$format`; real `none` (no context/discriminators) |
 | `IEEE754Compatible=true` | via Accept/`$format`: Int64/Decimal values, `@odata.count` and `$apply` rows as strings, Content-Type echo, payload decode |
-| `@name` param aliases | referenced from `$filter`/`$orderby`, recursive with a depth cap |
+| `@name` param aliases | referenced from `$filter`/`$orderby` — including NESTED options inside `$expand`/`$select`; recursive with a depth cap |
 | `divby` | maps to OCL `/` |
 
 Filter/query expression coverage: comparison + logical + arithmetic operators (incl. unary
@@ -149,8 +150,11 @@ body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
   upserts + `@removed` deletes in one request, all-or-nothing on transactional backends.
   Not implemented (501): 4.0 flattened link objects, nested `nav@delta`, `@odata.bind` inside
   the payload, `continue-on-error`.
-- Not covered (v1): paging within a delta response, `/$count` on a delta link, nested
-  `nav@delta` on the wire (full representations are emitted instead).
+- **Delta paging**: `Prefer: maxpagesize` pages the delta server-driven — a truncated window
+  continues via `@odata.nextLink` (the boundary token), the final page carries the delta link.
+  `GET Set/$count?$deltatoken=…` answers the number of changes.
+- Not covered: nested `nav@delta` on the wire (full representations are emitted instead),
+  4.0 flattened delta payloads.
 
 ### Backends (behind the persistence SPIs)
 - **In-memory** (reference semantics): the `OclEvaluator` interprets the IR directly (three-valued
@@ -269,12 +273,12 @@ origin is refused. `ODataClient` is `AutoCloseable` and closes only an `HttpClie
 
 ## Known gaps / not yet
 
-**Server:** Advanced is met and claimed on both versions — what remains is SHOULD/MAY-level:
-async / `Respond-Async`, `$crossjoin`/`$all` engines, recursive `$levels`, nested parameter
-aliases. **Delta limits**: no paging inside a delta response, no `/$count` on a delta link,
-no nested `nav@delta` wire form (full expanded representations instead), no 4.0 flattened
-delta payloads, JPA expand-tracking; a few 4.01 Intermediate SHOULDs (query options on nav
-paths); the `ODataRequestFilter` refactor (req §5.1.1).
+**Server:** every conformance clause short of the `$crossjoin`/`$all` engines (the single
+remaining spec SHOULD; they parse and refuse honestly). **Async** is delivery-async: execution
+completes inline, the result parks behind a one-shot `application/http` status monitor.
+**Delta**: no nested `nav@delta` wire form (full expanded representations instead), no 4.0
+flattened delta payloads. Plus: a few 4.01 Intermediate SHOULDs (query options on nav paths);
+the `ODataRequestFilter` refactor (req §5.1.1).
 
 **Client:** the Atlas-backed schema registry impl is downstream (ADR-0007). Decoding a
 `$expand=nav/$ref` response surfaces the references as empty entities (no dedicated

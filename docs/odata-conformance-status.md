@@ -31,13 +31,15 @@ Bewertet gegen den vollständigen §13-Klauselkatalog (Part 1 Protocol, 4.0-Leve
 | **4.01 Minimal (§13.2.1)** | ✅ **erfüllt** | MUSTs 1–9 erfüllt/N-A; offen nur SHOULD (CSDL-JSON) / MAY |
 | **4.0 Intermediate (§13.1.2)** | ✅ **erfüllt** | alle MUSTs **und** alle SHOULDs (1–17) |
 | **4.01 Intermediate (§13.2.2)** | ✅ **erfüllt** | MUSTs 1–5 erledigt; SHOULDs 6/7/9 teilweise |
-| **4.0 Advanced (§13.1.3)** | ✅ **erfüllt** (Re-Audit 2026-07-14) | MUSTs 1–12 komplett: 1 Intermediate ✅ · 2 CSDL-XML-$metadata (XSD-validiert) · 3 OData-JSON (E3-Codec) · 4 `/$count` auf Navs (walk) · 5 `any`/`all` (Lambdas) · 6–8 `$skip`/`$count`/`$orderby` · 9 `$expand` mit 9.1 `nav/$ref` ✅ 2026-07-13, 9.2 `$filter`-in-Expand, 9.3 Cast-in-Expand ✅ 2026-07-13 · 10 `$search` (beide Backends) · 11 Multipart-`$batch` ✅ 2026-07-09 · 12 Resource-Path-Konventionen (eigener Parser, ABNF-Suite). SHOULDs 9.4–9.7 (Expand-`$orderby`/`$count`/`$top`/`$skip`/`$search`, ✅ 2026-07-14) und 14 (Delta) ebenfalls erfüllt; offen: 13 async, 15 Cross-Join, 9.8 `$levels` |
-| **4.01 Advanced (§13.2.3)** | ✅ **erfüllt** (Re-Audit 2026-07-14) | MUSTs komplett: 1 4.01 Intermediate ✅ · 2 4.0 Advanced ✅ · 3 Count gefilterter UND gesuchter Collections in Common Expressions (`$count($filter=…)` ✅ Welle 1, `$count($search=…)` ✅ 2026-07-14) · 4 `$compute` ✅ · 5.1 `$filter` auf selektierten Collections ✅ 2026-07-14 · 6 CSDL-JSON ✅ · 7 beide `$batch`-Formate ✅. SHOULDs 5.2–5.5 (Select-`$orderby`/`$count`/`$top`/`$skip`/`$search`, ✅ 2026-07-14) und 8 (`/$filter`-Segment) ebenfalls erfüllt; offen: 9 verschachtelte Parameter-Aliase |
+| **4.0 Advanced (§13.1.3)** | ✅ **erfüllt** (Re-Audit 2026-07-14) | MUSTs 1–12 komplett: 1 Intermediate ✅ · 2 CSDL-XML-$metadata (XSD-validiert) · 3 OData-JSON (E3-Codec) · 4 `/$count` auf Navs (walk) · 5 `any`/`all` (Lambdas) · 6–8 `$skip`/`$count`/`$orderby` · 9 `$expand` mit 9.1 `nav/$ref` ✅ 2026-07-13, 9.2 `$filter`-in-Expand, 9.3 Cast-in-Expand ✅ 2026-07-13 · 10 `$search` (beide Backends) · 11 Multipart-`$batch` ✅ 2026-07-09 · 12 Resource-Path-Konventionen (eigener Parser, ABNF-Suite). SHOULDs: 9.4–9.7 ✅, 9.8 `$levels` ✅ (selbstrekursiv, Kappe 8), 13 async ✅ (`Prefer: respond-async` + Status-Monitor), 14 Delta ✅ — offen NUR 15 Cross-Join |
+| **4.01 Advanced (§13.2.3)** | ✅ **erfüllt** (Re-Audit 2026-07-14) | MUSTs komplett: 1 4.01 Intermediate ✅ · 2 4.0 Advanced ✅ · 3 Count gefilterter UND gesuchter Collections in Common Expressions ✅ · 4 `$compute` ✅ · 5.1 `$filter` auf selektierten Collections ✅ · 6 CSDL-JSON ✅ · 7 beide `$batch`-Formate ✅. SHOULDs: 5.2–5.5 ✅, 8 `/$filter`-Segment ✅, 9 verschachtelte Parameter-Aliase ✅ (@p in nested `$filter`/`$orderby`) — **ALLE 4.01-Advanced-SHOULDs erfüllt** |
 
 **Fazit: ALLE vier Level stehen — 4.0 und 4.01, Minimal bis ADVANCED (Re-Audit 2026-07-14).
-Das `$metadata` annonciert `Capabilities.ConformanceLevel=Advanced`. Offen sind nur noch
-SHOULDs/MAYs (async, Cross-Join, rekursives `$levels`, verschachtelte Parameter-Aliase —
-die Expand-/Select-Sub-Optionen 9.4–9.7 und 5.2–5.5 sind seit 2026-07-14 erfüllt).**
+Das `$metadata` annonciert `Capabilities.ConformanceLevel=Advanced` und
+`AsynchronousRequestsSupported=true`. Nach dem SHOULD-Schluss vom 2026-07-14 (Expand-/
+Select-Sub-Optionen inkl. `$levels`, verschachtelte Parameter-Aliase, async) ist der EINZIGE
+offene Spec-SHOULD überhaupt noch **15 Cross-Join** (`$crossjoin`-Engine — bräuchte einen
+synthetischen Tupel-Typ als Ausdruckskontext; parst und verweigert ehrlich 501).**
 
 ### Ehemalige Advanced-Blocker (MUST-Ebene — inzwischen ALLE aufgelöst)
 

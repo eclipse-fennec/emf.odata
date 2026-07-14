@@ -226,6 +226,29 @@ class MemoryDeltaServiceTest {
 	}
 
 	@Test
+	@DisplayName("bounded windows page a delta: truncated pages chain to the full result")
+	void boundedWindows() {
+		String token = repository.trackingToken(productClass);
+		for (int i = 1; i <= 5; i++) {
+			repository.create(productClass, product("p" + i, "N" + i, "1.00"));
+		}
+		java.util.List<String> collected = new java.util.ArrayList<>();
+		String cursor = token;
+		int pages = 0;
+		DeltaService.DeltaResult page;
+		do {
+			page = repository.changesSince(EntityQuery.all(productClass), cursor, 2);
+			page.changed().forEach(e -> collected.add(
+					String.valueOf(e.eGet(productClass.getEStructuralFeature("name")))));
+			cursor = page.nextToken();
+			pages++;
+		} while (page.truncated());
+		assertEquals(List.of("N1", "N2", "N3", "N4", "N5"), collected,
+				"chained pages cover every change exactly once, in order");
+		assertEquals(3, pages, "5 changes with span 2 → 2+2+1");
+	}
+
+	@Test
 	@DisplayName("invalid or aged-out tokens raise DeltaGoneException (→ 410)")
 	void goneTokens() {
 		EntityQuery all = EntityQuery.all(productClass);

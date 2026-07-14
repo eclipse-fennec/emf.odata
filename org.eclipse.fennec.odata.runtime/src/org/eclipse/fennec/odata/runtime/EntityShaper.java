@@ -63,23 +63,48 @@ public class EntityShaper {
 	 */
 	public EObject shape(EObject entity, EClass entityType, SelectTree select, Set<String> expand,
 			List<EObject> expandedRoots, Map<String, Long> selectCounts) {
-		EcoreUtil.Copier copier = new EcoreUtil.Copier();
+		// useOriginalReferences=false: a reference to an object that was NOT co-copied is
+		// DROPPED, never resolved to the original — that enforces "every reference in the
+		// payload is internal" AND is the recursion cutoff for $levels chains
+		EcoreUtil.Copier copier = new EcoreUtil.Copier(true, false);
 		EObject copy = copier.copy(entity);
-		for (String name : expand) {
-			if (entityType.getEStructuralFeature(name) instanceof EReference reference
-					&& !reference.isContainment()) {
-				Object value = entity.eGet(reference);
-				if (value instanceof List<?> targets) {
-					targets.forEach(target -> copier.copy((EObject) target));
-				} else if (value instanceof EObject target) {
-					copier.copy(target);
+		// expand entries may be slash PATHS (walk prefixes, $levels chains): co-copy the
+		// targets level by level
+		Set<String> firstSegments = new java.util.LinkedHashSet<>();
+		for (String path : expand) {
+			List<EObject> frontier = List.of(entity);
+			boolean first = true;
+			for (String segment : path.split("/")) {
+				if (first) {
+					firstSegments.add(segment);
+					first = false;
+				}
+				List<EObject> next = new ArrayList<>();
+				for (EObject source : frontier) {
+					if (source.eClass().getEStructuralFeature(segment) instanceof EReference reference
+							&& !reference.isContainment()) {
+						Object value = source.eGet(reference);
+						if (value instanceof List<?> targets) {
+							for (Object target : targets) {
+								copier.copy((EObject) target);
+								next.add((EObject) target);
+							}
+						} else if (value instanceof EObject target) {
+							copier.copy(target);
+							next.add(target);
+						}
+					}
+				}
+				frontier = next;
+				if (frontier.isEmpty()) {
+					break;
 				}
 			}
 		}
 		copier.copyReferences();
 
 		for (EReference reference : entityType.getEAllReferences()) {
-			if (!reference.isContainment() && !expand.contains(reference.getName())) {
+			if (!reference.isContainment() && !firstSegments.contains(reference.getName())) {
 				copy.eUnset(reference);
 			}
 		}
@@ -88,7 +113,7 @@ public class EntityShaper {
 			prune(copy, entityType, select, expand);
 		}
 		if (expandedRoots != null) {
-			collectExpandedTargets(copy, entityType, expand, expandedRoots);
+			collectExpandedTargets(copy, entityType, firstSegments, expandedRoots);
 		}
 		return copy;
 	}

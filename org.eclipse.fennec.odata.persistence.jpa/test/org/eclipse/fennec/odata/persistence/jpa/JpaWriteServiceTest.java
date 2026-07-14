@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Set;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
@@ -68,6 +69,36 @@ class JpaWriteServiceTest extends JpaWebshopTestBase {
 		var next = service.changesSince(tracked, delta.nextToken());
 		assertTrue(next.changed().isEmpty() && next.removals().isEmpty(),
 				"the follow-up token is quiet");
+	}
+
+	@Test
+	@DisplayName("delta with $expand: member and membership changes report the owners (JOIN … IN)")
+	void deltaExpandTracking() {
+		assertTrue(service.supportsExpandTracking());
+		EClass categoryClass = (EClass) productClass.getEPackage().getEClassifier("Category");
+		String token = service.trackingToken(productClass);
+		EntityQuery expanded = new EntityQuery(productClass, null, null, List.of(), 0, -1, false,
+				Set.of("category"));
+
+		// membership change: linking journals the owner directly
+		service.link(productClass, "'p4'", "category", "'c1'");
+		var linked = service.changesSince(expanded, token);
+		assertEquals(List.of("Salt"), linked.changed().stream()
+				.map(e -> e.eGet(productClass.getEStructuralFeature("name"))).toList());
+
+		// member content change: renaming Dairy reports every owner that expands it
+		String token2 = linked.nextToken();
+		service.update(categoryClass, "'c1'", plain("Category", "name", "Fresh Dairy"), false);
+		var renamed = service.changesSince(expanded, token2);
+		assertTrue(renamed.changed().stream()
+				.map(e -> String.valueOf(e.eGet(productClass.getEStructuralFeature("name"))))
+				.toList().containsAll(List.of("Milk", "Cheese", "Salt")),
+				"all owners of the changed category report: " + renamed.changed());
+
+		// without $expand the same window reports nothing product-side
+		var plain = service.changesSince(EntityQuery.all(productClass), token2);
+		assertTrue(plain.changed().isEmpty() && plain.removals().isEmpty(),
+				"the category change is not a Product change without expansion");
 	}
 
 	@Test

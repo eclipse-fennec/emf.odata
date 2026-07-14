@@ -37,12 +37,12 @@ Spec documents (OASIS OData **v4.01**):
 | `$top` / `$skip` | Paging | ✅ | URL Conv. §5.1.5 / §5.1.6 |
 | `$count` (inline + `/$count`) | Count | ✅ | URL Conv. §5.1.7 |
 | `$select` (nested `$select`; `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count` on selected collections) | Project properties | ✅ (`$count` below top level → 501) | URL Conv. §5.1.3 |
-| `$expand` (nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, `nav/$ref` reference expansion, cast-in-expand `nav/Ns.Type`) | Expand related | ✅ (`$levels`/nested `$select` → 501) | URL Conv. §5.1.2/5.1.3 |
+| `$expand` (nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, `$levels` on self-recursive navigations, `nav/$ref` reference expansion, cast-in-expand) | Expand related | ✅ (nested `$select`-in-`$expand` → 501) | URL Conv. §5.1.2/5.1.3 |
 | `$search` | Free-text search | ✅ | URL Conv. §5.1.8 |
 | `$compute` | Computed properties | ✅ | URL Conv. §5.1.9 |
 | `$apply` | Aggregation | ✅ (see below) | Data Aggregation §3 |
 | `$format` | Response format | ✅ `json` / `xml` (XMI) | Protocol §11.2.10 |
-| Parameter aliases `@name` | 4.01 aliases in options | ✅ | URL Conv. §5.1.1.15 |
+| Parameter aliases `@name` (incl. NESTED — inside `$expand`/`$select` options) | 4.01 aliases in options | ✅ | URL Conv. §5.1.1.15 |
 | Case-insensitive, `$`-less option names | 4.01 | ✅ | URL Conv. §5.1 |
 | Unsupported system option → 501; unknown `$x` → 400 | Reject unsupported | ✅ | Protocol §13.1.1/7 |
 | `$deltatoken` (follow a delta link) | Change tracking | ✅ | Protocol §11.3 |
@@ -136,8 +136,8 @@ Spec documents (OASIS OData **v4.01**):
 | `IEEE754Compatible=true` (Int64/Decimal as strings: values, `@odata.count`, `$apply` rows; Content-Type echo; payload decode) | ✅ (client opt-in `ieee754()`) | JSON Format §4.3/§8.1 |
 | `$batch` JSON (4.01) | ✅ (server + client) | Protocol §11.7 |
 | `$batch` multipart/mixed (4.0, SAP world) | ✅ (server accepts + answers multipart; client `.multipart()`) | Protocol §11.7 |
-| Change tracking: `Prefer: odata.track-changes`, self-describing delta links, delta payloads (4.01 `@removed` + 4.0 `$deletedEntity`), 410 Gone | ✅ in-memory AND JPA (`ChangeJournal`, service-layer); expanded defining queries serve FULL expanded representations (4.01, in-memory) | Protocol §11.3 |
-| Asynchronous requests | ❌ | Protocol §11.6 |
+| Change tracking: `Prefer: odata.track-changes`, self-describing delta links, delta payloads (4.01 `@removed` + 4.0 `$deletedEntity`), server-driven delta paging (`Prefer: maxpagesize`), `/$count` on delta links, 410 Gone | ✅ in-memory AND JPA (`ChangeJournal`, service-layer); expanded defining queries serve FULL expanded representations (4.01, both backends) | Protocol §11.3 |
+| Asynchronous requests (`Prefer: respond-async` → 202 + one-shot status monitor serving `application/http`; DELETE cancels) | ✅ (delivery-async: execution completes inline) | Protocol §11.6 |
 | CORS for browser clients (XOData & co.) | ✅ opt-in (`odata.cors.origin`: `*` or allowlist; preflight, expose headers) | (not OData — HTTP) |
 
 ## Client (E8)

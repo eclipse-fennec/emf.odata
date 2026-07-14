@@ -444,6 +444,8 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 			journal.record(instance.eClass(),
 					String.valueOf(instance.eGet(keyAttribute(instance.eClass()))),
 					ChangeJournal.keyValuesOf(instance), false);
+			journal.record(entityType, unquote(rawKey), // expand membership changed
+					ChangeJournal.keyValuesOf(owner), false);
 			return instance;
 		}
 	}
@@ -461,6 +463,8 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 			}
 			attach(owner, reference, target);
 			tx.commit();
+			journal.record(entityType, unquote(rawKey), // expand membership changed
+					ChangeJournal.keyValuesOf(owner), false);
 		}
 	}
 
@@ -485,6 +489,10 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 				}
 			}
 			tx.commit();
+			if (removed) {
+				journal.record(entityType, unquote(rawKey), // expand membership changed
+						ChangeJournal.keyValuesOf(owner), false);
+			}
 			return removed;
 		}
 	}
@@ -496,6 +504,11 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 		return journal.token();
 	}
 
+	@Override
+	public boolean supportsExpandTracking() {
+		return true;
+	}
+
 	/**
 	 * Changes since the token. Membership stays PUSHED DOWN: the defining filter is combined
 	 * with a {@code key IN (touched keys)} restriction and runs as ONE criteria query — never a
@@ -504,7 +517,12 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 	 */
 	@Override
 	public DeltaResult changesSince(EntityQuery query, String token) {
-		ChangeJournal.Window window = journal.since(token, query.entityType());
+		return changesSince(query, token, Long.MAX_VALUE);
+	}
+
+	@Override
+	public DeltaResult changesSince(EntityQuery query, String token, long maxSpan) {
+		ChangeJournal.Window window = journal.since(token, query.entityType(), maxSpan);
 		List<Removal> removals = new ArrayList<>();
 		Map<String, ChangeJournal.Change> touched = new LinkedHashMap<>();
 		for (ChangeJournal.Change change : window.changes()) {
@@ -512,6 +530,15 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 				removals.add(new Removal(change.keyValues(), REASON_DELETED));
 			} else {
 				touched.put(change.storeKey(), change);
+			}
+		}
+		if (!query.expand().isEmpty()) {
+			// expanded tracking (11.3.1): owners whose expanded navigation holds a changed member
+			// report too — found with ONE JOIN … IN query per navigation, still pushed down.
+			// Membership changes through link/unlink/createRelated journal the owner directly;
+			// a member deleted WITHOUT unlink is undetectable here (its row is gone — documented).
+			for (ChangeJournal.Change owner : ownersOfChangedMembers(query, token, maxSpan)) {
+				touched.putIfAbsent(owner.storeKey(), owner);
 			}
 		}
 		List<EObject> changed = List.of();
@@ -530,7 +557,53 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 				}
 			});
 		}
-		return new DeltaResult(changed, removals, window.nextToken());
+		return new DeltaResult(changed, removals, window.nextToken(), window.more());
+	}
+
+	/**
+	 * Owners in the tracked set whose EXPANDED navigation contains an entity changed inside the
+	 * token window — one criteria query per (first-segment) navigation:
+	 * {@code SELECT DISTINCT o FROM Owner o JOIN o.nav m WHERE m.key IN (changed member keys)}.
+	 */
+	private List<ChangeJournal.Change> ownersOfChangedMembers(EntityQuery query, String token,
+			long maxSpan) {
+		List<ChangeJournal.Change> owners = new ArrayList<>();
+		EntityManagerFactory factory = factoryFor(query.entityType());
+		EAttribute ownerId = keyAttribute(query.entityType());
+		for (String path : query.expand()) {
+			int slash = path.indexOf('/');
+			String navigation = slash < 0 ? path : path.substring(0, slash);
+			if (!(query.entityType().getEStructuralFeature(navigation) instanceof EReference reference)
+					|| reference.isContainment()) {
+				continue; // containment children have no set-level journal entries
+			}
+			EClass targetType = reference.getEReferenceType();
+			EAttribute targetId = keyAttribute(targetType);
+			List<Object> memberKeys = new ArrayList<>();
+			for (ChangeJournal.Change change : journal.since(token, targetType, maxSpan).changes()) {
+				if (!change.deleted()) {
+					memberKeys.add(EcoreUtil.createFromString(
+							targetId.getEAttributeType(), change.storeKey()));
+				}
+			}
+			if (memberKeys.isEmpty()) {
+				continue;
+			}
+			try (EntityManager em = factory.createEntityManager()) {
+				CriteriaBuilder cb = em.getCriteriaBuilder();
+				CriteriaQuery<Object> cq = cb.createQuery(Object.class);
+				Root<?> root = cq.from(entityType(factory, query.entityType()));
+				cq.select(root).distinct(true)
+						.where(root.join(navigation).get(targetId.getName()).in(memberKeys));
+				for (Object result : em.createQuery(cq).getResultList()) {
+					EObject owner = (EObject) result;
+					owners.add(new ChangeJournal.Change(0, owner.eClass(),
+							String.valueOf(owner.eGet(ownerId)),
+							ChangeJournal.keyValuesOf(owner), false));
+				}
+			}
+		}
+		return owners;
 	}
 
 	/**

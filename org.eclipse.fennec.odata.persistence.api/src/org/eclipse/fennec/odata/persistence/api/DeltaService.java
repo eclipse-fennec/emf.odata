@@ -73,16 +73,33 @@ public interface DeltaService {
 	DeltaResult changesSince(EntityQuery definingQuery, String token);
 
 	/**
+	 * {@link #changesSince(EntityQuery, String)} bounded to roughly {@code maxSpan} journal
+	 * entries — server-driven paging of delta responses ([OData-Protocol] 11.3.2: results may
+	 * span pages). A {@link DeltaResult#truncated() truncated} result's {@code nextToken} is
+	 * the PAGE boundary: following it continues the same window. The default ignores the bound
+	 * (one page, spec-legal).
+	 */
+	default DeltaResult changesSince(EntityQuery definingQuery, String token, long maxSpan) {
+		return changesSince(definingQuery, token);
+	}
+
+	/**
 	 * One batch of changes: the current state of every added or changed entity that matches the
 	 * defining query, the removals, and the follow-up token for the next delta link. Multiple
 	 * changes to the same entity collapse into its latest outcome.
 	 */
-	record DeltaResult(List<EObject> changed, List<Removal> removals, String nextToken) {
+	record DeltaResult(List<EObject> changed, List<Removal> removals, String nextToken,
+			boolean truncated) {
 
 		public DeltaResult {
 			changed = changed == null ? List.of() : List.copyOf(changed);
 			removals = removals == null ? List.of() : List.copyOf(removals);
 			Objects.requireNonNull(nextToken, "nextToken must not be null");
+		}
+
+		/** A complete (untruncated) result. */
+		public DeltaResult(List<EObject> changed, List<Removal> removals, String nextToken) {
+			this(changed, removals, nextToken, false);
 		}
 	}
 

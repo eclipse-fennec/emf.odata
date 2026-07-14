@@ -170,8 +170,18 @@ current representation of the expanded navigation — the spec-legal alternative
 `@removed` deletes in one request — all-or-nothing on transactional backends. 501: 4.0 link
 objects, nested `nav@delta`, `@odata.bind`, `continue-on-error`.
 
-`$metadata` advertises the actual support via a `Capabilities.ChangeTracking` annotation on the
-container. Not covered: paging inside a delta response, `/$count` on a delta link (501).
+`Prefer: maxpagesize` pages a delta response server-driven (a truncated window continues via
+`@odata.nextLink`, the final page carries the delta link); `GET Set/$count?$deltatoken=…`
+answers the number of changes. `$metadata` advertises the actual support via a
+`Capabilities.ChangeTracking` annotation on the container.
+
+## Asynchronous responses
+
+`Prefer: respond-async` ([OData-Protocol] 11.6) answers **202 Accepted** with a `Location`
+status monitor. The request EXECUTES to completion inline — only delivery is asynchronous:
+`GET` on the monitor returns the parked response as an `application/http` message exactly
+once (then 404); `DELETE` cancels an unretrieved result. Bounded LRU parking (unclaimed
+results age out).
 
 ## Backend configuration
 

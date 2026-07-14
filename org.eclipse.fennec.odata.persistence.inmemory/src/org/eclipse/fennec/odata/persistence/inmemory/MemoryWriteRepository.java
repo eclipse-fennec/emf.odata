@@ -399,7 +399,12 @@ public class MemoryWriteRepository
 
 	@Override
 	public DeltaResult changesSince(EntityQuery query, String token) {
-		ChangeJournal.Window window = journal.since(token, query.entityType());
+		return changesSince(query, token, Long.MAX_VALUE);
+	}
+
+	@Override
+	public DeltaResult changesSince(EntityQuery query, String token, long maxSpan) {
+		ChangeJournal.Window window = journal.since(token, query.entityType(), maxSpan);
 		List<EObject> changed = new ArrayList<>();
 		List<Removal> removals = new ArrayList<>();
 		Set<EObject> seen = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -426,8 +431,8 @@ public class MemoryWriteRepository
 		if (!query.expand().isEmpty()) {
 			// expanded tracking (11.3.1): a change to a MEMBER of an expanded navigation reports
 			// the owner — the protocol layer serializes it with the full current representation.
-			// The window is journal-wide here: member changes live under the MEMBER's type.
-			ChangeJournal.Window all = journal.since(token, null); // member changes live under the MEMBER's type
+			// The SAME span keeps the journal-wide window aligned with the typed one.
+			ChangeJournal.Window all = journal.since(token, null, maxSpan);
 			for (EObject owner : ownersOfChangedMembers(query, all.changes())) {
 				if (!seen.add(owner)) {
 					continue;
@@ -438,7 +443,7 @@ public class MemoryWriteRepository
 				}
 			}
 		}
-		return new DeltaResult(changed, removals, window.nextToken());
+		return new DeltaResult(changed, removals, window.nextToken(), window.more());
 	}
 
 	/** Tracked-set owners whose EXPANDED navigation contains one of the changed entities. */
