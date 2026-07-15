@@ -50,7 +50,8 @@ synthetischen Tupel-Typ als Ausdruckskontext; parst und verweigert ehrlich 501).
    **Cast-in-Expand `nav/Ns.Type`** (9.3). Seit 2026-07-14 auch die SHOULDs 9.4–9.7:
    `$orderby`/`$count`/`$top`/`$skip`/`$search` in `$expand` UND in `$select` (5.2–5.5) —
    gemeinsame `CollectionOptions`-Infrastruktur, Anwendung auf geshapte Kopien VOR dem
-   Pruning, Inline-Counts als `nav@odata.count`-Splice. Offen: 9.8 `$levels` → 501.
+   Pruning, Inline-Counts als `nav@odata.count`-Splice. 9.8 `$levels` ✅ 2026-07-14
+   (selbstrekursive Navigationen, 1..8 oder `max`).
 3. ~~**CSDL-JSON-`$metadata`** (§13.2.3/6)~~ — ✅ 2026-07-09: `CsdlJsonWriter`/`CsdlJsonReader`,
    Server emittiert via `$format=json`/Accept, Client liest beide Formen.
 4. ~~**Count einer gefilterten Collection in einer Common Expression** (§13.2.3/3)~~ — ✅ Welle 1
@@ -61,16 +62,19 @@ synthetischen Tupel-Typ als Ausdruckskontext; parst und verweigert ehrlich 501).
    (Nav-Collections gegen den Zieltyp, primitive Collections via `$it`), Anwendung im
    `EntityShaper` VOR dem Pruning (Prädikate dürfen wegprojizierte Properties referenzieren).
 
-SHOULD-Ebene (nicht blockierend, aber Advanced-Qualität): async / `Respond-Async` (§13.1.3/13),
-Cross-Join (15), strukturelle Vergleiche (§13.2.2/7), verschachtelte
-Parameter-Aliase und `/$filter`-Pfadsegment (§13.2.2/10-11, §13.2.3/8-9).
+SHOULD-Ebene: inzwischen erfüllt bis auf **Cross-Join (15)** und **strukturelle Vergleiche
+(§13.2.2/7)** — async ✅ 2026-07-14 (seit 2026-07-15 echte Hintergrund-Ausführung),
+verschachtelte Parameter-Aliase und `/$filter`-Pfadsegment ✅ 2026-07-14. Strukturelle
+Vergleiche (`complexProp eq {…}`) sind NICHT unterstützt (Objekt-Literal opak, keine
+strukturelle EObject-Gleichheit — `odata-open-tasks.md` §2).
 **Delta-Change-Tracking (14) ist seit 2026-07-13 erfüllt und seit 2026-07-14 AUSGEBAUT**
 (`Prefer: odata.track-changes`, selbstbeschreibende Delta-Links, Delta-Payloads in 4.0- UND
 4.01-Form, 410 Gone, `Capabilities.ChangeTracking`; Ausbau: JPA-`DeltaService`
 [Service-Layer-Journal, Pushdown-Membership], `$expand`-Tracking mit Full-Representation
-[4.01, in-memory], `PATCH`-Collection-Update `#$delta`. Restgrenzen: kein Delta-Paging, kein
-`/$count` auf Delta-Links, keine nested-`nav@delta`-Wire-Form, keine 4.0-flattened-Payloads —
-Details `odata-features.md`).
+[4.01, in-memory], `PATCH`-Collection-Update `#$delta`, Delta-Paging via
+`Prefer: maxpagesize`, `/$count` auf Delta-Links. Restgrenzen: keine
+nested-`nav@delta`-Wire-Form, keine 4.0-flattened-Payloads —
+Details `manual/06-feature-matrix.md` und `odata-open-tasks.md`).
 
 ### Offene Verifizierungspunkte (eng, prüfenswert)
 
@@ -149,7 +153,7 @@ Details `odata-features.md`).
 ## 13.1.2 — Intermediate (Ausblick, read-only-relevant)
 
 ✅ `$select`, `$top`, `$skip`, `$count`(-Option), `$orderby`, eq/ne-Filter, Lambdas any/all
-· ✅ **NEU 2026-07-04 (eigener URI-Parser, ADR-0005)**: `/$value` auf Properties,
+· ✅ **NEU 2026-07-04 (eigener URI-Parser)**: `/$value` auf Properties,
 `/$count`-URL-Segment (Set + Navigation, inkl. gefiltertem Set-Count), Pfad-Navigation
 (`Set(key)/nav/prop`), Property-Adressierung · ✅ **NEU 2026-07-06**: Aliase in `$filter`
 (13.1.2/7.2 MUST) und **Derived-Type-Casts in URLs** (13.1.2/4 MUST): `Set/Ns.T` (Typ-Filter
@@ -236,7 +240,7 @@ bewusst noch offen** — Blocker und priorisierter Backlog stehen im Gesamturtei
 `$expand`-Sub-Optionen inkl. `$ref`/Cast, CSDL-JSON; SHOULDs async/Delta/Cross-Join).
 
 Historie: der Weg dahin lief über den Resource-Path-Parser (`/$value`, `/$count`-Segment,
-Pfad-Navigation) — seit ADR-0005 (Olingo archiviert) Eigenbau auf der bestehenden
+Pfad-Navigation) — seit der Entscheidung gegen Olingo (archiviert, 2026-07-04) Eigenbau auf der bestehenden
 ANTLR4-Infrastruktur, mit den vendorten ABNF-Fällen (`resourcePath` 37, `odataRelativeUri` 154) als
 Akzeptanz-Testsuite. „Updatable" ist ein eigenes Paket (Schreibpfad + ETags + Location/EntityId-Header)
 und wurde als solches umgesetzt.

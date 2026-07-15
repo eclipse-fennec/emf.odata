@@ -2,8 +2,8 @@
 
 An **OData v4.01 server and client** for the Eclipse Fennec ecosystem: any EMF model
 (Ecore), registered as an OSGi service, becomes a spec-conformant OData API — metadata,
-queries, aggregation and writes included. No code generation, no Olingo at runtime
-(ADR-0005), pure OSGi R8 / Jakarta Servlet / EMF.
+queries, aggregation and writes included. No code generation, no Olingo at runtime,
+pure OSGi R8 / Jakarta Servlet / EMF.
 
 ## Conformance (OASIS OData, Part 1 §13)
 
@@ -54,8 +54,8 @@ curl 'http://localhost:8080/odata/Product?$apply=groupby((category/name),aggrega
 ## Architecture
 
 Entry point: [`docs/odata-architecture.md`](docs/odata-architecture.md) — bundle map,
-request lifecycle, security defaults, ADRs (`docs/decisions/`), backlog. Requirements:
-[`docs/odata-basic-requirements.md`](docs/odata-basic-requirements.md).
+request lifecycle, security defaults, ADRs (`docs/decisions/`). Open work of any kind
+(spec gaps, backlog, findings): [`docs/odata-open-tasks.md`](docs/odata-open-tasks.md).
 
 ## License
 

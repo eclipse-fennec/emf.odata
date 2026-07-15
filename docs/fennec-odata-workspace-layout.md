@@ -1,6 +1,8 @@
 # Fennec OData – Empfohlene Projekt-Ablage für Claude Code
 
-> Begleitdokument zu `odata-basic-requirements.md` (Draft v0.7).
+> Ablage-Regeln für den Fennec-OData-Workspace (entstanden als Begleitdokument der
+> ursprünglichen Anforderungsphase; das Requirements-Doc ist inzwischen in
+> `odata-open-tasks.md` + Git-Historie aufgegangen).
 > Zweck: alle technischen und fachlichen Ressourcen so lokal ablegen, dass im Arbeitsalltag **keine Web-Suche** nötig ist – Specs, Schemata, Referenz-Code und Test-Material liegen offline bereit.
 
 ---
@@ -52,10 +54,14 @@ fennec-odata-dev/                      ← Claude-Code-Arbeitsverzeichnis (Works
 ├── fennec-metadata/                   ═══════ QUELL-ABHÄNGIGKEIT (Read-Write) ═══════
 │   └── (emf.model.metadata)             nur generisches Framework anpassen, falls nötig
 │
-├── docs/                              ← eigene Planungsdokumente (Read-Write)
-│   ├── odata-basic-requirements.md
-│   ├── fennec-odata-workspace-layout.md  ← DIESES Dokument
-│   └── decisions/                       ← ADRs zu offenen Fragen (Q1, Q4, Q6 …)
+├── docs/                              ← eigene Doku (Read-Write; liegt IM Repo, außen Symlink)
+│   ├── odata-architecture.md            ← Architektur (konsolidierter Ist-Stand)
+│   ├── odata-open-tasks.md              ← DAS Aufgaben-Dokument (alle offenen Punkte)
+│   ├── odata-conformance-status.md      ← Klausel-Nachweis OASIS §13
+│   ├── odata-live-interop-findings.md   ← Live-Findings (publiziert)
+│   ├── manual/                          ← publizierte EN-Doku (GitHub Pages via docs-site/)
+│   ├── decisions/                       ← ADRs (nur gehaltene Architektur-Entscheidungen)
+│   └── fennec-odata-workspace-layout.md ← DIESES Dokument
 │
 ├── reference/                         ═══════ READ-ONLY ═══════
 │   ├── fennec/                          Quelle der binär-referenzierten Fennec-Repos –
@@ -259,42 +265,9 @@ echo "Fertig. fennec-odata/ separat anlegen. Specs/PDFs manuell in reference/spe
 
 ## 8. `CLAUDE.md` – Kontext für Claude Code
 
-```markdown
-# Fennec OData – Arbeitskontext
-
-## Was das ist
-OData-v4.01-Server UND -Client im Eclipse-Fennec-Ökosystem.
-Anforderungen: docs/odata-basic-requirements.md
-Ablage-Regeln: docs/fennec-odata-workspace-layout.md
-
-## Schreibzonen
-- Ändern erlaubt: NUR fennec-odata/, fennec-metadata/ (sparsam, generisch) und docs/.
-- fennec-odata/ = Haupt-Repo. ALLE emf.odata.* Bundles inkl. emf.odata.metadata.
-- fennec-metadata/ = generisches emf.model.metadata. KEIN OData-Code hier rein.
-- reference/ und testdata/ sind READ-ONLY. Nur lesen/nachschlagen, nie editieren.
-- Build referenziert emf.osgi/codec/persistence-jpa/m2x BINÄR, nicht aus reference/fennec/.
-
-## Tech-Eckpunkte (verbindlich)
-- Java 21, OSGi R8+, EMF (ohne UI), OSGi HTTP Whiteboard (Jakarta Servlet) als Transport – siehe docs/decisions/0001.
-- Fundament: Model Metadata Service, AspectProvider-Pattern.
-- OData-Aspekte (odata.ecore + ODataAspectProvider) leben in emf.odata.metadata.
-- OCL (aus emf.m2x) ist das interne Predicate-IR für $filter/$orderby.
-- $apply als eigenes Aggregations-Submodell, NICHT in OCL.
-- CSDL-Codec = direkter Konverter (Variante β), kein EDM-Zwischenmodell.
-- Olingo NUR für URI-Parser + Batch-Splitter, sonst eigene ANTLR4-Grammatik.
-- Backend-Pushdown verpflichtend, kein In-Memory-Filtering, kein N+1 bei $expand.
-- VA1 (OclAspectProvider in emf.m2x) ist UPSTREAM-Vorarbeit -> Binary konsumieren.
-
-## Referenz-Code = STUDIEREN, nicht 1:1 kopieren (Lizenzen Apache/MIT vs. EPL-2.0)
-- JPA-Mapping (E5): reference/code/java/olingo-jpa-processor-v4
-- SAP-Quirks + CSRF: reference/code/python/python-pyodata
-- Cache-Pattern + OCL: reference/fennec/emf.m2x (OclLruExpressionCache)
-- Specs/Schemata: reference/specs/, reference/schemas/
-- Test-Input: testdata/ ; Live-Services: testdata/service-endpoints.md
-
-## Offene Fragen
-docs/decisions/ – req-doc §7 (Q1, Q4, Q6, Q8–Q21, VA1).
-```
+Die gepflegte Fassung liegt im Workspace-Root (`/opt/git/fennec-odata/CLAUDE.md`) und wird
+dort aktualisiert — hier nicht mehr dupliziert (die frühere Vorlagen-Kopie veraltete
+regelmäßig gegenüber dem Original).
 
 ---
 

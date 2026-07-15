@@ -58,7 +58,7 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 | `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) |
 | `$count` | `$count=true` inline, the `/$count` segment, filtered/searched counts in expressions (`$count($filter=…)`, `$count($search=…)`) |
 | `$select` | nested `$select` plus `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count` on selected collections (nav collections against the target type, primitive collections via `$it`) |
-| `$expand` | nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, **`nav/$ref`** reference expansion, **cast-in-expand** `nav/Ns.Type` (`$levels` → 501) |
+| `$expand` | nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, **`$levels`** on self-recursive navigations (1..8 or `max`), **`nav/$ref`** reference expansion, **cast-in-expand** `nav/Ns.Type` (nested `$select`-in-`$expand` → 501) |
 | `$search` | free-text, pushed to the backend |
 | `$compute` | server-computed properties (`price mul 1.19 as gross`) |
 | `$apply` | aggregation (see below) |
@@ -177,11 +177,12 @@ answers the number of changes. `$metadata` advertises the actual support via a
 
 ## Asynchronous responses
 
-`Prefer: respond-async` ([OData-Protocol] 11.6) answers **202 Accepted** with a `Location`
-status monitor. The request EXECUTES to completion inline — only delivery is asynchronous:
-`GET` on the monitor returns the parked response as an `application/http` message exactly
-once (then 404); `DELETE` cancels an unretrieved result. Bounded LRU parking (unclaimed
-results age out).
+`Prefer: respond-async` ([OData-Protocol] 11.6) answers **202 Accepted** immediately with a
+`Location` status monitor — the request executes on a background worker (one Java 21 virtual
+thread per request). Polling the monitor returns **202** while the execution is still
+running, then the result exactly once as an `application/http` message (after that: 404).
+`DELETE` on the monitor cancels: a still-running execution is interrupted (best effort) and
+the result is discarded. Bounded LRU parking (unclaimed monitors age out, cancelled).
 
 ## Backend configuration
 

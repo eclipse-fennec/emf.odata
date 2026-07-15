@@ -3,7 +3,8 @@
 The client (`org.eclipse.fennec.odata.client`) consumes **any** conformant OData v4
 service — SAP, a foreign service, or this project's own server — reading its `$metadata`
 into Ecore and decoding responses through the same codec profile the server serializes
-with. Transport is `java.net.http` (no JAX-RS client, per ADR-0001's line).
+with. Transport is `java.net.http` (no JAX-RS client — same plain-transport line as the
+server's servlet choice).
 
 ## Connecting
 

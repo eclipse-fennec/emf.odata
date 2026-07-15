@@ -18,13 +18,16 @@ The load-bearing decisions are captured as ADRs (in
 
 | ADR | Decision |
 |---|---|
-| 0001 | **Transport is a plain Jakarta servlet** on the OSGi HTTP Whiteboard — no Jakarta REST / Jersey. |
 | 0002 | **CSDL via a direct converter** against the OASIS CSDL model — no intermediate EDM object model. |
 | 0003 | The **converter owns OData resolution** (a standalone core + a thin provider adapter). |
 | 0004 | **OCL type resolution is standalone** — it does not depend on an external type checker. |
-| 0005 | **No Olingo at runtime** — the URI parser and batch splitter are own ANTLR4 builds; Olingo is a study reference. |
 | 0006 | The **JPA backend hand-writes Criteria queries** (no ORM query abstraction leaks into the mapping). |
 | 0007 | The **client schema registry** decouples fetch/convert, persistence/lookup and the data path behind an SPI. |
+
+Two further choices are architecture facts rather than ADRs: the transport is a **plain
+Jakarta servlet** on the OSGi HTTP Whiteboard (no Jakarta REST / Jersey), and there is
+**no Olingo at runtime** (the project is archived) — the URI parser and batch splitter are
+own ANTLR4 builds validated against the official OASIS ABNF test suites.
 
 ## What it is not
 

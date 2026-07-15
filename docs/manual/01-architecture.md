@@ -9,7 +9,7 @@ SPI. The client mirrors the server's codec and metadata wiring.
 ```
                     HTTP (Jetty12, OSGi HTTP Whiteboard)
                                    │
-                       ┌───────────▼───────────┐   ADR-0001: plain Jakarta servlet,
+                       ┌───────────▼───────────┐   plain Jakarta servlet,
                        │      ODataServlet      │   no Jakarta REST
                        │  (runtime, catch-all)  │
                        └──┬───────┬───────┬─────┘
@@ -61,7 +61,7 @@ SPI. The client mirrors the server's codec and metadata wiring.
 ## Request lifecycle (`GET /odata/{Set}?…`)
 
 1. **`OData-Version` negotiation** — responds 4.01 unless the client pins `OData-MaxVersion: 4.0`; non-GET on read paths → 405.
-2. **Option normalisation & routing** — 4.01 case-insensitive, `$`-prefix optional; a whitelist maps known-unsupported options → 501 and unknown `$x` → 400. Routes: `/` service doc · `/$metadata` CSDL · `Set(key)…` via the own resource-path parser (ADR-0005) · `Set` collection.
+2. **Option normalisation & routing** — 4.01 case-insensitive, `$`-prefix optional; a whitelist maps known-unsupported options → 501 and unknown `$x` → 400. Routes: `/` service doc · `/$metadata` CSDL · `Set(key)…` via the own resource-path parser · `Set` collection.
 3. **Limits before parsing** (`RequestLimits`) — expression length, parenthesis depth (O(n) scan), `$top` ceiling, paging validation.
 4. **Parsing** (`CachingODataQueryParser`) — `$filter`/`$orderby`/`$apply` → typed OCL IR; property paths resolved eagerly against the context EClass (unknown names → 400). Single-entity keys are **built** as a literal AST, never expression-parsed (quote-injection stays one literal).
 5. **Backend** — `QueryService.execute(EntityQuery)` / `executeApply(ApplyQuery)` receives only the IR. Options after `$apply` run on the transformed set.
@@ -84,4 +84,4 @@ Both sit behind the `QueryService`/`WriteService`/`EntityRepository` SPIs, so a 
 (e.g. Mongo) is an additive bundle with no core change.
 
 > For the dated implementation history and deeper rationale, see the internal architecture
-> change-log at [`docs/odata-architecture.md`](../odata-architecture.md) and the ADRs.
+> architecture notes at [`docs/odata-architecture.md`](../odata-architecture.md) and the ADRs.

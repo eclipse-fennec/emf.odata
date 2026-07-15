@@ -137,7 +137,7 @@ Spec documents (OASIS OData **v4.01**):
 | `$batch` JSON (4.01) | ✅ (server + client) | Protocol §11.7 |
 | `$batch` multipart/mixed (4.0, SAP world) | ✅ (server accepts + answers multipart; client `.multipart()`) | Protocol §11.7 |
 | Change tracking: `Prefer: odata.track-changes`, self-describing delta links, delta payloads (4.01 `@removed` + 4.0 `$deletedEntity`), server-driven delta paging (`Prefer: maxpagesize`), `/$count` on delta links, 410 Gone | ✅ in-memory AND JPA (`ChangeJournal`, service-layer); expanded defining queries serve FULL expanded representations (4.01, both backends) | Protocol §11.3 |
-| Asynchronous requests (`Prefer: respond-async` → 202 + one-shot status monitor serving `application/http`; DELETE cancels) | ✅ (delivery-async: execution completes inline) | Protocol §11.6 |
+| Asynchronous requests (`Prefer: respond-async` → immediate 202 + status monitor: 202 while running, one-shot `application/http` delivery; DELETE interrupts a running execution) | ✅ (background execution on virtual threads) | Protocol §11.6 |
 | CORS for browser clients (XOData & co.) | ✅ opt-in (`odata.cors.origin`: `*` or allowlist; preflight, expose headers) | (not OData — HTTP) |
 
 ## Client (E8)
