@@ -222,6 +222,15 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
   LEFT-Fetch-Joins für single-valued `$expand`-Ketten (per Präfix dedupliziert).
 - Walks auf lazy Referenzen NACH EM-Close liefern unaufgelöste Proxies — Materialisierung
   (descend) muss bei offener Session passieren; `EntityQuery.expand` ist der Vertrag dafür.
+- **Subquery als Vergleichsoperand**: `CriteriaBuilder.greaterThanOrEqualTo`/`lessThan` (die
+  `Comparable`-Overloads) casten ihre Operanden auf `ExpressionImpl` — eine `SubQueryImpl` ist
+  keine und fliegt mit `ClassCastException`. Die NUMERISCHEN `ge/gt/lt/le`-Overloads casten auf
+  `InternalSelection`, das die Subquery implementiert. Darum geht der gefilterte `$count`
+  (korrelierte COUNT-Subquery, Long) über `cb.ge/gt/lt/le`, nicht über `greaterThanOrEqualTo`.
+- **`treat()` in einem OR**: EclipseLinks `cb.treat(root, Sub).get(attr)` liefert für
+  Nicht-`Sub`-Zeilen `null` (3VL-Ausschluss dieses Disjunkts), statt die ganze Query auf den
+  Subtyp einzuschränken — eine Nicht-Subtyp-Zeile, die den anderen OR-Zweig erfüllt, überlebt
+  also korrekt. Per OR-Probe im Cast-Test abgesichert (sonst wäre der Cast-Pushdown unsicher).
 - Lokale `emf.persistence-jpa`-Fixes (Metamodel-Sichtbarkeit dynamischer Typen,
   `EBigDecimal`-Scale) liegen auf Feature-Branch — s. `odata-open-tasks.md` §8.
 

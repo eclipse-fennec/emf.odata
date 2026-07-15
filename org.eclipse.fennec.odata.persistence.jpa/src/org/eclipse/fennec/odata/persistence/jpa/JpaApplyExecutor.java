@@ -68,10 +68,13 @@ class JpaApplyExecutor {
 
 	private final OclToCriteriaTranslator translator = new OclToCriteriaTranslator();
 
-	/** The pipeline split into WHERE stages, computes, ONE grouping/aggregation, HAVING. */
+	/**
+	 * The pipeline split into WHERE stages, pre-grouping computes, ONE grouping/aggregation,
+	 * post-grouping computes (columns over the aggregates/grouping keys) and HAVING.
+	 */
 	private record Stages(List<OclExpression> where, List<ComputeTransformation> computes,
 			GroupByTransformation groupBy, AggregateTransformation aggregate,
-			List<OclExpression> having) {
+			List<ComputeTransformation> postComputes, List<OclExpression> having) {
 	}
 
 	/** One result column: nested map segments for grouping paths, one segment otherwise. */
@@ -161,6 +164,17 @@ class JpaApplyExecutor {
 			selections.add(aggregate);
 			columns.add(new Column(List.of(aggregation.getAlias())));
 		}
+		// post-grouping computes: columns over the aggregate/grouping expressions (e.g.
+		// Total div Cnt as Avg) — added AFTER the aggregates so they resolve via `named`, and
+		// before HAVING so a trailing filter may reference a computed alias
+		for (ComputeTransformation stage : stages.postComputes()) {
+			for (ComputeExpression compute : stage.getComputeExpressions()) {
+				Expression<?> value = translator.expression(compute.getExpression(), cb, cq, root, named);
+				named.put(compute.getAlias(), value);
+				selections.add(value);
+				columns.add(new Column(List.of(compute.getAlias())));
+			}
+		}
 		if (!groupBy.isEmpty()) {
 			cq.groupBy(groupBy.toArray(Expression[]::new));
 		}
@@ -225,6 +239,7 @@ class JpaApplyExecutor {
 		List<OclExpression> where = new ArrayList<>();
 		List<OclExpression> having = new ArrayList<>();
 		List<ComputeTransformation> computes = new ArrayList<>();
+		List<ComputeTransformation> postComputes = new ArrayList<>();
 		GroupByTransformation groupBy = null;
 		AggregateTransformation aggregate = null;
 		for (ApplyTransformation stage : query.pipeline().getTransformations()) {
@@ -258,11 +273,8 @@ class JpaApplyExecutor {
 					aggregate = aggregation;
 				}
 				case ComputeTransformation compute -> {
-					if (groupBy != null || aggregate != null) {
-						throw new UnsupportedOperationException(
-								"compute after the grouping stage has no JPA pushdown");
-					}
-					computes.add(compute);
+					// a compute after the grouping adds columns over the aggregates/grouping keys
+					(groupBy == null && aggregate == null ? computes : postComputes).add(compute);
 				}
 				default -> throw new UnsupportedOperationException("transformation '"
 						+ stage.eClass().getName() + "' has no JPA pushdown");
@@ -272,7 +284,7 @@ class JpaApplyExecutor {
 			throw new UnsupportedOperationException(
 					"$apply without a grouping/aggregation/compute stage has no JPA pushdown");
 		}
-		return new Stages(where, computes, groupBy, aggregate, having);
+		return new Stages(where, computes, groupBy, aggregate, postComputes, having);
 	}
 
 	private List<GroupingPath> groupingPaths(GroupByTransformation groupBy) {

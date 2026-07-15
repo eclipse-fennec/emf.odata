@@ -180,7 +180,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 				cq.where(where);
 			}
 			if (!query.orderBy().isEmpty()) {
-				cq.orderBy(orders(query.orderBy(), cb, cq, context));
+				cq.orderBy(orders(query.orderBy(), cb, cq, context, factory));
 			}
 
 			TypedQuery<Object> typedQuery = em.createQuery(cq);
@@ -313,7 +313,8 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 			predicates.add(castRestriction(query.castType(), cb, root, factory));
 		}
 		if (query.filter() != null) {
-			predicates.add(translator.predicate(query.filter(), cb, cq, context));
+			predicates.add(translator.predicate(query.filter(), cb, cq, context, java.util.Map.of(),
+					classResolver(factory)));
 		}
 		if (predicates.isEmpty()) {
 			return null;
@@ -338,13 +339,29 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 	}
 
 	private List<Order> orders(List<OrderBySegment> orderBy, CriteriaBuilder cb,
-			CriteriaQuery<?> cq, From<?, ?> root) {
+			CriteriaQuery<?> cq, From<?, ?> root, EntityManagerFactory factory) {
 		List<Order> orders = new ArrayList<>();
 		for (OrderBySegment segment : orderBy) {
-			var key = translator.expression(segment.expression(), cb, cq, root);
+			var key = translator.expression(segment.expression(), cb, cq, root, java.util.Map.of(),
+					classResolver(factory));
 			orders.add(segment.ascending() ? cb.asc(key) : cb.desc(key));
 		}
 		return orders;
+	}
+
+	/**
+	 * Resolves an EClass to its dynamic JPA entity class for {@code treat()} pushdown of
+	 * derived-type cast segments; a non-entity target (or none) yields null so the translator
+	 * refuses the cast honestly (501) rather than pushing down a wrong query.
+	 */
+	private java.util.function.Function<EClass, Class<?>> classResolver(EntityManagerFactory factory) {
+		return eClass -> {
+			try {
+				return entityType(factory, eClass).getJavaType();
+			} catch (RuntimeException e) {
+				return null;
+			}
+		};
 	}
 
 	@Override

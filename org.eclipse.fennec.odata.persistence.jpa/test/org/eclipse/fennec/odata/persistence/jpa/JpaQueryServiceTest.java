@@ -232,12 +232,13 @@ class JpaQueryServiceTest extends JpaWebshopTestBase {
 						productClass, empty, null, List.of(), 0, -1, false)),
 				"no grouping/aggregation/compute stage");
 
-		var late = parser.parseApply(
-				"groupby((category/name),aggregate(price with sum as Total))/compute(Total mul 2 as T2)",
+		// rollup grouping sets have no portable Criteria pushdown (GROUPING SETS is not in the API)
+		var rollup = parser.parseApply(
+				"groupby((rollup(category/name,rating)),aggregate(price with sum as Total))",
 				productClass);
 		assertThrows(UnsupportedOperationException.class,
 				() -> service.executeApply(new ApplyQuery(
-						productClass, late, null, List.of(), 0, -1, false)),
-				"compute after the grouping stage has no pushdown yet");
+						productClass, rollup, null, List.of(), 0, -1, false)),
+				"rollup grouping sets have no JPA pushdown");
 	}
 }

@@ -47,13 +47,21 @@ Alle Level 4.0+4.01 Minimal–Advanced sind beansprucht; das hier ist der Rest d
 ## 3. Backend-Pushdown (ehrliche 501er, nach Praxisnutzen priorisieren)
 
 **JPA** (`OclToCriteriaTranslator`/`JpaApplyExecutor` — Übersetzungslücken werfen UOE → 501,
-nie still falsch):
-- gefilterter/gesuchter `$count` in Ausdrücken (korrelierte Count-Subquery)
-- `date()`/`time()` (ISO-String-Formen)
-- Casts in Ausdrucks-Pfaden (`cb.treat()` auf Joins; Root-Cast existiert)
-- `compute` NACH `groupby`; Mehrfach-Groupby
-- `rollup`, `aggregate … from`, Custom-Aggregates/-Methoden
-- JPA-`$search`-Pushdown-Varianten sind da; filtered/searched Count s. o.
+nie still falsch). Verbleibend:
+- `date()`/`time()` (die ISO-String-Formen; `year`…`second` sind gepusht). Grund für die
+  Zurückhaltung: die In-Memory-Referenz liefert ISO-STRINGS, ein SQL-DATE/TIME-Cast müsste
+  bit-genau dieselbe Darstellung erzeugen — Divergenzrisiko, niedriger Praxisnutzen.
+- **Mehrfach-`groupby`** (mehr als eine Grouping-Stufe) — braucht verschachtelte Subqueries.
+- **`rollup`-Grouping-Sets, `aggregate … from`, Custom-Aggregates/-Methoden** — die Jakarta
+  Criteria API hat kein portables `GROUPING SETS`/`ROLLUP`; genuin nicht portabel abbildbar,
+  bleibt bewusst 501.
+
+*(Geschlossen 2026-07-15: gefilterter/gesuchter `$count` in Ausdrücken → korrelierte
+COUNT-Subquery; Casts in Ausdrucks-Pfaden `Ns.Sub/prop` → `treat()`; `compute` NACH `groupby`.
+GOTCHA dabei — EclipseLink: `greaterThanOrEqualTo`/`lessThan` u. a. casten auf `ExpressionImpl`
+und lehnen eine `SubQueryImpl` ab; die numerischen `ge/gt/lt/le`-Overloads casten auf
+`InternalSelection`, das die Subquery implementiert. `treat()` in einem OR liefert korrekt
+`null` (3VL), statt die ganze Query auf den Subtyp einzuschränken — per OR-Probe verifiziert.)*
 
 **$apply-Struktur-Transformationen** (beidseitig parse→501; vor dem Bau Praxisnutzen prüfen —
 braucht RecHier-Modelle bzw. Operations-Dispatch): `search`, `nest`/`addnested`,

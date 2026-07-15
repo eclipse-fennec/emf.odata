@@ -26,9 +26,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 
+import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.ClassifierType;
 import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
 import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.EnumLiteralExp;
@@ -40,6 +43,7 @@ import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.TypeExp;
 import org.eclipse.fennec.m2x.model.ocl.Variable;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
 import org.eclipse.persistence.jpa.JpaCriteriaBuilder;
@@ -79,12 +83,13 @@ public class OclToCriteriaTranslator {
 	 * post-pipeline predicates (HAVING) and order keys.
 	 */
 	private record Context(CriteriaBuilder cb, AbstractQuery<?> query, From<?, ?> self,
-			Map<Variable, From<?, ?>> variables, Map<String, Expression<?>> named) {
+			Map<Variable, From<?, ?>> variables, Map<String, Expression<?>> named,
+			Function<EClass, Class<?>> entityClass) {
 
 		Context nested(AbstractQuery<?> subquery, Variable variable, From<?, ?> binding) {
 			Map<Variable, From<?, ?>> inner = new HashMap<>(variables);
 			inner.put(variable, binding);
-			return new Context(cb, subquery, self, inner, named);
+			return new Context(cb, subquery, self, inner, named, entityClass);
 		}
 	}
 
@@ -107,8 +112,17 @@ public class OclToCriteriaTranslator {
 	/** {@link #predicate} with named expressions ($apply aliases / grouped paths) in scope. */
 	public Predicate predicate(OclExpression expression, CriteriaBuilder cb,
 			AbstractQuery<?> query, From<?, ?> root, Map<String, Expression<?>> named) {
-		return asPredicate(
-				operand(expression, new Context(cb, query, root, new HashMap<>(), named)), cb);
+		return predicate(expression, cb, query, root, named, null);
+	}
+
+	/**
+	 * {@link #predicate} with an EClass→JPA-class resolver so derived-type cast segments
+	 * ([OData-URL] 4.11 in expression paths) can be pushed down as {@code treat()}.
+	 */
+	public Predicate predicate(OclExpression expression, CriteriaBuilder cb, AbstractQuery<?> query,
+			From<?, ?> root, Map<String, Expression<?>> named, Function<EClass, Class<?>> entityClass) {
+		return asPredicate(operand(expression,
+				new Context(cb, query, root, new HashMap<>(), named, entityClass)), cb);
 	}
 
 	/** Translates a value-typed OCL expression (e.g. an {@code $orderby} key). */
@@ -120,7 +134,14 @@ public class OclToCriteriaTranslator {
 	/** {@link #expression} with named expressions ($apply aliases / grouped paths) in scope. */
 	public Expression<?> expression(OclExpression expression, CriteriaBuilder cb,
 			AbstractQuery<?> query, From<?, ?> root, Map<String, Expression<?>> named) {
-		Operand operand = operand(expression, new Context(cb, query, root, new HashMap<>(), named));
+		return expression(expression, cb, query, root, named, null);
+	}
+
+	/** {@link #expression} with the cast-segment class resolver in scope. */
+	public Expression<?> expression(OclExpression expression, CriteriaBuilder cb, AbstractQuery<?> query,
+			From<?, ?> root, Map<String, Expression<?>> named, Function<EClass, Class<?>> entityClass) {
+		Operand operand = operand(expression,
+				new Context(cb, query, root, new HashMap<>(), named, entityClass));
 		return operand instanceof Expr expr ? expr.expression()
 				: cb.literal(((Const) operand).value());
 	}
@@ -188,6 +209,8 @@ public class OclToCriteriaTranslator {
 				yield bound;
 			}
 			case PropertyCallExp chained -> path(chained, ctx);
+			// derived-type cast segment ([OData-URL] 4.11 in a path): treat() to the subtype
+			case OperationCallExp op when "oclAsType".equals(op.getName()) -> treatedSelf(op, ctx);
 			default -> throw new UnsupportedOperationException(
 					"property source kind " + source.eClass().getName());
 		};
@@ -195,6 +218,45 @@ public class OclToCriteriaTranslator {
 			throw new UnsupportedOperationException("unresolved property reference in $filter/$orderby");
 		}
 		return base.get(p.getReferredProperty().getName());
+	}
+
+	/**
+	 * A derived-type cast segment on the entity itself ({@code Ns.SubType/prop}) → {@code treat()}
+	 * the self root/join to the subtype so its attributes become addressable. v1 supports the cast
+	 * on the implicit self only; a cast further down a navigation raises 501. Without a class
+	 * resolver (e.g. inside a {@code $apply} path) the cast is not pushed down either.
+	 */
+	private From<?, ?> treatedSelf(OperationCallExp cast, Context ctx) {
+		if (cast.getOwnedSource() != null) {
+			throw new UnsupportedOperationException("cast in $filter is supported on the entity itself only");
+		}
+		EClass target = castTarget(cast);
+		Class<?> subtype = ctx.entityClass() == null || target == null ? null
+				: ctx.entityClass().apply(target);
+		if (subtype == null) {
+			throw new UnsupportedOperationException("no JPA class for the cast target "
+					+ (target == null ? "?" : target.getName()));
+		}
+		return treat(ctx.self(), subtype, ctx.cb());
+	}
+
+	private static EClass castTarget(OperationCallExp cast) {
+		if (!cast.getOwnedArguments().isEmpty()
+				&& cast.getOwnedArguments().get(0) instanceof TypeExp typeExp
+				&& typeExp.getReferredType() instanceof ClassifierType classifierType
+				&& classifierType.getReferredClassifier() instanceof EClass eClass) {
+			return eClass;
+		}
+		return null;
+	}
+
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private static From<?, ?> treat(From<?, ?> base, Class<?> subtype, CriteriaBuilder cb) {
+		return switch (base) {
+			case jakarta.persistence.criteria.Root<?> root -> cb.treat((jakarta.persistence.criteria.Root) root, (Class) subtype);
+			case Join<?, ?> join -> cb.treat((Join) join, (Class) subtype);
+			default -> throw new UnsupportedOperationException("cast base is not a root or join");
+		};
 	}
 
 	// --- operations ---
@@ -321,6 +383,17 @@ public class OclToCriteriaTranslator {
 		Object r = right instanceof Const constant ? coerce(constant.value(), l.getJavaType())
 				: ((Expr) right).expression();
 		Expression rExpr = r instanceof Expression e ? e : cb.literal((Comparable) r);
+		// a correlated COUNT subquery (filtered/searched $count) is a SubQueryImpl, not the
+		// ExpressionImpl the generic Comparable comparisons cast to — but it IS an InternalSelection,
+		// which the numeric ge/gt/lt/le overloads accept; the count is Long, so they fit
+		if (l instanceof Subquery || rExpr instanceof Subquery) {
+			return switch (name) {
+				case "<" -> cb.lt(l, rExpr);
+				case "<=" -> cb.le(l, rExpr);
+				case ">" -> cb.gt(l, rExpr);
+				default -> cb.ge(l, rExpr);
+			};
+		}
 		return switch (name) {
 			case "<" -> cb.lessThan(l, rExpr);
 			case "<=" -> cb.lessThanOrEqualTo(l, rExpr);
@@ -361,14 +434,39 @@ public class OclToCriteriaTranslator {
 		return members.isEmpty() ? ctx.cb().disjunction() : tested.in(members);
 	}
 
-	/** String {@code size} → LENGTH, collection {@code size} → SIZE. */
+	/** String {@code size} → LENGTH, collection {@code size} → SIZE, filtered → COUNT subquery. */
 	@SuppressWarnings("unchecked")
 	private Operand size(OperationCallExp op, Context ctx) {
+		if (op.getOwnedSource() instanceof IteratorExp select && "select".equals(select.getName())) {
+			// path/$count($filter=…) / $count($search=…): the builder wraps the collection in a
+			// select-iterator; count the matching members via a correlated subquery
+			return new Expr(filteredCount(select, ctx));
+		}
 		if (op.getOwnedSource() instanceof PropertyCallExp property
 				&& property.getReferredProperty() != null && property.getReferredProperty().isMany()) {
 			return new Expr(ctx.cb().size(collection(op.getOwnedSource(), ctx)));
 		}
 		return new Expr(ctx.cb().length(string(operand(op.getOwnedSource(), ctx), ctx.cb())));
+	}
+
+	/**
+	 * Filtered/searched {@code path/$count(select(coll, e | body))} → a correlated {@code COUNT}
+	 * subquery: the collection is joined to the owner and the select body becomes the subquery's
+	 * WHERE, mirroring {@link #lambda}'s correlation. The scalar count (never null — an empty
+	 * collection counts 0) is usable directly in a comparison, e.g. {@code …/$count(…) ge 2}.
+	 */
+	private Expression<Long> filteredCount(IteratorExp select, Context ctx) {
+		if (!(select.getOwnedSource() instanceof PropertyCallExp property)
+				|| property.getReferredProperty() == null || !property.getReferredProperty().isMany()) {
+			throw new UnsupportedOperationException("filtered $count requires a collection path");
+		}
+		CriteriaBuilder cb = ctx.cb();
+		Subquery<Long> sub = ctx.query().subquery(Long.class);
+		Join<?, ?> element = correlated(sub, property, ctx)
+				.join(property.getReferredProperty().getName());
+		Context inner = ctx.nested(sub, select.getOwnedIterators().get(0), element);
+		sub.select(cb.count(element)).where(asPredicate(operand(select.getOwnedBody(), inner), cb));
+		return sub;
 	}
 
 	/**
@@ -424,7 +522,7 @@ public class OclToCriteriaTranslator {
 	}
 
 	/** Correlates the lambda's collection owner into the subquery (v1: paths on the root). */
-	private From<?, ?> correlated(Subquery<Integer> sub, PropertyCallExp property, Context ctx) {
+	private From<?, ?> correlated(Subquery<?> sub, PropertyCallExp property, Context ctx) {
 		if (property.getOwnedSource() != null) {
 			throw new UnsupportedOperationException("lambda over a nested path (v1 limit)");
 		}

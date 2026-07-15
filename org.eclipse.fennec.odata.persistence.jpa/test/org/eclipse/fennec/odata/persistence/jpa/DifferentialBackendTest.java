@@ -143,6 +143,10 @@ class DifferentialBackendTest extends JpaWebshopTestBase {
 				new Case("concat", "concat(name,'!') eq 'Milk!'", null, false),
 				new Case("year", "year(released) eq 2024", null, false),
 				new Case("navigation eq", "category/name eq 'Dairy'", null, false),
+				new Case("filtered count ge", "reviews/$count($filter=stars ge 4) ge 2", null, false),
+				new Case("filtered count some", "reviews/$count($filter=stars ge 5) ge 1", null, false),
+				new Case("filtered count none", "reviews/$count($filter=stars ge 4) lt 1", null, false),
+				new Case("searched count", "reviews/$count($search=great) ge 1", null, false),
 				new Case("enum by name", "color eq 'Green'", null, false),
 				new Case("bool", "active eq false", null, false),
 				new Case("3VL not over null", "not (price eq 5)", null, false),
@@ -174,6 +178,23 @@ class DifferentialBackendTest extends JpaWebshopTestBase {
 			assertDecimalEquals(j.get("Hi"), m.get("Hi"), 0, group + " max");
 			// SQL AVG is double, in-memory is DECIMAL64 — equal in value within FP tolerance
 			assertDecimalEquals(j.get("Avg"), m.get("Avg"), 1e-6, group + " average");
+		}
+	}
+
+	@Test
+	@DisplayName("$apply compute AFTER groupby is identical across both backends")
+	void computeAfterGroupbyParity() {
+		String apply = "groupby((category/name),aggregate(price with sum as Total,$count as Cnt))"
+				+ "/compute(Total div Cnt as PerItem)";
+		Map<String, Map<String, Object>> jpa = groups(runApply(service, apply));
+		Map<String, Map<String, Object>> mem = groups(runApply(inMemory, apply));
+
+		assertEquals(mem.keySet(), jpa.keySet(), "the grouping keys diverge between backends");
+		for (String group : mem.keySet()) {
+			// SQL divides decimal by bigint, in-memory divides DECIMAL64 — equal within FP tolerance;
+			// the all-null price group divides null → null on both sides
+			assertDecimalEquals(jpa.get(group).get("PerItem"), mem.get(group).get("PerItem"), 1e-6,
+					group + " PerItem (compute after groupby)");
 		}
 	}
 
