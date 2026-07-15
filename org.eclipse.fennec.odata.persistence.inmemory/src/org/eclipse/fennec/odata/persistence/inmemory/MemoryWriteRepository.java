@@ -96,13 +96,18 @@ public class MemoryWriteRepository
 
 	@Override
 	public List<EObject> entities(EClass entityType) {
-		Map<String, EObject> entities = store.get(entityType);
-		if (entities == null) {
-			return List.of();
-		}
-		synchronized (entities) {
-			return new ArrayList<>(entities.values());
-		}
+		// polymorphic like the JPA backend and FileEntityRepository: a base-set query MUST see
+		// derived instances too ([OData-URL] 4.11) — the store keys entities by their EXACT
+		// eClass (write-side identity), so a base read unions every subtype's class store
+		List<EObject> result = new ArrayList<>();
+		store.forEach((type, entities) -> {
+			if (entityType.isSuperTypeOf(type)) {
+				synchronized (entities) {
+					result.addAll(entities.values());
+				}
+			}
+		});
+		return result;
 	}
 
 	// --- transactions (thread-bound; atomic change sets for $batch) ---

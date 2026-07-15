@@ -215,6 +215,24 @@ class MemoryWriteRepositoryTest {
 		assertEquals(3, stream.content().length);
 	}
 
+	@Test
+	@DisplayName("polymorphic read: a base-set query sees derived instances ([OData-URL] 4.11)")
+	void polymorphicRead() {
+		EClass discountedClass = EcoreHelper.getEClass(pkg, "DiscountedProduct");
+		repository.create(productClass, product("p1", "Milk", "1.20"));
+		EObject sale = pkg.getEFactoryInstance().create(discountedClass);
+		sale.eSet(discountedClass.getEStructuralFeature("id"), "d1");
+		sale.eSet(discountedClass.getEStructuralFeature("name"), "SaleMilk");
+		sale.eSet(discountedClass.getEStructuralFeature("price"), new BigDecimal("0.90"));
+		sale.eSet(discountedClass.getEStructuralFeature("discount"), 20);
+		repository.create(discountedClass, sale);
+
+		// the base Product set MUST include the DiscountedProduct (stored under its exact eClass)
+		assertEquals(2, read().size(), "base-set query omits the derived instance");
+		// the derived set sees only the derived instance
+		assertEquals(1, queryService.execute(EntityQuery.all(discountedClass)).entities().size());
+	}
+
 	private List<EObject> read() {
 		return queryService.execute(EntityQuery.all(productClass)).entities();
 	}

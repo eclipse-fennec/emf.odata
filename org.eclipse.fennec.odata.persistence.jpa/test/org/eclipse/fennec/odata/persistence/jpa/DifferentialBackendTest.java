@@ -54,8 +54,10 @@ import org.junit.jupiter.api.TestFactory;
  *
  * <p>The dataset is deliberately edge-heavy: a null price/category ({@code Salt}), a name with
  * SQL-LIKE metacharacters ({@code 50%_off}), a non-ASCII name ({@code Süßware}), and two rows
- * sharing a price (tie-break for ordering). Polymorphism is intentionally excluded (the in-memory
- * backend is not subtype-aware — tracked separately), so no derived type is seeded here.
+ * sharing a price (tie-break for ordering). No derived type is seeded here — polymorphic reads
+ * and derived-type cast filters are covered by their own focused tests ({@code JpaDerivedCastTest},
+ * {@code MemoryWriteRepositoryTest.polymorphicRead}); this suite keeps the dataset focused on the
+ * comparison/function/aggregate corpus.
  */
 @DisplayName("Differential parity: JPA pushdown vs in-memory over one dataset")
 class DifferentialBackendTest extends JpaWebshopTestBase {
