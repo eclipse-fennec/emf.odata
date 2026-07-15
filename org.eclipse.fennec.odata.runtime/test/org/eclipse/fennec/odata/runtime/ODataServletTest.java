@@ -54,6 +54,7 @@ import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
 import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
@@ -84,6 +85,7 @@ class ODataServletTest {
 	private ODataServlet servlet;
 	private final AtomicReference<EntityQuery> lastQuery = new AtomicReference<>();
 	private final AtomicReference<RuntimeException> backendFailure = new AtomicReference<>();
+	private final AtomicReference<CountDownLatch> backendGate = new AtomicReference<>();
 	private List<EObject> backendResult = List.of();
 	private EObject singletonResult;
 	private List<Map<String, Object>> applyResult = List.of();
@@ -127,6 +129,15 @@ class ODataServletTest {
 			@Override
 			public QueryResult execute(EntityQuery query) {
 				lastQuery.set(query);
+				CountDownLatch gate = backendGate.get();
+				if (gate != null) {
+					try {
+						gate.await(); // holds an async worker in "running" for the monitor tests
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+						throw new RuntimeException(e);
+					}
+				}
 				if (backendFailure.get() != null) {
 					throw backendFailure.get();
 				}
@@ -2190,7 +2201,7 @@ class ODataServletTest {
 		assertTrue(monitor.contains("/$async/"), monitor);
 
 		String monitorPath = monitor.substring("/odata".length());
-		Response result = get(monitorPath, Map.of());
+		Response result = awaitMonitor(monitorPath);
 		assertEquals(200, result.status(), result.body());
 		assertTrue(result.headers().get("Content-Type").startsWith("application/http"),
 				"the parked response travels as an application/http message");
@@ -2206,6 +2217,61 @@ class ODataServletTest {
 		String monitorPath2 = accepted2.headers().get("Location").substring("/odata".length());
 		assertEquals(204, callWrite("DELETE", monitorPath2, "", "application/json").status());
 		assertEquals(404, get(monitorPath2, Map.of()).status());
+	}
+
+	@Test
+	@DisplayName("respond-async runs in the background: monitor answers 202 while the execution "
+			+ "is still working, DELETE aborts it (11.6)")
+	void asyncExecutionInBackground() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		CountDownLatch gate = new CountDownLatch(1);
+		backendGate.set(gate);
+		try {
+			Response accepted = call("GET", "/Product", Map.of(), null, null,
+					Map.of("Prefer", "respond-async"));
+			assertEquals(202, accepted.status(), accepted.body());
+			String monitorPath = accepted.headers().get("Location").substring("/odata".length());
+
+			Response pending = get(monitorPath, Map.of());
+			assertEquals(202, pending.status(),
+					"the accepting thread returned before the backend — the monitor must report "
+							+ "a still-running execution");
+			assertTrue(pending.headers().get("Location").contains("/$async/"),
+					"a pending monitor re-announces itself via Location");
+			assertEquals(202, get(monitorPath, Map.of()).status(),
+					"polling a pending monitor does not consume it");
+
+			gate.countDown();
+			Response result = awaitMonitor(monitorPath);
+			assertEquals(200, result.status(), result.body());
+			assertTrue(result.body().contains("\"Milk\""), result.body());
+
+			// second async run: DELETE while the worker hangs in the backend aborts it
+			gate = new CountDownLatch(1);
+			backendGate.set(gate);
+			Response accepted2 = call("GET", "/Product", Map.of(), null, null,
+					Map.of("Prefer", "respond-async"));
+			String monitorPath2 = accepted2.headers().get("Location").substring("/odata".length());
+			assertEquals(202, get(monitorPath2, Map.of()).status());
+			assertEquals(204, callWrite("DELETE", monitorPath2, "", "application/json").status());
+			assertEquals(404, get(monitorPath2, Map.of()).status(),
+					"a cancelled monitor is gone");
+		} finally {
+			backendGate.set(null);
+			gate.countDown(); // never leave a worker parked on the gate
+		}
+	}
+
+	/** Polls a status monitor until the background execution delivered (or fails the test). */
+	private Response awaitMonitor(String monitorPath) throws Exception {
+		for (int attempt = 0; attempt < 500; attempt++) {
+			Response response = get(monitorPath, Map.of());
+			if (response.status() != 202) {
+				return response;
+			}
+			Thread.sleep(10);
+		}
+		throw new AssertionError("async execution never completed: " + monitorPath);
 	}
 
 	@Test

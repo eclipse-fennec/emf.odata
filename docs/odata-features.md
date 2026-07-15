@@ -156,6 +156,15 @@ body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
 - Not covered: nested `nav@delta` on the wire (full representations are emitted instead),
   4.0 flattened delta payloads.
 
+### Asynchronous requests ([OData-Protocol] 11.6)
+`Prefer: respond-async` on a GET hands the execution to a background worker (one Java 21
+virtual thread per request, plain `Future` semantics) and answers **202** immediately with the
+status-monitor URL in `Location`. Polling the monitor returns **202** while the execution runs,
+then delivers the result **exactly once** as an `application/http` message (after that: 404).
+`DELETE` on the monitor cancels: a still-running worker is interrupted (best effort), the result
+is discarded. Monitors live in a bounded LRU (100) — aged-out entries are cancelled. The worker
+operates on a detached request snapshot, so container request/response recycling cannot reach it.
+
 ### Backends (behind the persistence SPIs)
 - **In-memory** (reference semantics): the `OclEvaluator` interprets the IR directly (three-valued
   null logic, lambdas, cast, `$count`, typed literals); errors are never silent (type/format errors
@@ -170,9 +179,8 @@ body), **bound functions** (`GET Set(key)/Ns.Func(p=…)`) and **bound actions**
 
 ### Conformance (see `odata-conformance-status.md`)
 **All four levels hold: 4.0 and 4.01, Minimal through ADVANCED** (clause re-audit 2026-07-14;
-`$metadata` advertises `ConformanceLevel=Advanced`). Remaining SHOULDs/MAYs: async,
-`$crossjoin`/`$all` engines, `$orderby`/`$top`/`$skip`/`$count`/`$search`/`$levels` inside
-`$expand`/`$select`, nested parameter aliases.
+`$metadata` advertises `ConformanceLevel=Advanced`). Remaining SHOULDs/MAYs: the
+`$crossjoin`/`$all` engines (parse → 501).
 
 ### Security defaults (PID `org.eclipse.fennec.odata.servlet`)
 Pre-parse limits (`$top` ceiling `odata.max.top`=1000, expression length
@@ -274,8 +282,7 @@ origin is refused. `ODataClient` is `AutoCloseable` and closes only an `HttpClie
 ## Known gaps / not yet
 
 **Server:** every conformance clause short of the `$crossjoin`/`$all` engines (the single
-remaining spec SHOULD; they parse and refuse honestly). **Async** is delivery-async: execution
-completes inline, the result parks behind a one-shot `application/http` status monitor.
+remaining spec SHOULD; they parse and refuse honestly).
 **Delta**: no nested `nav@delta` wire form (full expanded representations instead), no 4.0
 flattened delta payloads. Plus: a few 4.01 Intermediate SHOULDs (query options on nav paths);
 the `ODataRequestFilter` refactor (req §5.1.1).

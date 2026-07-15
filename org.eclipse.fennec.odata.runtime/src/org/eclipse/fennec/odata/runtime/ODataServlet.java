@@ -32,7 +32,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.HexFormat;
 import java.util.Locale;
+import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 import java.security.MessageDigest;
@@ -112,6 +118,7 @@ import org.open.oasis.docs.odata.ns.edmx.TEdmx;
 import org.open.oasis.docs.odata.ns.edmx.TVersion;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
@@ -197,6 +204,15 @@ public class ODataServlet extends HttpServlet {
 		limits = RequestLimits.fromConfiguration(configuration);
 		Object origin = configuration.get("odata.cors.origin");
 		corsOrigin = origin == null ? "" : String.valueOf(origin).trim();
+	}
+
+	@Deactivate
+	void deactivate() {
+		asyncExecutor.shutdownNow();
+		synchronized (asyncResults) {
+			asyncResults.values().forEach(execution -> execution.cancel(true));
+			asyncResults.clear();
+		}
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
@@ -417,7 +433,7 @@ public class ODataServlet extends HttpServlet {
 			} else if ("/$metadata".equals(path)) {
 				metadataDocument(request, response);
 			} else if (path.startsWith("/$async/")) {
-				asyncMonitor(path.substring("/$async/".length()), response); // status monitor (11.6)
+				asyncMonitor(path.substring("/$async/".length()), request, response); // 11.6
 			} else {
 				resource(path.substring(1), request, response);
 			}
@@ -896,20 +912,74 @@ public class ODataServlet extends HttpServlet {
 		private final String queryString;
 		private final Map<String, String[]> parameters;
 		private final Map<String, String> headers; // keys lower-cased
+		private final String requestURI; // captured for detached use; null → derive from wrapper
 		private final byte[] body;
 
 		BatchHttpRequest(HttpServletRequest outer, String method, String url,
 				Map<String, String> headers, byte[] body) {
+			this(outer, method, pathOf(url), queryOf(url), parseQuery(queryOf(url)), headers,
+					null, body);
+		}
+
+		private BatchHttpRequest(HttpServletRequest outer, String method, String pathInfo,
+				String queryString, Map<String, String[]> parameters, Map<String, String> headers,
+				String requestURI, byte[] body) {
 			super(outer);
 			this.method = method;
-			this.body = body;
+			this.pathInfo = pathInfo;
+			this.queryString = queryString;
+			this.parameters = parameters;
 			this.headers = new LinkedHashMap<>();
 			headers.forEach((k, v) -> this.headers.put(k.toLowerCase(Locale.ROOT), v));
+			this.requestURI = requestURI;
+			this.body = body;
+		}
+
+		/**
+		 * Detached copy of a live container request for background execution (respond-async):
+		 * everything the read pipeline touches is captured NOW, on the container thread — the
+		 * container recycles the original object once the accepting call returns.
+		 */
+		static BatchHttpRequest asyncSnapshot(HttpServletRequest outer) {
+			Map<String, String[]> parameters = new LinkedHashMap<>();
+			Map<String, String[]> outerParameters = outer.getParameterMap();
+			if (outerParameters != null) {
+				outerParameters.forEach((name, values) -> parameters.put(name, values.clone()));
+			}
+			Map<String, String> headers = new LinkedHashMap<>();
+			Enumeration<String> names = outer.getHeaderNames();
+			if (names != null) {
+				while (names.hasMoreElements()) {
+					String name = names.nextElement();
+					String value = outer.getHeader(name);
+					if (value != null) {
+						headers.put(name, value);
+					}
+				}
+			}
+			// getHeaderNames() may legally be null (a container may deny header enumeration) —
+			// the negotiation headers the read pipeline consumes are captured explicitly
+			for (String name : List.of("Accept", "OData-MaxVersion", "Prefer")) {
+				String value = outer.getHeader(name);
+				if (value != null) {
+					headers.putIfAbsent(name, value);
+				}
+			}
+			return new BatchHttpRequest(outer, outer.getMethod(), outer.getPathInfo(),
+					outer.getQueryString(), parameters, headers, outer.getRequestURI(),
+					new byte[0]);
+		}
+
+		private static String pathOf(String url) {
 			String relative = url.startsWith("/") ? url : "/" + url;
 			int q = relative.indexOf('?');
-			this.pathInfo = q < 0 ? relative : relative.substring(0, q);
-			this.queryString = q < 0 ? null : relative.substring(q + 1);
-			this.parameters = parseQuery(this.queryString);
+			return q < 0 ? relative : relative.substring(0, q);
+		}
+
+		private static String queryOf(String url) {
+			String relative = url.startsWith("/") ? url : "/" + url;
+			int q = relative.indexOf('?');
+			return q < 0 ? null : relative.substring(q + 1);
 		}
 
 		private static Map<String, String[]> parseQuery(String query) {
@@ -950,6 +1020,9 @@ public class ODataServlet extends HttpServlet {
 
 		@Override
 		public String getRequestURI() {
+			if (requestURI != null) {
+				return requestURI; // detached snapshot — never touch the recycled delegate
+			}
 			String context = getContextPath() == null ? "" : getContextPath();
 			String servlet = getServletPath() == null ? "" : getServletPath();
 			return context + servlet + pathInfo;
@@ -1054,14 +1127,25 @@ public class ODataServlet extends HttpServlet {
 	private record AsyncResult(int status, Map<String, String> headers, byte[] body) {
 	}
 
-	/** Parked async results, bounded LRU — unclaimed monitors age out. */
-	private final Map<String, AsyncResult> asyncResults =
+	/**
+	 * One virtual thread per async request (Java 21): the worker mostly waits on the backend, so
+	 * threads are cheap and no pool sizing is needed. Daemon by nature — a forgotten shutdown
+	 * never blocks the framework.
+	 */
+	private final ExecutorService asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
+	/** Running and parked async executions, bounded LRU — unclaimed monitors age out (cancelled). */
+	private final Map<String, Future<AsyncResult>> asyncResults =
 			Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
 				private static final long serialVersionUID = 1L;
 
 				@Override
-				protected boolean removeEldestEntry(Map.Entry<String, AsyncResult> eldest) {
-					return size() > 100;
+				protected boolean removeEldestEntry(Map.Entry<String, Future<AsyncResult>> eldest) {
+					if (size() > 100) {
+						eldest.getValue().cancel(true);
+						return true;
+					}
+					return false;
 				}
 			});
 
@@ -1080,32 +1164,89 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/**
-	 * Runs the GET to completion against a capturing response, parks the result behind a fresh
-	 * status monitor and answers {@code 202 Accepted} — spec-conform: {@code respond-async}
-	 * governs the DELIVERY, not the execution ([OData-Protocol] 11.6).
+	 * Hands the GET to a virtual-thread worker and answers {@code 202 Accepted} immediately —
+	 * the status monitor reports 202 while the execution runs and delivers the result once done
+	 * ([OData-Protocol] 11.6). The worker gets a request SNAPSHOT: the container recycles the
+	 * original request/response objects when this method returns, so the background thread must
+	 * never touch them.
 	 */
-	private void respondAsync(HttpServletRequest request, HttpServletResponse response)
-			throws jakarta.servlet.ServletException, IOException {
+	private void respondAsync(HttpServletRequest request, HttpServletResponse response) {
+		BatchHttpRequest snapshot = BatchHttpRequest.asyncSnapshot(request);
 		BatchHttpResponse captured = new BatchHttpResponse(response);
-		super.service(request, captured);
-		captured.flushBufferQuietly();
-		String id = java.util.UUID.randomUUID().toString();
-		asyncResults.put(id, new AsyncResult(captured.status(),
-				new LinkedHashMap<>(captured.headers()), captured.body()));
+		String metadataLevel = METADATA_LEVEL.get();
+		Boolean ieee754 = IEEE754.get();
+		String id = UUID.randomUUID().toString();
+		asyncResults.put(id, asyncExecutor.submit(
+				() -> executeAsync(snapshot, captured, metadataLevel, ieee754)));
 		response.setStatus(HttpServletResponse.SC_ACCEPTED);
 		response.setHeader("Location", contextRoot(request) + "/$async/" + id);
 		response.setHeader("Preference-Applied", "respond-async");
 	}
 
 	/**
-	 * {@code GET /$async/<id>}: the parked response as an {@code application/http} message
-	 * ([OData-Protocol] 11.6.1); ONE-shot — the monitor is gone once the result is retrieved.
-	 * Unknown/expired monitors answer 404.
+	 * Runs one async GET on the worker thread. The request-scoped ThreadLocals travel from the
+	 * accepting container thread explicitly; failures are captured as a sanitized 500 result so
+	 * the monitor always has something to deliver.
 	 */
-	private void asyncMonitor(String id, HttpServletResponse response) throws IOException {
-		AsyncResult result = asyncResults.remove(id);
-		if (result == null) {
+	private AsyncResult executeAsync(BatchHttpRequest request, BatchHttpResponse captured,
+			String metadataLevel, Boolean ieee754) {
+		METADATA_LEVEL.set(metadataLevel);
+		IEEE754.set(ieee754);
+		try {
+			super.service(request, captured); // HttpServlet dispatch → doGet, bypasses respond-async
+			captured.flushBufferQuietly();
+			return new AsyncResult(captured.status(),
+					new LinkedHashMap<>(captured.headers()), captured.body());
+		} catch (Exception e) {
+			LOGGER.log(System.Logger.Level.ERROR,
+					() -> "unhandled failure serving async GET " + request.getRequestURI(), e);
+			return new AsyncResult(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
+					Map.of("content-type", "application/json;charset=UTF-8"),
+					ODataJson.error(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
+							"internal server error").getBytes(StandardCharsets.UTF_8));
+		} finally {
+			METADATA_LEVEL.remove();
+			IEEE754.remove();
+		}
+	}
+
+	/**
+	 * {@code GET /$async/<id>}: 202 + Location while the execution still runs; once done, the
+	 * result as an {@code application/http} message ([OData-Protocol] 11.6.1) — ONE-shot, the
+	 * monitor is gone after delivery. Unknown/expired/cancelled monitors answer 404.
+	 */
+	private void asyncMonitor(String id, HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		Future<AsyncResult> execution = asyncResults.get(id);
+		if (execution == null) {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
+			return;
+		}
+		if (!execution.isDone()) {
+			response.setStatus(HttpServletResponse.SC_ACCEPTED);
+			response.setHeader("Location", contextRoot(request) + "/$async/" + id);
+			return;
+		}
+		if (asyncResults.remove(id) == null) {
+			// a concurrent poll claimed the finished result first — one-shot stays one-shot
+			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
+			return;
+		}
+		AsyncResult result;
+		try {
+			result = execution.get();
+		} catch (CancellationException e) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
+			return;
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
+			return;
+		} catch (ExecutionException e) {
+			// executeAsync never throws — belt and braces for the unforeseen
+			LOGGER.log(System.Logger.Level.ERROR,
+					() -> "async execution failed for monitor " + id, e.getCause());
+			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
 			return;
 		}
 		response.setStatus(HttpServletResponse.SC_OK);
@@ -1207,6 +1348,17 @@ public class ODataServlet extends HttpServlet {
 		}
 
 		@Override
+		public void setContentLength(int len) {
+			// captured, never delegated — async workers must not touch the recycled response
+			headers.put("content-length", String.valueOf(len));
+		}
+
+		@Override
+		public void setContentLengthLong(long len) {
+			headers.put("content-length", String.valueOf(len));
+		}
+
+		@Override
 		public PrintWriter getWriter() {
 			if (writer == null) {
 				writer = new PrintWriter(new java.io.OutputStreamWriter(buffer, StandardCharsets.UTF_8));
@@ -1268,9 +1420,12 @@ public class ODataServlet extends HttpServlet {
 			throws IOException {
 		String rawPath = request.getPathInfo() == null ? "/" : request.getPathInfo();
 		if ("DELETE".equals(request.getMethod()) && rawPath.startsWith("/$async/")) {
-			// cancelling a not-yet-retrieved async result discards it (11.6: DELETE the monitor)
-			boolean removed = asyncResults.remove(rawPath.substring("/$async/".length())) != null;
-			if (removed) {
+			// cancelling the monitor aborts a still-running execution and discards its result
+			// (11.6: DELETE the monitor) — cancel(true) interrupts the worker, best effort
+			Future<AsyncResult> cancelled =
+					asyncResults.remove(rawPath.substring("/$async/".length()));
+			if (cancelled != null) {
+				cancelled.cancel(true);
 				response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 			} else {
 				error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");

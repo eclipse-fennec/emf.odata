@@ -632,3 +632,37 @@ Die drei offenen Delta-Pakete:
   `respond-async` als „wird-ignoriert"-Beifang → Header bereinigt.
 - **Damit ist 15 Cross-Join der EINZIGE offene Spec-SHOULD** ($crossjoin-Engine bräuchte einen
   synthetischen Tupel-EClass als Ausdruckskontext — bewusst separates Paket; parst → 501).
+
+## Thread-async: echte Hintergrund-Ausführung für respond-async (2026-07-15)
+
+- **Kür-Punkt „Thread-async" umgesetzt** (Entscheidung: plain `java.util.concurrent.Future`
+  statt OSGi-Promises/CompletableFuture — das Monitor-Muster ist POLL-basiert (`isDone()`),
+  und nur `Future.cancel(true)` unterbricht den laufenden Worker wirklich; OSGi-Promises
+  haben kein Cancel, `CompletableFuture.cancel(true)` ignoriert das Interrupt-Flag; zudem
+  keine neue Dependency): `respondAsync` submittet auf
+  `Executors.newVirtualThreadPerTaskExecutor()` (Java 21, ein Virtual Thread pro Request,
+  kein Pool-Sizing) und antwortet SOFORT 202; `asyncResults` ist jetzt
+  `Map<String, Future<AsyncResult>>` (bounded LRU 100, Eviction CANCELT).
+- **Monitor-Semantik erweitert** (11.6): läuft die Ausführung noch → 202 + Location
+  (re-announce, konsumiert NICHT); fertig → `application/http`-Delivery GENAU EINMAL
+  (claim via `remove(id)`, race-sicher bei konkurrierenden Polls); DELETE →
+  `cancel(true)` = Best-Effort-Abbruch des Workers + 204. `@Deactivate` fährt den
+  Executor runter und cancelt alles Geparkte.
+- **KERN-GOTCHA Request-Recycling**: der Container recycelt Request/Response-Objekte sobald
+  der annehmende Thread zurückkehrt — der Worker darf sie NIE anfassen. Lösung:
+  `BatchHttpRequest.asyncSnapshot(request)` kopiert ALLES was die Read-Pipeline anfasst
+  (Methode, pathInfo, queryString, ParameterMap deep, Header, requestURI) noch auf dem
+  Container-Thread; `getRequestURI()` liefert die gecapturte URI statt über
+  contextPath/servletPath des Delegates zu gehen. `getHeaderNames()` darf laut Servlet-Spec
+  null sein → die Negotiation-Header (Accept/OData-MaxVersion/Prefer) werden zusätzlich
+  explizit gecaptured. `BatchHttpResponse` bekam `setContentLength(Long)`-Overrides
+  (einziger nicht überschriebener Pipeline-Callsite — hätte ans recycelte Response delegiert).
+- **ThreadLocals reisen explizit**: `METADATA_LEVEL`/`IEEE754` werden auf dem Container-Thread
+  gelesen und im Worker gesetzt (finally remove) — `super.service()` im Worker dispatcht
+  direkt nach doGet und läuft NICHT durch das eigene service() (kein respond-async-Rekurs).
+- Tests: Unit-Test mit `CountDownLatch`-Gate im QueryService-Stub (Monitor liefert
+  deterministisch 202 solange das Backend hängt, DELETE bricht ab), Polling-Helper
+  `awaitMonitor`; itest über echtes Jetty (validiert den Snapshot gegen ECHTES Recycling —
+  Query-Optionen müssen aus der Kopie kommen). FUND dabei: `Location` ist eine relative
+  URI-Referenz (RFC 7231 §7.1.2) — `java.net.http.HttpRequest` braucht absolute, der
+  itest resolved gegen den Service-Host.

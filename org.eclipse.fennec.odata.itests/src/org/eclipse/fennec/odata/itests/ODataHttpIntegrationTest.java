@@ -242,6 +242,48 @@ public class ODataHttpIntegrationTest {
 	}
 
 	@Test
+	@Order(5)
+	@DisplayName("Prefer: respond-async over real HTTP: background execution, monitor polling, "
+			+ "one-shot delivery (11.6)")
+	void respondAsync() throws Exception {
+		// the query options exercise the request snapshot: the worker runs AFTER Jetty
+		// recycled the original request, so every value must come from the captured copy
+		HttpResponse<String> accepted = client.send(HttpRequest
+				.newBuilder(URI.create(BASE + "/Product?$filter=" + encode("price lt 3.00")
+						+ "&$count=true"))
+				.header("Prefer", "respond-async").GET().build(),
+				HttpResponse.BodyHandlers.ofString());
+		assertEquals(202, accepted.statusCode(), accepted.body());
+		assertEquals("respond-async",
+				accepted.headers().firstValue("Preference-Applied").orElse(null));
+		String location = accepted.headers().firstValue("Location").orElseThrow();
+		assertTrue(location.contains("/$async/"), location);
+		// Location is a relative reference (RFC 7231 §7.1.2) — resolve against the service host
+		URI monitor = URI.create(BASE).resolve(location);
+
+		HttpResponse<String> result = null;
+		for (int attempt = 0; attempt < 500; attempt++) {
+			result = client.send(HttpRequest.newBuilder(monitor).GET().build(),
+					HttpResponse.BodyHandlers.ofString());
+			if (result.statusCode() != 202) {
+				break;
+			}
+			Thread.sleep(10);
+		}
+		assertEquals(200, result.statusCode(), result.body());
+		assertTrue(result.headers().firstValue("Content-Type").orElse("")
+				.startsWith("application/http"), "delivery travels as application/http");
+		assertTrue(result.body().startsWith("HTTP/1.1 200 OK"), result.body());
+		assertTrue(result.body().contains("\"Milk\""), result.body());
+		assertTrue(result.body().contains("\"@odata.count\":1"),
+				"query options survived the snapshot: " + result.body());
+
+		assertEquals(404, client.send(HttpRequest.newBuilder(monitor).GET().build(),
+				HttpResponse.BodyHandlers.ofString()).statusCode(),
+				"the monitor is one-shot — gone once retrieved");
+	}
+
+	@Test
 	@Order(6)
 	@DisplayName("single entity, $select/$expand, $apply and $format=xml end-to-end")
 	void richQuerySurface() throws Exception {
