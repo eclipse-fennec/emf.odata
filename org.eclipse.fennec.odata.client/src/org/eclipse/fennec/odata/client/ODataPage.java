@@ -24,6 +24,10 @@ import org.eclipse.emf.ecore.EObject;
  */
 public record ODataPage(List<EObject> entities, long totalCount, String nextLink, String deltaLink) {
 
+	public ODataPage {
+		entities = entities == null ? List.of() : List.copyOf(entities); // defensive, immutable
+	}
+
 	/** A page without change tracking. */
 	public ODataPage(List<EObject> entities, long totalCount, String nextLink) {
 		this(entities, totalCount, nextLink, null);

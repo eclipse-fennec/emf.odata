@@ -12,6 +12,8 @@
  */
 package org.eclipse.fennec.odata.client;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.eclipse.emf.ecore.EObject;
@@ -25,6 +27,13 @@ import tools.jackson.databind.ObjectMapper;
  * to a requested Java type on demand (e.g. {@code java.math.BigDecimal}, {@code Long}, {@code String}).
  */
 public record ComputedRow(EObject entity, Map<String, Object> computed) {
+
+	public ComputedRow {
+		// defensive + immutable, but a computed aggregate CAN be null (e.g. sum over an all-null
+		// group), so a null-tolerant unmodifiable copy — not Map.copyOf, which rejects null values
+		computed = computed == null ? Map.of()
+				: Collections.unmodifiableMap(new LinkedHashMap<>(computed));
+	}
 
 	private static final ObjectMapper MAPPER = new ObjectMapper();
 
