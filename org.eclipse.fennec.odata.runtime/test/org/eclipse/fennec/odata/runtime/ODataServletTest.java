@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -1153,6 +1154,102 @@ class ODataServletTest {
 	void batchRejectsUnknownFormat() throws Exception {
 		Response res = callWrite("POST", "/$batch", "not a batch", "text/plain");
 		assertEquals(415, res.status(), res.body());
+	}
+
+	@Test
+	@DisplayName("$batch: the operation cap rejects an oversized batch with 400 (amplification-DoS guard)")
+	void batchOperationCapRejectsOversized() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		servlet.activate(Map.of("odata.max.batch.operations", "3"));
+
+		assertEquals(200, callWrite("POST", "/$batch", batchOf(3), "application/json").status(),
+				"exactly the cap is allowed");
+		Response over = callWrite("POST", "/$batch", batchOf(4), "application/json");
+		assertEquals(400, over.status(), over.body());
+		assertFalse(over.body().contains("Exception"), over.body());
+	}
+
+	@Test
+	@DisplayName("$batch: a non-positive cap disables the guard (documented foot-gun)")
+	void batchOperationCapDisabled() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		servlet.activate(Map.of("odata.max.batch.operations", "0"));
+		assertEquals(200, callWrite("POST", "/$batch", batchOf(25), "application/json").status(),
+				"cap <= 0 means unbounded — the guard is intentionally off");
+	}
+
+	@Test
+	@DisplayName("$batch: an orchestration failure answers a sanitized 500 and rolls back the group")
+	void batchOrchestrationFailureIsSanitized() throws Exception {
+		AtomicBoolean begun = new AtomicBoolean(false);
+		AtomicBoolean rolledBack = new AtomicBoolean(false);
+		// a transactional write service whose commit() blows up during finalizeGroup — it supports
+		// no type (the real create routes to the setUp service), it only exercises the group lifecycle
+		servlet.addWriteService(new WriteService() {
+			@Override
+			public boolean supports(EClass entityType) {
+				return false; // the real create routes to the setUp service; this only runs the group
+			}
+
+			@Override
+			public EObject create(EClass entityType, EObject entity) {
+				throw new UnsupportedOperationException();
+			}
+
+			@Override
+			public WriteResult update(EClass entityType, String rawKey, EObject payload, boolean replace) {
+				throw new UnsupportedOperationException();
+			}
+
+			@Override
+			public boolean delete(EClass entityType, String rawKey) {
+				throw new UnsupportedOperationException();
+			}
+
+			@Override
+			public boolean transactional() {
+				return true;
+			}
+
+			@Override
+			public void begin() {
+				begun.set(true);
+			}
+
+			@Override
+			public void commit() {
+				throw new IllegalStateException("commit boom: sensitive internal detail");
+			}
+
+			@Override
+			public void rollback() {
+				rolledBack.set(true);
+			}
+		});
+
+		String batch = """
+				{"requests":[
+				  {"id":"w1","atomicityGroup":"g1","method":"POST","url":"Product",
+				   "headers":{"Content-Type":"application/json"},
+				   "body":{"id":"x","name":"Y","price":1.0}}
+				]}""";
+		Response res = callWrite("POST", "/$batch", batch, "application/json");
+
+		assertEquals(500, res.status(), res.body());
+		assertTrue(begun.get(), "the transactional group was begun");
+		assertTrue(rolledBack.get(), "the half-open group was rolled back after the failure");
+		assertFalse(res.body().contains("commit boom"), "internal detail must not leak: " + res.body());
+		assertFalse(res.body().contains("IllegalStateException"), res.body());
+	}
+
+	/** A JSON batch envelope with {@code n} independent GET sub-requests. */
+	private static String batchOf(int n) {
+		StringBuilder sb = new StringBuilder("{\"requests\":[");
+		for (int i = 0; i < n; i++) {
+			sb.append(i == 0 ? "" : ",")
+					.append("{\"id\":\"r").append(i).append("\",\"method\":\"GET\",\"url\":\"Product\"}");
+		}
+		return sb.append("]}").toString();
 	}
 
 	@Test

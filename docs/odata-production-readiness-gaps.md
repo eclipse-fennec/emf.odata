@@ -61,10 +61,11 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
   ein geleaktes ambientes TX sicher (rollback+close+WARN) bevor es ein frisches öffnet;
   Teil-Fehler in `begin()` schließt bereits geöffnete EMs (`discard()`). Servlet-`finally`-Garantie
   folgt in T0.5. Tests: `JpaTransactionRobustnessTest` (3). FQN-Bereinigung dieser Datei mit erledigt.
-- [ ] **T0.3 [Datenverlust/Concurrency] `MemoryWriteRepository`** — (a) `rollback()` darf keine
-  fremden Commits zerstören (per-TX Undo statt Whole-Store-Restore) inkl. `media`; (b)
-  `entities()`/`changesSince()` geben defensive Kopien heraus (kein Live-Objekt-Leak). Tests:
-  paralleler Commit während Rollback, paralleler Read während Mutation (CME-frei).
+- [x] **T0.3 [Datenverlust/Concurrency] `MemoryWriteRepository`** — ✅ per-TX Undo-Log
+  (Lazy-Capture beim ersten Touch, nur berührte Keys zurückgerollt, Media inklusive; ersetzt
+  Whole-Store-Snapshot → behebt auch T2.14 Perf); `entities()`/`changesSince()` liefern defensive
+  Kopien UNTER dem Klassen-Lock (CME-sicher). Tests: 3 neue (fremder Commit überlebt Rollback,
+  kein CME bei parallelem Read/Mutation, Media-Rollback). **Zugleich T2.14 erledigt.**
 - [ ] **T0.4 [Security/DoS] `$batch` Sub-Request-/Tiefen-Cap** — `odata.max.batch.operations` +
   `odata.max.batch.depth`, Überschreitung → 400. Tests: Überschreitung → 400, Grenzwert ok,
   Falschwerte (negativ/0) dokumentiert getestet.
@@ -104,7 +105,7 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - [ ] **T2.11 [E2E] Concurrency-/Last-Test über HTTP** — paralleler HttpClient-Fan-out inkl. konkurrierender Writes.
 - [ ] **T2.12 [E2E] Große-Payload-/Tiefpaging-Test** — >1000 Rows, mehrseitiger nextLink über HTTP.
 - [ ] **T2.13 [Beispiele] README-Widerspruch** — read-only vs. POST 201 auflösen.
-- [ ] **T2.14 [Performance] `MemoryWriteRepository.begin()`** — nur berührte Entitäten kopieren (per-TX Undo-Log; fällt ggf. mit T0.3 zusammen).
+- [x] **T2.14 [Performance] `MemoryWriteRepository.begin()`** — ✅ mit T0.3 erledigt (Lazy-Capture statt Whole-Store-Kopie).
 
 ## Tier 3 — Niedrig / Politur
 

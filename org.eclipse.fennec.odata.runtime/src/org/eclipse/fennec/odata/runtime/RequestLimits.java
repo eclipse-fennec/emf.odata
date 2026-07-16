@@ -26,18 +26,28 @@ import org.eclipse.fennec.odata.query.ODataQueryParseException;
  * @param maxExpressionLength maximum length of any expression query option
  * @param maxNestingDepth     maximum parenthesis nesting (parser-bomb guard)
  * @param maxBodyBytes        maximum accepted request-body size for writes
+ * @param maxBatchOperations  maximum number of sub-requests in a single {@code $batch}
+ *                            ({@code <= 0} disables the cap — an unbounded-amplification foot-gun)
  */
 public record RequestLimits(int maxTop, int maxExpressionLength, int maxNestingDepth,
-		int maxBodyBytes) {
+		int maxBodyBytes, int maxBatchOperations) {
 
-	public static final RequestLimits DEFAULTS = new RequestLimits(1000, 4096, 64, 1_048_576);
+	public static final RequestLimits DEFAULTS =
+			new RequestLimits(1000, 4096, 64, 1_048_576, 100);
 
 	/** Limits without a body cap change (compatibility for read-only setups). */
 	public RequestLimits(int maxTop, int maxExpressionLength, int maxNestingDepth) {
-		this(maxTop, maxExpressionLength, maxNestingDepth, DEFAULTS_BODY_BYTES);
+		this(maxTop, maxExpressionLength, maxNestingDepth, DEFAULTS_BODY_BYTES,
+				DEFAULTS_BATCH_OPERATIONS);
+	}
+
+	/** Limits with a body cap but the default batch-operation cap (compatibility). */
+	public RequestLimits(int maxTop, int maxExpressionLength, int maxNestingDepth, int maxBodyBytes) {
+		this(maxTop, maxExpressionLength, maxNestingDepth, maxBodyBytes, DEFAULTS_BATCH_OPERATIONS);
 	}
 
 	private static final int DEFAULTS_BODY_BYTES = 1_048_576;
+	private static final int DEFAULTS_BATCH_OPERATIONS = 100;
 
 	/** Reads limits from component configuration, falling back to {@link #DEFAULTS}. */
 	public static RequestLimits fromConfiguration(Map<String, Object> configuration) {
@@ -45,7 +55,8 @@ public record RequestLimits(int maxTop, int maxExpressionLength, int maxNestingD
 				intValue(configuration, "odata.max.top", DEFAULTS.maxTop()),
 				intValue(configuration, "odata.max.expression.length", DEFAULTS.maxExpressionLength()),
 				intValue(configuration, "odata.max.nesting.depth", DEFAULTS.maxNestingDepth()),
-				intValue(configuration, "odata.max.body.size", DEFAULTS.maxBodyBytes()));
+				intValue(configuration, "odata.max.body.size", DEFAULTS.maxBodyBytes()),
+				intValue(configuration, "odata.max.batch.operations", DEFAULTS.maxBatchOperations()));
 	}
 
 	private static int intValue(Map<String, Object> configuration, String key, int fallback) {
