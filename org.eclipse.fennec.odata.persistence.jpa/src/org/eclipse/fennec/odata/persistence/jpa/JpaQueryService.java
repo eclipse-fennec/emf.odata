@@ -376,7 +376,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 					"no persistence unit for entity type " + query.entityType().getName());
 		}
 		try (EntityManager em = factory.createEntityManager()) {
-			return applyExecutor.execute(query, em, entityType(factory, query.entityType()));
+			return applyExecutor.execute(query, em, entityType(factory, query.entityType()), maxPageSize);
 		}
 	}
 

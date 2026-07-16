@@ -224,6 +224,19 @@ class JpaQueryServiceTest extends JpaWebshopTestBase {
 	}
 
 	@Test
+	@DisplayName("$apply page cap: an unpaged groupby is bounded by odata.jpa.max.page.size (DoS guard)")
+	void applyPageCapBoundsUnpagedGroupby() {
+		service.activate(Map.<String, Object>of("odata.jpa.max.page.size", "2"));
+		// the base fixture groups into Dairy, Bakery and the null-category group = 3 groups
+		var pipeline = parser.parseApply(
+				"groupby((category/name),aggregate($count as Cnt))", productClass);
+		List<Map<String, Object>> rows = service.executeApply(
+				new ApplyQuery(productClass, pipeline, null, List.of(), 0, -1, false)).rows();
+		assertEquals(2, rows.size(),
+				"the unpaged groupby (3 groups) must be capped at the configured page size of 2");
+	}
+
+	@Test
 	@DisplayName("no silent fallback: pipelines without a pushdown raise (→ 501)")
 	void unsupportedConstructs() {
 		ApplyPipeline empty = ApplyFactory.eINSTANCE.createApplyPipeline();
