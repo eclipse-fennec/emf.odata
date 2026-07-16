@@ -87,6 +87,9 @@ final class CsdlMetadataReader {
 					options);
 		} catch (IOException e) {
 			throw new ODataClientException("the service's $metadata is not parseable CSDL XML", e);
+		} catch (StackOverflowError deep) {
+			// a pathologically deep (but size-bounded) hostile document must not crash the thread
+			throw new ODataClientException("the service's $metadata is too deeply nested", deep);
 		}
 		if (resource.getContents().isEmpty()) {
 			throw new ODataClientException("the service's $metadata document is empty");

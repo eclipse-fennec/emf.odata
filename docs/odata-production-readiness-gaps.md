@@ -35,9 +35,9 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 | `odata.max.nesting.depth` | servlet | 64 | max. Klammer-Tiefe (Parser-Bomb-Guard) | unbegrenzt |
 | `odata.max.body.size` | servlet | 1 MiB | max. Write-Body | unbegrenzt |
 | `odata.max.batch.operations` | servlet | **✅ 100** | max. Sub-Requests je $batch (beide Wire-Formen) | unbegrenzt (Foot-gun) |
-| `odata.max.async.inflight` | servlet | **NEU 16** | max. gleichzeitig laufende respond-async-Ausführungen | unbegrenzt (Foot-gun) |
-| `odata.max.async.monitors` | servlet | **NEU 100** | max. geparkte async-Status-Monitore (LRU) | unbegrenzt |
-| `odata.jpa.max.page.size` | persistence.jpa | 1000 | server-driven Page-Cap (Lesepfad UND $apply) | unbegrenzt |
+| `odata.max.async.inflight` | servlet | **✅ 16** | max. gleichzeitig laufende respond-async-Ausführungen (sonst 503+Retry-After) | unbegrenzt (Foot-gun) |
+| `odata.max.async.monitors` | servlet | **✅ 100** | max. geparkte async-Status-Monitore (LRU) | unbegrenzt |
+| `odata.jpa.max.page.size` | persistence.jpa | ✅ 1000 | server-driven Page-Cap (Lesepfad UND $apply) | unbegrenzt |
 | `odata.max.metadata.size` | (csdl load) | **NEU 16 MiB** | max. Größe eines CSDL/EDMX-XML beim Laden | — |
 
 (NEU = in diesem Härtungslauf hinzuzufügen.)
@@ -81,11 +81,11 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - [ ] **T1.1 [Security/DoS] CSDL-XML Tiefe/Größe** — bounded Read + JAXP-Secure-Limits
   (Entity-Expansion/Element-Tiefe) im `secureOptions()`-Pfad; `odata.max.metadata.size`. Tests:
   überngroßes/tief verschachteltes fremdes $metadata → sauberer Fehler statt OOM/SOF (Client + Vokabular-Load).
-- [ ] **T1.2 [Security/DoS] respond-async In-Flight-Cap** — `odata.max.async.inflight` (Semaphore),
-  Überschreitung → 503/429 mit Retry-After; `odata.max.async.monitors` konfigurierbar. Tests:
-  Überschreitung → 503, Freigabe nach Completion.
-- [ ] **T1.3 [Security/DoS] `$apply` Page-Cap** — JpaApplyExecutor honoriert `odata.jpa.max.page.size`
-  wie der Lesepfad. Test: groupby ohne $top über hochkardinale Property → gedeckelt.
+- [x] **T1.2 [Security/DoS] respond-async In-Flight-Cap** — ✅ Semaphore (`odata.max.async.inflight`,
+  Default 16, `<=0`=aus) → 503+Retry-After; Monitor-LRU konfigurierbar (`odata.max.async.monitors`).
+  Foot-gun dokumentiert (monitors ≥ inflight). Tests: 503-Cap + Foot-gun-`0`.
+- [x] **T1.3 [Security/DoS] `$apply` Page-Cap** — ✅ `JpaApplyExecutor` honoriert `odata.jpa.max.page.size`.
+  Test: groupby ohne $top (3 Gruppen, Cap 2) → gedeckelt.
 - [ ] **T1.4 [Beispiele] lauffähiges JPA-Beispiel** — `example-jpa.bndrun` + Komponente
   (H2 + PersistenceUnit + .eorm), beantwortet dieselben README-curls; README erweitern.
 
