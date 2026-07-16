@@ -89,7 +89,7 @@ class JpaApplyExecutor {
 		}
 	}
 
-	ApplyResult execute(ApplyQuery query, EntityManager em, EntityType<?> entity) {
+	ApplyResult execute(ApplyQuery query, EntityManager em, EntityType<?> entity, int maxPageSize) {
 		Stages stages = split(query);
 		CriteriaBuilder cb = em.getCriteriaBuilder();
 
@@ -114,6 +114,10 @@ class JpaApplyExecutor {
 		}
 		if (query.top() >= 0) {
 			typedQuery.setMaxResults(query.top());
+		} else if (maxPageSize > 0) {
+			// server-driven safety net (same as the read path): a groupby over a high-cardinality
+			// property with no $top would otherwise materialize one row per group into the heap
+			typedQuery.setMaxResults(maxPageSize);
 		}
 		List<Map<String, Object>> rows = new ArrayList<>();
 		for (Tuple tuple : typedQuery.getResultList()) {
