@@ -600,32 +600,58 @@ public class ODataServlet extends HttpServlet {
 			}
 		}
 
+		// DoS guard: bound the number of sub-requests BEFORE executing any of them — a 1 MiB body
+		// can still carry thousands of tiny operations, each a full query/write on this one thread
+		// ([OData-Protocol] 11.7). Configurable (odata.max.batch.operations); <= 0 disables the cap.
+		if (limits.maxBatchOperations() > 0 && requests.size() > limits.maxBatchOperations()) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "the batch carries more than the "
+					+ "maximum of " + limits.maxBatchOperations() + " operations");
+			return;
+		}
+
 		ArrayNode responses = JSON.createArrayNode();
 		Map<String, Integer> statusById = new HashMap<>();
 		Set<String> failedIds = new HashSet<>();
 		String currentGroup = null;
 		List<ObjectNode> groupBuffer = new ArrayList<>();
 		boolean groupFailed = false;
-		for (JsonNode sub : requests) {
-			String group = sub.path("atomicityGroup").asString(null);
-			if (!java.util.Objects.equals(group, currentGroup)) {
-				finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
-				groupBuffer = new ArrayList<>();
-				groupFailed = false;
-				currentGroup = group;
-				if (group != null) {
-					transactionalWriteServices().forEach(WriteService::begin);
+		boolean groupOpen = false; // a transactional atomicity group is begun but not yet finalized
+		try {
+			for (JsonNode sub : requests) {
+				String group = sub.path("atomicityGroup").asString(null);
+				if (!java.util.Objects.equals(group, currentGroup)) {
+					finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
+					groupOpen = false;
+					groupBuffer = new ArrayList<>();
+					groupFailed = false;
+					currentGroup = group;
+					if (group != null) {
+						transactionalWriteServices().forEach(WriteService::begin);
+						groupOpen = true;
+					}
+				}
+				ObjectNode result = executeBatchRequest(request, response, sub, statusById, failedIds);
+				if (group == null) {
+					responses.add(result);
+				} else {
+					groupBuffer.add(result);
+					groupFailed |= result.path("status").asInt(200) >= 400;
 				}
 			}
-			ObjectNode result = executeBatchRequest(request, response, sub, statusById, failedIds);
-			if (group == null) {
-				responses.add(result);
-			} else {
-				groupBuffer.add(result);
-				groupFailed |= result.path("status").asInt(200) >= 400;
+			finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
+			groupOpen = false;
+		} catch (Exception e) {
+			// batch orchestration (commit/rollback, JSON handling) must honour the same sanitized-500
+			// contract as every other path — a raw stack trace must never reach the container error
+			// page. Any half-open atomicity-group transaction is rolled back so nothing leaks/commits.
+			if (groupOpen) {
+				rollbackQuietly();
 			}
+			LOGGER.log(System.Logger.Level.ERROR,
+					() -> "unhandled failure serving $batch " + request.getRequestURI(), e);
+			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
+			return;
 		}
-		finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
 
 		if (multipart) {
 			writeMultipartBatchResponse(requests, responses, response);
@@ -636,6 +662,18 @@ public class ODataServlet extends HttpServlet {
 		ObjectNode envelope = JSON.createObjectNode();
 		envelope.set("responses", responses);
 		response.getWriter().write(JSON.writeValueAsString(envelope));
+	}
+
+	/** Best-effort rollback of every transactional write service (guards a half-open batch group). */
+	private void rollbackQuietly() {
+		for (WriteService writeService : transactionalWriteServices()) {
+			try {
+				writeService.rollback();
+			} catch (RuntimeException secondary) {
+				LOGGER.log(System.Logger.Level.WARNING,
+						() -> "rollback of a failed $batch group also failed", secondary);
+			}
+		}
 	}
 
 	/** The boundary parameter of a multipart content type, unquoted; null when absent. */
