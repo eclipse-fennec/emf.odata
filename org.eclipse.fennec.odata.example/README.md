@@ -61,6 +61,23 @@ Konfiguration (z.B. via Felix Configurator oder ConfigAdmin):
 ```
 
 Die Security-Limits des Servlets (Default: `$top`-Ceiling 1000, Expression-Länge 4096,
-Klammer-Tiefe 64) sind über die PID `org.eclipse.fennec.odata.servlet` konfigurierbar
-(`odata.max.top`, `odata.max.expression.length`, `odata.max.nesting.depth`).
-Details: `docs/odata-architecture.md` im Workspace-Root-Repo.
+Klammer-Tiefe 64, `$batch`-Operationen 100, async-In-Flight 16) sind über die PID
+`org.eclipse.fennec.odata.servlet` konfigurierbar (`odata.max.top`,
+`odata.max.expression.length`, `odata.max.nesting.depth`, `odata.max.batch.operations`,
+`odata.max.async.inflight`); ein Wert `<= 0` schaltet die jeweilige Schranke ab (Foot-gun).
+Details: `docs/odata-architecture.md` und `docs/odata-production-readiness-gaps.md`.
+
+## Gegen das JPA-Backend (H2) fahren
+
+`example.bndrun` nutzt das In-Memory-Backend. Für das Produktions-Backend (JPA/H2) gibt es
+`example-jpa.bndrun`: es zieht den JPA-Stack (EclipseLink + H2 + DataSource) hinzu und resolved
+per `-resolve: auto` beim Start (Eclipse „Run" oder `bnd run example-jpa.bndrun`). Es braucht
+zwei ConfigurationAdmin-Konfigurationen (H2-DataSource + `fennec.jpa.PersistenceUnit`) — die genaue,
+end-to-end **verifizierte** Verdrahtung steht in
+`org.eclipse.fennec.odata.itests/JpaWiringIntegrationTest` (Kommentar am Kopf der `example-jpa.bndrun`
+listet die PIDs/Properties). Sobald die `EntityManagerFactory` erscheint, bindet `JpaQueryService`
+sie und dieselben curl-Beispiele oben werden aus H2 beantwortet (voller SQL-Pushdown für
+`$filter`/`$orderby`/`$apply`).
+
+> Hinweis: `example-jpa.bndrun` ist ein vorbereitetes Start-Scaffold — beim ersten Start per
+> `bnd run`/Eclipse verifizieren. Der JPA-über-HTTP-Pfad selbst ist durch den itest bewiesen.
