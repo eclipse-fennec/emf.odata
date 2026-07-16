@@ -33,10 +33,17 @@ curl 'http://localhost:8080/odata/Product?$apply=groupby((category/name),aggrega
 # XML statt JSON (EMF-XMI — OData-Atom ist seit 4.01 deprecated)
 curl 'http://localhost:8080/odata/Product?$format=xml'
 
+# Schreiben (das in-memory-Backend ist ein WriteService): anlegen, ändern, löschen
+curl -X POST 'http://localhost:8080/odata/Product' -H 'Content-Type: application/json' \
+     -d '{"id":"p99","name":"New Product","price":9.99}'          # 201 Created
+curl -X PATCH "http://localhost:8080/odata/Product('p99')" -H 'Content-Type: application/json' \
+     -d '{"price":7.99}'                                          # 204 No Content
+curl -X DELETE "http://localhost:8080/odata/Product('p99')"       # 204 No Content
+
 # Fehlerverhalten (Security): Injection-Versuche und Bomben sterben mit 400
 curl 'http://localhost:8080/odata/Product?$filter=name%20eq%20%27a%27%20or%201=1%20--'
-curl 'http://localhost:8080/odata/NoSuchSet'   # 404
-curl -X POST 'http://localhost:8080/odata/Product'   # 405, read-only
+curl 'http://localhost:8080/odata/NoSuchSet'                      # 404
+curl -X POST 'http://localhost:8080/odata/Product' -H 'Content-Type: text/plain' -d 'x'  # 415
 ```
 
 ## Daten aus Dateien statt aus dem Code
