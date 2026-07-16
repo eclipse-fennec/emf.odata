@@ -398,9 +398,13 @@ public final class EntitySetRequest {
 	}
 
 	private static String literal(Object value) {
-		return value instanceof CharSequence text
-				? "'" + text.toString().replace("'", "''") + "'"
-				: String.valueOf(value);
+		if (!(value instanceof CharSequence text)) {
+			return String.valueOf(value);
+		}
+		// OData string literal, then percent-encode the content for the URL path (a raw space or
+		// reserved char would break URI resolution); the delimiting quotes stay literal
+		String escaped = text.toString().replace("'", "''");
+		return "'" + URLEncoder.encode(escaped, StandardCharsets.UTF_8).replace("+", "%20") + "'";
 	}
 
 	private EClass referenceTarget(String navigation) {
@@ -670,7 +674,10 @@ public final class EntitySetRequest {
 	}
 
 	private void reference(String method, String path, String targetEditUrl) {
-		String body = "{\"@odata.id\":\"" + targetEditUrl + "\"}";
+		// escape the target URL (it can carry a key with a quote/backslash) so the body stays
+		// well-formed JSON — the same escaping updateCollection() applies to @id values
+		String escaped = targetEditUrl.replace("\\", "\\\\").replace("\"", "\\\"");
+		String body = "{\"@odata.id\":\"" + escaped + "\"}";
 		ODataClient.Response response = client.exchange(method, path, JSON, body, JSON, Map.of());
 		if (response.status() != 204 && response.status() / 100 != 2) {
 			throw failure(method + " " + path, response);

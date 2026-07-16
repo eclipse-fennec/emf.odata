@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.CookieManager;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
@@ -64,9 +65,10 @@ public final class ODataClient implements AutoCloseable {
 	/**
 	 * Inbound-size cap: a foreign service without server-driven paging (or a hostile one) must not
 	 * OOM the client by streaming an unbounded body. Seeded from {@link ODataClientConfig}; kept
-	 * mutable (package-private) so tests can lower it before a specific request.
+	 * mutable (package-private) so tests can lower it before a specific request — {@code volatile}
+	 * so that change is safely visible to concurrent request threads.
 	 */
-	long maxResponseBytes;
+	volatile long maxResponseBytes;
 
 	/** Cached CSRF token (SAP handshake); {@code null} until fetched, cleared on a 403 Required. */
 	private final java.util.concurrent.atomic.AtomicReference<String> csrfToken =
@@ -107,6 +109,13 @@ public final class ODataClient implements AutoCloseable {
 		return connect(serviceRoot, http, null, true, config);
 	}
 
+	/**
+	 * Connect with a caller-supplied {@link HttpClient} (NOT owned — {@link #close()} leaves it
+	 * open). The injected client SHOULD be built with {@link HttpClient.Redirect#NEVER}: the client
+	 * resolves service-root redirects itself with a same-host / no-scheme-downgrade guard, so a
+	 * client that follows redirects automatically would bypass that guard (the data path stays
+	 * protected by the same-origin check regardless).
+	 */
 	public static ODataClient connect(String serviceRoot, HttpClient http) {
 		return connect(serviceRoot, http, null, false, ODataClientConfig.DEFAULTS);
 	}
@@ -323,7 +332,11 @@ public final class ODataClient implements AutoCloseable {
 
 	private static String functionLiteral(Object value) {
 		if (value instanceof CharSequence text) {
-			return "'" + text.toString().replace("'", "''") + "'";
+			// OData string literal, then percent-encode the content for the URL path (the raw path
+			// goes into URI.resolve, which would reject a space/reserved char) — the server decodes it
+			String literal = text.toString().replace("'", "''");
+			return "'" + URLEncoder.encode(literal, StandardCharsets.UTF_8)
+					.replace("+", "%20") + "'";
 		}
 		return String.valueOf(value);
 	}

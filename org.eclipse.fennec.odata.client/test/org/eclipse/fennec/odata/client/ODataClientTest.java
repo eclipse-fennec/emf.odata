@@ -852,6 +852,17 @@ class ODataClientTest {
 	}
 
 	@Test
+	@DisplayName("a huge error body is excerpted (not inlined whole) into the exception message")
+	void errorBodyExcerptIsCapped() {
+		String huge = "x".repeat(5000);
+		ODataClientException e = new ODataClientException("GET /Product failed", 500, huge);
+		assertTrue(e.getMessage().length() < 1000,
+				"the message must not inline a 5000-byte body: " + e.getMessage().length());
+		assertTrue(e.getMessage().contains("5000 bytes"), e.getMessage());
+		assertEquals(500, e.status());
+	}
+
+	@Test
 	@DisplayName("bound function call addresses the entity and returns the value")
 	void boundFunctionCall() {
 		ODataClient client = ODataClient.connect(serviceRoot);

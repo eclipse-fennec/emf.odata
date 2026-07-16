@@ -37,10 +37,19 @@ public class ODataClientException extends RuntimeException {
 		this.error = null;
 	}
 
+	/** Cap on how much of a raw error body is inlined into the exception message (log-bloat guard). */
+	private static final int MAX_BODY_EXCERPT = 512;
+
 	public ODataClientException(String message, int status, String body) {
-		super(body == null || body.isBlank() ? message : message + ": " + body);
+		super(body == null || body.isBlank() ? message : message + ": " + excerpt(body));
 		this.status = status;
 		this.error = ODataError.parse(body).orElse(null);
+	}
+
+	private static String excerpt(String body) {
+		String trimmed = body.strip();
+		return trimmed.length() <= MAX_BODY_EXCERPT ? trimmed
+				: trimmed.substring(0, MAX_BODY_EXCERPT) + "… (" + trimmed.length() + " bytes)";
 	}
 
 	/** The HTTP status of the failed exchange, 0 when the failure happened before/after HTTP. */
