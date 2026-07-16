@@ -16,11 +16,13 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Function;
 
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
@@ -97,6 +99,8 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 	 * {@code odata.jpa.max.page.size}; {@code <= 0} disables the cap (unbounded, legacy behaviour).
 	 */
 	static final int DEFAULT_MAX_PAGE_SIZE = 1000;
+
+	private static final System.Logger LOGGER = System.getLogger(JpaQueryService.class.getName());
 
 	private final List<EntityManagerFactory> factories = new CopyOnWriteArrayList<>();
 	private final OclToCriteriaTranslator translator = new OclToCriteriaTranslator();
@@ -313,7 +317,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 			predicates.add(castRestriction(query.castType(), cb, root, factory));
 		}
 		if (query.filter() != null) {
-			predicates.add(translator.predicate(query.filter(), cb, cq, context, java.util.Map.of(),
+			predicates.add(translator.predicate(query.filter(), cb, cq, context, Map.of(),
 					classResolver(factory)));
 		}
 		if (predicates.isEmpty()) {
@@ -342,7 +346,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 			CriteriaQuery<?> cq, From<?, ?> root, EntityManagerFactory factory) {
 		List<Order> orders = new ArrayList<>();
 		for (OrderBySegment segment : orderBy) {
-			var key = translator.expression(segment.expression(), cb, cq, root, java.util.Map.of(),
+			var key = translator.expression(segment.expression(), cb, cq, root, Map.of(),
 					classResolver(factory));
 			orders.add(segment.ascending() ? cb.asc(key) : cb.desc(key));
 		}
@@ -354,7 +358,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 	 * derived-type cast segments; a non-entity target (or none) yields null so the translator
 	 * refuses the cast honestly (501) rather than pushing down a wrong query.
 	 */
-	private java.util.function.Function<EClass, Class<?>> classResolver(EntityManagerFactory factory) {
+	private Function<EClass, Class<?>> classResolver(EntityManagerFactory factory) {
 		return eClass -> {
 			try {
 				return entityType(factory, eClass).getJavaType();
@@ -664,14 +668,46 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 
 	@Override
 	public void begin() {
-		Map<EntityManagerFactory, EntityManager> managers = new java.util.IdentityHashMap<>();
-		for (EntityManagerFactory factory : factories) {
-			EntityManager em = factory.createEntityManager();
-			em.getTransaction().begin();
-			managers.put(factory, em);
+		// defence in depth: a non-null ambient here means a prior batch on this (pooled) thread did
+		// not reach commit()/rollback() — discard the leaked, still-open transaction safely BEFORE
+		// starting a fresh one so it can never contaminate this request. The servlet also guarantees
+		// rollback() in a finally (belt and braces); this handles any caller that does not.
+		Map<EntityManagerFactory, EntityManager> leaked = ambient.get();
+		if (leaked != null) {
+			LOGGER.log(System.Logger.Level.WARNING,
+					"discarding a leaked ambient transaction from an unfinished batch on this thread");
+			ambient.remove();
+			discard(leaked);
+			journal.rollback();
+		}
+		Map<EntityManagerFactory, EntityManager> managers = new IdentityHashMap<>();
+		try {
+			for (EntityManagerFactory factory : factories) {
+				EntityManager em = factory.createEntityManager();
+				em.getTransaction().begin();
+				managers.put(factory, em);
+			}
+		} catch (RuntimeException e) {
+			discard(managers); // partial failure: close/roll back the EMs already opened — no leak
+			throw e;
 		}
 		ambient.set(managers);
 		journal.begin();
+	}
+
+	/** Rolls back (if active) and closes every manager, swallowing secondary faults (best effort). */
+	private static void discard(Map<EntityManagerFactory, EntityManager> managers) {
+		for (EntityManager em : managers.values()) {
+			try {
+				if (em.getTransaction().isActive()) {
+					em.getTransaction().rollback();
+				}
+			} catch (RuntimeException ignored) {
+				// discarding anyway — a rollback fault must not mask the primary failure
+			} finally {
+				em.close();
+			}
+		}
 	}
 
 	@Override
