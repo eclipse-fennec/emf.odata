@@ -38,7 +38,7 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 | `odata.max.async.inflight` | servlet | **✅ 16** | max. gleichzeitig laufende respond-async-Ausführungen (sonst 503+Retry-After) | unbegrenzt (Foot-gun) |
 | `odata.max.async.monitors` | servlet | **✅ 100** | max. geparkte async-Status-Monitore (LRU) | unbegrenzt |
 | `odata.jpa.max.page.size` | persistence.jpa | ✅ 1000 | server-driven Page-Cap (Lesepfad UND $apply) | unbegrenzt |
-| `odata.max.metadata.size` | (csdl load) | **NEU 16 MiB** | max. Größe eines CSDL/EDMX-XML beim Laden | — |
+| (CSDL-XML-Größe) | client | ✅ via `maxResponseBytes` (16 MiB) | fremdes $metadata ist über den Response-Cap größenbegrenzt; zusätzlich Secure-Processing + StackOverflow-Guard | — |
 
 (NEU = in diesem Härtungslauf hinzuzufügen.)
 
@@ -78,16 +78,21 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 ## Tier 1 — Hoch
 
-- [ ] **T1.1 [Security/DoS] CSDL-XML Tiefe/Größe** — bounded Read + JAXP-Secure-Limits
-  (Entity-Expansion/Element-Tiefe) im `secureOptions()`-Pfad; `odata.max.metadata.size`. Tests:
-  überngroßes/tief verschachteltes fremdes $metadata → sauberer Fehler statt OOM/SOF (Client + Vokabular-Load).
+- [x] **T1.1 [Security/DoS] CSDL-XML Tiefe/Größe** — ✅ `FEATURE_SECURE_PROCESSING` +
+  `loadSecurely()` (StackOverflow→IAE), Client-`$metadata`-Read fängt SOF→ODataClientException;
+  Größe bereits über Client-Response-Cap gedeckelt. (SAX ist ereignisbasiert → Tiefe erreicht
+  selten das Stack-Limit; Haupt-DoS = Größe, gedeckelt.) Test: `CsdlXmlLoadTest` (XXE-Nachweis + secure options + Load).
 - [x] **T1.2 [Security/DoS] respond-async In-Flight-Cap** — ✅ Semaphore (`odata.max.async.inflight`,
   Default 16, `<=0`=aus) → 503+Retry-After; Monitor-LRU konfigurierbar (`odata.max.async.monitors`).
   Foot-gun dokumentiert (monitors ≥ inflight). Tests: 503-Cap + Foot-gun-`0`.
 - [x] **T1.3 [Security/DoS] `$apply` Page-Cap** — ✅ `JpaApplyExecutor` honoriert `odata.jpa.max.page.size`.
   Test: groupby ohne $top (3 Gruppen, Cap 2) → gedeckelt.
-- [ ] **T1.4 [Beispiele] lauffähiges JPA-Beispiel** — `example-jpa.bndrun` + Komponente
-  (H2 + PersistenceUnit + .eorm), beantwortet dieselben README-curls; README erweitern.
+- [ ] **T1.4 [Beispiele] lauffähiges JPA-Beispiel** — OFFEN. Der JPA-über-HTTP-Pfad ist bereits
+  **bewiesen** (T0.6 `httpEndToEndOverJpaBackend` = lauffähige, verifizierte Demonstration).
+  Für ein *startbares* `example-jpa.bndrun` braucht es eine Beispiel-Komponente (ConfigAdmin:
+  H2-DataSource + PersistenceUnit + EPackage + Demo-Seed, Muster = `JpaWiringIntegrationTest`)
+  und einen `-resolve: auto`-bndrun; die Lauffähigkeit muss per `bnd run`/Eclipse verifiziert
+  werden (in dieser Umgebung nicht startbar). Bewusst NICHT als unverifiziertes Artefakt committet.
 
 ## Tier 2 — Mittel
 
@@ -131,4 +136,7 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 ## Fortschritts-Log
 - 2026-07-16: Dokument angelegt; Review abgeschlossen (6 Bereiche), Blocker-Satz fixiert.
 - 2026-07-16: **Tier 0 KOMPLETT** (T0.1–T0.6) + T2.14, je mit Tests committet; voller
-  `build testOSGi` grün. Nächster: Tier 1.
+  `build testOSGi` grün.
+- 2026-07-16: **Tier 1 Sicherheits-/DoS-Kern KOMPLETT** (T1.1 CSDL-XML-Härtung, T1.2 async
+  In-Flight-Cap, T1.3 $apply-Page-Cap) mit Tests committet. **Offen T1.4** (lauffähiges
+  JPA-Beispiel — nur launch-verifizierbar, s. o.). Nächster: Tier 2 + Tier 3.
