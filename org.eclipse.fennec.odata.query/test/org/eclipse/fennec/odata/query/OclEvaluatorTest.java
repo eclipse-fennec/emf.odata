@@ -168,6 +168,14 @@ class OclEvaluatorTest {
 		assertFalse(matches("price ne null", nullPrice()));
 	}
 
+	@Test
+	@DisplayName("substring with an out-of-int-range start saturates (no overflow wrap) → empty")
+	void substringHugeOffsetDoesNotOverflow() {
+		// 2e12 > Integer.MAX_VALUE: it must saturate to the end (empty result), not wrap via
+		// intValue() into a small in-range offset that returns a bogus non-empty substring
+		assertTrue(matches("substring(name, 2000000000000) eq ''", nullPrice()));
+	}
+
 	private EObject withPrice(String value) {
 		EObject p = productClass.getEPackage().getEFactoryInstance().create(productClass);
 		p.eSet(name, "x");
