@@ -13,10 +13,16 @@
 package org.eclipse.fennec.odata.itests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -74,6 +80,7 @@ import jakarta.persistence.EntityManagerFactory;
 public class JpaWiringIntegrationTest {
 
 	private static final String ECORE = "/org/eclipse/fennec/odata/itests/wiringshop.ecore";
+	private static final String BASE = "http://127.0.0.1:18893/odata";
 	private static final String DATASOURCE_PID = "daanse.jdbc.datasource.h2.DataSource";
 	private static final String PERSISTENCE_UNIT_PID = "fennec.jpa.PersistenceUnit";
 	private static final String UNIT_NAME = "wiringshop";
@@ -86,6 +93,7 @@ public class JpaWiringIntegrationTest {
 	private Configuration dataSourceConfiguration;
 	private Configuration unitConfiguration;
 	private Path workDirectory;
+	private final HttpClient http = HttpClient.newHttpClient();
 
 	@BeforeAll
 	void setUpWiring(@InjectBundleContext BundleContext context,
@@ -180,6 +188,89 @@ public class JpaWiringIntegrationTest {
 		assertEquals(1, result.entities().size());
 		assertEquals("Wire", result.entities().get(0)
 				.eGet(itemClass.getEStructuralFeature("name")));
+	}
+
+	@Test
+	@DisplayName("end to end over HTTP: the ODataServlet serves the JPA backend (write + SQL query)")
+	void httpEndToEndOverJpaBackend(
+			@InjectService(cardinality = 0, filter = "(fennec.odata.backend=jpa)")
+			ServiceAware<QueryService> queryAware) throws Exception {
+		QueryService queryService = queryAware.waitForService(20_000);
+		assertNotNull(queryService);
+		long deadline = System.currentTimeMillis() + 15_000;
+		while (!queryService.supports(itemClass) && System.currentTimeMillis() < deadline) {
+			Thread.sleep(100);
+		}
+		assertTrue(queryService.supports(itemClass), "the JPA backend must be bound");
+		awaitItemEndpoint();
+
+		// WRITE over HTTP → JPA WriteService → H2 (distinct names so the assertions are independent
+		// of any rows other tests created)
+		assertEquals(201, post("/Item",
+				"{\"id\":\"h1\",\"name\":\"HttpAlpha\",\"price\":5.00}").statusCode());
+		assertEquals(201, post("/Item",
+				"{\"id\":\"h2\",\"name\":\"HttpBeta\",\"price\":12.50}").statusCode());
+		assertEquals(201, post("/Item",
+				"{\"id\":\"h3\",\"name\":\"HttpGamma\",\"price\":1.00}").statusCode());
+
+		// READ with $filter + $orderby + $count — all pushed down to SQL by the JPA backend
+		HttpResponse<String> filtered = get("/Item?$filter="
+				+ encode("startswith(name,'Http') and price gt 3.00")
+				+ "&$orderby=" + encode("price desc") + "&$count=true");
+		assertEquals(200, filtered.statusCode(), filtered.body());
+		String body = filtered.body();
+		assertTrue(body.contains("\"@odata.count\":2"), body);
+		assertTrue(body.contains("HttpBeta") && body.contains("HttpAlpha"), body);
+		assertFalse(body.contains("HttpGamma"), "price 1.00 is filtered out: " + body);
+		assertTrue(body.indexOf("HttpBeta") < body.indexOf("HttpAlpha"),
+				"12.50 must sort before 5.00 under price desc: " + body);
+
+		// single entity by key
+		HttpResponse<String> single = get("/Item('h1')");
+		assertEquals(200, single.statusCode(), single.body());
+		assertTrue(single.body().contains("HttpAlpha"), single.body());
+
+		// $apply aggregate pushed down to SQL SUM over the filtered rows
+		HttpResponse<String> aggregate = get("/Item?$apply="
+				+ encode("filter(startswith(name,'Http'))/aggregate(price with sum as Total)"));
+		assertEquals(200, aggregate.statusCode(), aggregate.body());
+		assertTrue(aggregate.body().contains("18.5"),
+				"SUM(5.00 + 12.50 + 1.00) = 18.50: " + aggregate.body());
+	}
+
+	private void awaitItemEndpoint() throws Exception {
+		IllegalStateException last = null;
+		for (int attempt = 0; attempt < 75; attempt++) {
+			try {
+				HttpResponse<String> metadata = get("/$metadata");
+				if (metadata.statusCode() == 200 && metadata.body().contains("Item")) {
+					return;
+				}
+				last = new IllegalStateException("$metadata status " + metadata.statusCode());
+			} catch (Exception e) {
+				last = new IllegalStateException(e);
+			}
+			Thread.sleep(200);
+		}
+		throw new IllegalStateException("the Item endpoint did not come up within 15s", last);
+	}
+
+	private HttpResponse<String> get(String pathAndQuery) throws Exception {
+		// java.net.URI is fully qualified here: org.eclipse.emf.common.util.URI is imported for the
+		// EMF wiring above, so the two cannot both be imported
+		return http.send(HttpRequest.newBuilder(java.net.URI.create(BASE + pathAndQuery)).GET().build(),
+				HttpResponse.BodyHandlers.ofString());
+	}
+
+	private HttpResponse<String> post(String path, String jsonBody) throws Exception {
+		return http.send(HttpRequest.newBuilder(java.net.URI.create(BASE + path))
+				.header("Content-Type", "application/json")
+				.POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8)).build(),
+				HttpResponse.BodyHandlers.ofString());
+	}
+
+	private static String encode(String value) {
+		return URLEncoder.encode(value, StandardCharsets.UTF_8);
 	}
 
 	private Path writeMappingFile() throws Exception {

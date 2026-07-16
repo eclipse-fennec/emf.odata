@@ -34,8 +34,7 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 | `odata.max.expression.length` | servlet | 4096 | max. Länge $filter/$orderby/$apply/$expand/nested/@alias | unbegrenzt |
 | `odata.max.nesting.depth` | servlet | 64 | max. Klammer-Tiefe (Parser-Bomb-Guard) | unbegrenzt |
 | `odata.max.body.size` | servlet | 1 MiB | max. Write-Body | unbegrenzt |
-| `odata.max.batch.operations` | servlet | **NEU 100** | max. Sub-Requests je $batch | unbegrenzt |
-| `odata.max.batch.depth` | servlet | **NEU 10** | max. Verschachtelung/Change-Set-Tiefe je $batch | unbegrenzt |
+| `odata.max.batch.operations` | servlet | **✅ 100** | max. Sub-Requests je $batch (beide Wire-Formen) | unbegrenzt (Foot-gun) |
 | `odata.max.async.inflight` | servlet | **NEU 16** | max. gleichzeitig laufende respond-async-Ausführungen | unbegrenzt (Foot-gun) |
 | `odata.max.async.monitors` | servlet | **NEU 100** | max. geparkte async-Status-Monitore (LRU) | unbegrenzt |
 | `odata.jpa.max.page.size` | persistence.jpa | 1000 | server-driven Page-Cap (Lesepfad UND $apply) | unbegrenzt |
@@ -66,12 +65,13 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
   Whole-Store-Snapshot → behebt auch T2.14 Perf); `entities()`/`changesSince()` liefern defensive
   Kopien UNTER dem Klassen-Lock (CME-sicher). Tests: 3 neue (fremder Commit überlebt Rollback,
   kein CME bei parallelem Read/Mutation, Media-Rollback). **Zugleich T2.14 erledigt.**
-- [ ] **T0.4 [Security/DoS] `$batch` Sub-Request-/Tiefen-Cap** — `odata.max.batch.operations` +
-  `odata.max.batch.depth`, Überschreitung → 400. Tests: Überschreitung → 400, Grenzwert ok,
-  Falschwerte (negativ/0) dokumentiert getestet.
-- [ ] **T0.5 [Security] `$batch` Catch-All** — Orchestrierung in denselben sanitisierten
-  try/catch wie `write()`; kein Stacktrace-Leak bei Commit/Rollback-Exception. Test: Backend
-  wirft beim Commit → sanitisiertes 500, kein Klassenname/Stacktrace im Body.
+- [x] **T0.4 [Security/DoS] `$batch` Sub-Request-Cap** — ✅ `odata.max.batch.operations`
+  (Default 100, `<=0`=aus) in `RequestLimits`, geprüft VOR Ausführung, beide Wire-Formen.
+  (Depth-Cap verworfen: $batch ist in dieser Impl nicht geschachtelt; ein Operations-Cap genügt.)
+  Tests: Cap+Grenzwert, Foot-gun `0`.
+- [x] **T0.5 [Security] `$batch` Catch-All** — ✅ Ausführung in sanitisiertem try/catch, offene
+  Atomicity-Gruppe wird zurückgerollt (`rollbackQuietly`), generisches 500 + internes Logging.
+  Test: fehlschlagender transaktionaler Commit → 500 ohne Detail-Leak + Rollback.
 - [ ] **T0.6 [E2E-Nachweis] JPA über HTTP-Servlet** — itest: ODataServlet + JPA/H2 über echtes
   HTTP: $filter/$orderby/$count/$apply/$expand/Write/$batch/nextLink.
 
