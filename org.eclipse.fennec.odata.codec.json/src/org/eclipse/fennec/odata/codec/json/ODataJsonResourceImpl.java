@@ -66,8 +66,13 @@ import org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile;
  */
 public class ODataJsonResourceImpl extends CodecResource {
 
-	/** Aspect type id of the OData provider (ODataAspectProvider.ASPECT_TYPE_ID, not exported). */
+	/**
+	 * Aspect type id of the OData provider. Mirrors {@code ODataAspectProvider.ASPECT_TYPE_ID}
+	 * ("odata"), which lives in the metadata bundle's INTERNAL (non-exported) provider package —
+	 * duplicated here as a literal rather than exposing that internal API as export.
+	 */
 	private static final String ODATA_ASPECT_TYPE_ID = "odata";
+	/** CSDL collection-type prefix; mirrors {@code EdmTypes.COLLECTION_OPEN} (package-private in csdl). */
 	private static final String COLLECTION_OPEN = "Collection(";
 
 	private final MetadataService odataMetadataService;
