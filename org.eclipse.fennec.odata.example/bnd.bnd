@@ -3,6 +3,12 @@ Bundle-Description: Self-contained example: a dummy shop model (dynamic EMF, no 
 
 -library: enableEMF
 
+# Ship the example's OData servlet configuration via the OSGi Configurator: the JSON under
+# configs/ is packaged as an OSGI-INF/configurator/ resource, the Require-Capability pulls the
+# configurator extender into any resolve of this bundle.
+-includeresource: OSGI-INF/configurator/=configs/
+Require-Capability: osgi.extender;filter:='(osgi.extender=osgi.configurator)'
+
 -buildpath: \
 	org.osgi.service.condition;version=latest,\
 	org.eclipse.fennec.emf.osgi.api;version=latest,\

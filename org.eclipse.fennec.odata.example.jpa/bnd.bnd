@@ -1,0 +1,14 @@
+Bundle-Name: Fennec OData Example — JPA Backend
+Bundle-Description: Wires the shop model of org.eclipse.fennec.odata.example onto the Fennec Persistence JPA backend: generates the entity mapping, creates the H2 DataSource and PersistenceUnit ConfigurationAdmin configs, and seeds demo data — so the example serves OData over a real SQL database. Use with example-jpa.bndrun.
+
+-library: enableEMF
+
+-buildpath: \
+	org.osgi.service.condition;version=latest,\
+	org.osgi.service.cm;version=latest,\
+	org.eclipse.fennec.emf.osgi.api;version=latest,\
+	org.eclipse.fennec.odata.persistence.api;version=project,\
+	org.eclipse.fennec.persistence;version=latest,\
+	org.eclipse.fennec.persistence.orm;version=latest
+
+Private-Package: org.eclipse.fennec.odata.example.jpa

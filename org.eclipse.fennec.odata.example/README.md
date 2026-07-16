@@ -70,14 +70,31 @@ Details: `docs/odata-architecture.md` und `docs/odata-production-readiness-gaps.
 ## Gegen das JPA-Backend (H2) fahren
 
 `example.bndrun` nutzt das In-Memory-Backend. Für das Produktions-Backend (JPA/H2) gibt es
-`example-jpa.bndrun`: es zieht den JPA-Stack (EclipseLink + H2 + DataSource) hinzu und resolved
-per `-resolve: auto` beim Start (Eclipse „Run" oder `bnd run example-jpa.bndrun`). Es braucht
-zwei ConfigurationAdmin-Konfigurationen (H2-DataSource + `fennec.jpa.PersistenceUnit`) — die genaue,
-end-to-end **verifizierte** Verdrahtung steht in
-`org.eclipse.fennec.odata.itests/JpaWiringIntegrationTest` (Kommentar am Kopf der `example-jpa.bndrun`
-listet die PIDs/Properties). Sobald die `EntityManagerFactory` erscheint, bindet `JpaQueryService`
-sie und dieselben curl-Beispiele oben werden aus H2 beantwortet (voller SQL-Pushdown für
-`$filter`/`$orderby`/`$apply`).
+`example-jpa.bndrun`: es zieht den JPA-Stack (EclipseLink + H2 + DataSource) hinzu. Die komplette
+Verdrahtung ist **automatisch** und braucht keine manuelle ConfigAdmin-Einrichtung — das Bundle
+`org.eclipse.fennec.odata.example.jpa` (`ShopJpaBackendComponent`) erledigt beim Start:
 
-> Hinweis: `example-jpa.bndrun` ist ein vorbereitetes Start-Scaffold — beim ersten Start per
-> `bnd run`/Eclipse verifizieren. Der JPA-über-HTTP-Pfad selbst ist durch den itest bewiesen.
+1. leitet aus dem `webshop`-Modell per `EntityMapper` das ORM-Mapping ab und schreibt es als
+   `.eorm`-Datei in den Bundle-Datenbereich,
+2. legt die beiden Factory-Configs an — H2-`DataSource` (`daanse.jdbc.datasource.h2.DataSource`)
+   und `fennec.jpa.PersistenceUnit` (Modell-Auswahl über `(emf.name=webshop)`) —, die zusammen
+   eine `EntityManagerFactory` materialisieren, die `JpaQueryService` bindet,
+3. seedet die Demo-Daten, sobald das Backend oben ist.
+
+Dieselben curl-Beispiele oben werden dann aus H2 beantwortet, mit vollem SQL-Pushdown für
+`$filter`/`$orderby`/`$count`/`$apply`. Verifiziert (end-to-end über HTTP, headless gestartet):
+
+```bash
+curl 'http://localhost:8080/odata/Product?$filter=price%20gt%202.00&$orderby=price%20desc&$count=true'
+# -> @odata.count:2, Cheese (4.50) vor Bread (2.80), Milk (1.20) herausgefiltert — SQL-seitig
+curl -X POST 'http://localhost:8080/odata/Product' -H 'Content-Type: application/json' \
+     -d '{"id":"p9","name":"Yogurt","price":1.99,"rating":4,"active":true}'   # -> 201, in H2 persistiert
+```
+
+Voraussetzung für JPA: `Review` trägt (wie `Product`/`Category`) ein `id`-Schlüsselattribut —
+eine keylose Entität lässt sich im EclipseLink-Descriptor nicht bauen. `Product.category` ist eine
+Nicht-Containment-Referenz, die der JPA-`WriteService` noch nicht bindet (Follow-up); die Demo
+seedet Produkte daher flach, `Product.reviews` (Containment) reitet jedoch mit.
+
+Dieselbe deklarative Verdrahtung ist end-to-end auch durch
+`org.eclipse.fennec.odata.itests/JpaWiringIntegrationTest#httpEndToEndOverJpaBackend` abgesichert.

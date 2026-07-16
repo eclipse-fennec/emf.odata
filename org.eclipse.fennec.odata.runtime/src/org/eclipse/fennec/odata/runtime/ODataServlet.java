@@ -132,6 +132,9 @@ import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
+import org.osgi.service.servlet.whiteboard.annotations.RequireHttpWhiteboard;
+import org.osgi.service.servlet.whiteboard.propertytypes.HttpWhiteboardServletName;
+import org.osgi.service.servlet.whiteboard.propertytypes.HttpWhiteboardServletPattern;
 
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.Servlet;
@@ -168,10 +171,10 @@ import jakarta.servlet.http.HttpServletResponseWrapper;
  * properties/functions fail the parse (400). Error responses carry sanitized messages, never stack
  * traces or exception class names; unexpected failures answer with a generic 500.
  */
-@Component(service = Servlet.class, configurationPid = ODataServlet.PID, property = {
-		"osgi.http.whiteboard.servlet.pattern=/odata/*",
-		"osgi.http.whiteboard.servlet.name=Fennec OData"
-})
+@RequireHttpWhiteboard
+@HttpWhiteboardServletPattern("/odata/*")
+@HttpWhiteboardServletName("Fennec OData")
+@Component(service = Servlet.class, configurationPid = ODataServlet.PID)
 public class ODataServlet extends HttpServlet {
 
 	public static final String PID = "org.eclipse.fennec.odata.servlet";

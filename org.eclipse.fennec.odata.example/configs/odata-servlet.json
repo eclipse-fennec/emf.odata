@@ -1,0 +1,27 @@
+{
+	":configurator:resource-version": 1,
+	":configurator:symbolicname": "org.eclipse.fennec.odata.example",
+	":configurator:version": "0.0.0",
+
+	"org.eclipse.fennec.odata.servlet": {
+
+		// --- DoS / request limits (secure defaults shown explicitly) ---
+		// Each cap: a POSITIVE value bounds the request; <= 0 DISABLES the cap (an
+		// unbounded-amplification foot-gun — never do this on an exposed service).
+		"odata.max.top": 1000,
+		"odata.max.expression.length": 4096,
+		"odata.max.nesting.depth": 64,
+		"odata.max.body.size": 1048576,
+		"odata.max.batch.operations": 100,
+
+		// --- async ($respond-async) bounds (secure defaults) ---
+		"odata.max.async.inflight": 16,
+		"odata.max.async.monitors": 100,
+
+		// --- CORS ---
+		// EXAMPLE-ONLY: "*" lets a browser explorer (e.g. XOData) call the service from any
+		// origin. The production default is "" (CORS OFF). Do NOT ship "*" — restrict to an
+		// explicit space-separated origin allowlist for anything reachable off localhost.
+		"odata.cors.origin": "*"
+	}
+}

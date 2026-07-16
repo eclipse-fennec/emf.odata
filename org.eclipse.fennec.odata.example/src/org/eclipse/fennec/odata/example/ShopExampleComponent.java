@@ -18,9 +18,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import java.util.Dictionary;
+import java.util.Hashtable;
+
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.fennec.emf.osgi.configurator.EPackageConfigurator;
+import org.eclipse.fennec.emf.osgi.constants.EMFNamespaces;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.eclipse.fennec.odata.persistence.api.EntityRepository;
 import org.osgi.framework.BundleContext;
@@ -48,6 +53,7 @@ public class ShopExampleComponent {
 
 	private final EcoreHelper ecoreHelper = new EcoreHelper();
 	private final List<ServiceRegistration<?>> registrations = new ArrayList<>();
+	private volatile String modelNsUri;
 
 	@Activate
 	void activate(BundleContext context) throws IOException {
@@ -64,8 +70,8 @@ public class ShopExampleComponent {
 		EObject cheese = create(shop, productClass, Map.of("id", "p2", "name", "Cheese",
 				"price", new BigDecimal("4.50"), "rating", 5, "active", true, "category", dairy));
 		cheese.eSet(productClass.getEStructuralFeature("reviews"), List.of(
-				create(shop, reviewClass, Map.of("stars", 5, "comment", "great with wine")),
-				create(shop, reviewClass, Map.of("stars", 4, "comment", "a bit pricey"))));
+				create(shop, reviewClass, Map.of("id", "r1", "stars", 5, "comment", "great with wine")),
+				create(shop, reviewClass, Map.of("id", "r2", "stars", 4, "comment", "a bit pricey"))));
 		EObject bread = create(shop, productClass, Map.of("id", "p3", "name", "Bread",
 				"price", new BigDecimal("2.80"), "rating", 4, "active", false, "category", bakery));
 
@@ -82,14 +88,43 @@ public class ShopExampleComponent {
 			}
 		};
 
-		registrations.add(context.registerService(EPackage.class, shop, null));
+		// PROPER emf.osgi model registration (not a bare EPackage service): the OData servlet
+		// only needs the EPackage, but the JPA backend resolves its model through the emf.osgi
+		// EPackage.Registry, which tracks EPackageConfigurator services carrying emf.model.scope
+		// = resourceset — and the PersistenceUnit config selects the model by (emf.name=...). So
+		// register BOTH the configurator and the package with the emf.* service properties, and
+		// seed EPackage.Registry.INSTANCE so mapping hrefs resolve against the nsURI.
+		EPackage.Registry.INSTANCE.put(shop.getNsURI(), shop);
+		Dictionary<String, Object> modelProperties = new Hashtable<>();
+		modelProperties.put(EMFNamespaces.EMF_NAME, shop.getName());
+		modelProperties.put(EMFNamespaces.EMF_MODEL_NSURI, shop.getNsURI());
+		modelProperties.put(EMFNamespaces.EMF_MODEL_REGISTRATION, EMFNamespaces.MODEL_REGISTRATION_PROVIDED);
+		modelProperties.put(EMFNamespaces.EMF_MODEL_SCOPE, EMFNamespaces.EMF_MODEL_SCOPE_RESOURCE_SET);
+		EPackageConfigurator configurator = new EPackageConfigurator() {
+			@Override
+			public void configureEPackage(EPackage.Registry registry) {
+				registry.put(shop.getNsURI(), shop);
+			}
+
+			@Override
+			public void unconfigureEPackage(EPackage.Registry registry) {
+				registry.remove(shop.getNsURI());
+			}
+		};
+		registrations.add(context.registerService(EPackageConfigurator.class, configurator, modelProperties));
+		registrations.add(context.registerService(EPackage.class, shop, modelProperties));
 		registrations.add(context.registerService(EntityRepository.class, repository, null));
+		this.modelNsUri = shop.getNsURI();
 	}
 
 	@Deactivate
 	void deactivate() {
 		registrations.forEach(ServiceRegistration::unregister);
 		registrations.clear();
+		if (modelNsUri != null) {
+			EPackage.Registry.INSTANCE.remove(modelNsUri);
+			modelNsUri = null;
+		}
 		ecoreHelper.releaseAll();
 	}
 
