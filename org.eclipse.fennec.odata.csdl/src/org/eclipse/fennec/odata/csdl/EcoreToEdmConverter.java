@@ -12,6 +12,10 @@
  */
 package org.eclipse.fennec.odata.csdl;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.function.Consumer;
 import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.List;
@@ -127,9 +131,9 @@ public class EcoreToEdmConverter {
 	}
 
 	/** The {@code type name -> set name} renames declared on the package, or an empty map. */
-	public static java.util.Map<String, String> entitySetNames(EPackage pkg) {
+	public static Map<String, String> entitySetNames(EPackage pkg) {
 		EAnnotation annotation = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
-		java.util.Map<String, String> typeToSet = new java.util.HashMap<>();
+		Map<String, String> typeToSet = new HashMap<>();
 		if (annotation != null) {
 			annotation.getDetails().forEach(entry -> typeToSet.put(entry.getValue(), entry.getKey()));
 		}
@@ -142,7 +146,7 @@ public class EcoreToEdmConverter {
 	 * to every schema — the container may live in a different schema than its types (Northwind).
 	 * Idempotent: an already-renamed set no longer matches a type-name key.
 	 */
-	public void applyEntitySetNames(java.util.Map<String, String> typeToSet, SchemaType schema) {
+	public void applyEntitySetNames(Map<String, String> typeToSet, SchemaType schema) {
 		if (typeToSet.isEmpty()) {
 			return;
 		}
@@ -181,7 +185,7 @@ public class EcoreToEdmConverter {
 			container.setName(profile.getContainerName());
 			schema.getEntityContainer().add(container);
 		}
-		for (String name : new java.util.ArrayList<>(annotation.getDetails().keySet())) {
+		for (String name : new ArrayList<>(annotation.getDetails().keySet())) {
 			TSingleton singleton = edm.createTSingleton();
 			singleton.setName(name);
 			singleton.setType(profile.getNamespace() + "." + annotation.getDetails().get(name));
@@ -268,7 +272,7 @@ public class EcoreToEdmConverter {
 		container.getEntitySet().forEach(s -> setByEntityType.put(s.getEntityType(), s));
 
 		for (TEntitySet set : container.getEntitySet()) {
-			java.util.Set<String> visited = new java.util.HashSet<>();
+			Set<String> visited = new HashSet<>();
 			for (ODataClassProfile c = byQualifiedName.get(set.getEntityType());
 					c != null && visited.add(c.getQualifiedName());
 					c = byQualifiedName.get(c.getBaseTypeQualifiedName())) {
@@ -531,7 +535,7 @@ public class EcoreToEdmConverter {
 		return t;
 	}
 
-	private void baseType(ODataClassProfile c, java.util.function.Consumer<String> setter) {
+	private void baseType(ODataClassProfile c, Consumer<String> setter) {
 		if (c.getBaseTypeQualifiedName() != null && !c.getBaseTypeQualifiedName().isBlank()) {
 			setter.accept(c.getBaseTypeQualifiedName());
 		}

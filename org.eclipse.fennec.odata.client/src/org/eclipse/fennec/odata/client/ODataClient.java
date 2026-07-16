@@ -12,6 +12,8 @@
  */
 package org.eclipse.fennec.odata.client;
 
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.CookieManager;
@@ -71,8 +73,8 @@ public final class ODataClient implements AutoCloseable {
 	volatile long maxResponseBytes;
 
 	/** Cached CSRF token (SAP handshake); {@code null} until fetched, cleared on a 403 Required. */
-	private final java.util.concurrent.atomic.AtomicReference<String> csrfToken =
-			new java.util.concurrent.atomic.AtomicReference<>();
+	private final AtomicReference<String> csrfToken =
+			new AtomicReference<>();
 
 	private ODataClient(HttpClient http, boolean ownsHttp, URI serviceRoot, List<EPackage> packages,
 			MetadataWhiteboard whiteboard, ODataClientConfig config) {
@@ -562,7 +564,7 @@ public final class ODataClient implements AutoCloseable {
 			return target; // only the plain default-port http form of the SAME host is upgraded
 		}
 		return URI.create("https" + target.toString().substring("http".length())
-				.replaceFirst("^://" + java.util.regex.Pattern.quote(target.getHost()) + ":80",
+				.replaceFirst("^://" + Pattern.quote(target.getHost()) + ":80",
 						"://" + target.getHost()));
 	}
 
