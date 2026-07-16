@@ -139,7 +139,15 @@ public final class ODataBatch {
 					response.status(), response.body());
 		}
 
-		JsonNode responses = MAPPER.readTree(response.body()).get("responses");
+		JsonNode root;
+		try {
+			root = MAPPER.readTree(response.body());
+		} catch (RuntimeException e) {
+			// a malformed $batch response must surface as the client's own exception type, not a
+			// raw Jackson exception (Jackson 3's JacksonException is unchecked)
+			throw new ODataClientException("$batch response is not valid JSON", e);
+		}
+		JsonNode responses = root.get("responses");
 		if (responses == null || !responses.isArray()) {
 			throw new ODataClientException("$batch response carries no 'responses' array");
 		}
@@ -294,7 +302,11 @@ public final class ODataBatch {
 			String line = lines[index].trim();
 			if (line.startsWith("HTTP/")) {
 				String[] words = line.split("\\s+");
-				status = words.length > 1 ? Integer.parseInt(words[1]) : 0;
+				try {
+					status = words.length > 1 ? Integer.parseInt(words[1]) : 0;
+				} catch (NumberFormatException e) {
+					throw new ODataClientException("malformed status line in a multipart batch part", e);
+				}
 				index++;
 				break;
 			}
