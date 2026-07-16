@@ -1,0 +1,49 @@
+# Runnable example with the JPA backend (H2) behind the ODataServlet.
+#
+# Unlike example.bndrun (in-memory), this wires the production JPA stack: an H2 DataSource and a
+# fennec.jpa.PersistenceUnit materialize an EntityManagerFactory that JpaQueryService binds — the
+# same declarative wiring proven end-to-end by
+# org.eclipse.fennec.odata.itests/JpaWiringIntegrationTest#httpEndToEndOverJpaBackend.
+#
+# -resolve: auto lets bnd resolve -runbundles from -runrequires at launch (Eclipse "Run" or
+# `bnd run example-jpa.bndrun`) — no hand-maintained -runbundles list. VERIFY BY LAUNCHING: this
+# file is a prepared scaffold; it has not been run in CI.
+#
+# Two ConfigurationAdmin configurations are required at runtime (create them via the Gogo shell,
+# a felix fileinstall .config, or ConfigAdmin API) — values mirror JpaWiringIntegrationTest:
+#
+#   PID  daanse.jdbc.datasource.h2.DataSource-shop   (factory)
+#        identifier = <writable-dir>/h2/shop
+#
+#   PID  fennec.jpa.PersistenceUnit-shop             (factory)
+#        fennec.jpa.model               = (emf.name=shop)
+#        fennec.jpa.model.target        = (emf.name=shop)
+#        fennec.jpa.mappingFile         = <file-uri-to-a-generated-.eorm>   (see EntityMapper)
+#        fennec.jpa.persistenceUnitName = shop
+#        fennec.jpa.ext.eclipselink.ddl-generation = create-or-extend-tables
+#
+# The shop EPackage is registered by ShopExampleComponent (shared with example.bndrun). Once the
+# factory appears, JpaQueryService serves it and the README curls answer from H2.
+
+-resolve: auto
+
+-runfw: org.apache.felix.framework
+-runee: JavaSE-21
+
+-runrequires: \
+	bnd.identity;id='org.eclipse.fennec.odata.example',\
+	bnd.identity;id='org.eclipse.fennec.odata.runtime',\
+	bnd.identity;id='org.eclipse.fennec.odata.persistence.jpa',\
+	bnd.identity;id='org.eclipse.fennec.odata.metadata',\
+	bnd.identity;id='org.eclipse.fennec.model.metadata',\
+	bnd.identity;id='org.eclipse.fennec.persistence.eclipselink',\
+	bnd.identity;id='org.eclipse.daanse.jdbc.datasource.h2',\
+	bnd.identity;id='com.h2database',\
+	bnd.identity;id='org.apache.felix.http.jetty12',\
+	bnd.identity;id='org.apache.felix.configadmin',\
+	bnd.identity;id='org.apache.felix.gogo.shell',\
+	bnd.identity;id='org.apache.felix.gogo.command'
+
+-runproperties: \
+	org.osgi.service.http.port=8080,\
+	org.apache.felix.http.host=127.0.0.1
