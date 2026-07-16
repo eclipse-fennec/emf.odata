@@ -448,6 +448,12 @@ public class ODataServlet extends HttpServlet {
 		}
 
 		String path = request.getPathInfo() == null ? "/" : request.getPathInfo();
+		// content negotiation: an Accept header that lists ONLY media types we never produce is
+		// unsatisfiable → 406 (the async status monitor speaks application/http and is exempt)
+		if (!path.startsWith("/$async/") && notAcceptable(request)) {
+			error(response, 406, "no acceptable representation for the requested media type");
+			return;
+		}
 		try {
 			if ("/".equals(path) || path.isEmpty()) {
 				serviceDocument(request, response);
@@ -458,9 +464,15 @@ public class ODataServlet extends HttpServlet {
 			} else {
 				resource(path.substring(1), request, response);
 			}
-		} catch (ODataQueryParseException | IllegalArgumentException e) {
-			// client errors carry the (parser-)message — it never contains internals
+		} catch (ODataQueryParseException e) {
+			// the query/parse layer curates its client-facing messages (never internals)
 			error(response, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
+		} catch (IllegalArgumentException e) {
+			// a raw IAE reaching here (e.g. an EMF value-conversion fault) is NOT a curated message
+			// and may carry internal detail — log it, answer a fixed generic 400
+			LOGGER.log(System.Logger.Level.WARNING,
+					() -> "bad request serving GET " + request.getRequestURI(), e);
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "the request could not be processed");
 		} catch (UnsupportedOperationException e) {
 			// pushdown backends refuse loudly instead of answering wrongly (e.g. a JPA
 			// backend without a translation for a construct) — an honest 501
@@ -539,6 +551,11 @@ public class ODataServlet extends HttpServlet {
 			return false; // no CORS headers for a non-allowlisted origin — the browser blocks it
 		}
 		response.setHeader("Access-Control-Allow-Origin", allowed);
+		if (!"*".equals(allowed)) {
+			// the response varies by Origin (allowlist echo) — a shared cache must not hand one
+			// origin's Access-Control-Allow-Origin to another
+			response.setHeader("Vary", "Origin");
+		}
 		response.setHeader("Access-Control-Expose-Headers",
 				"OData-Version, OData-EntityId, ETag, Location, Preference-Applied");
 		if ("OPTIONS".equals(request.getMethod())) {
@@ -4874,6 +4891,28 @@ public class ODataServlet extends HttpServlet {
 		resource.save(out, options);
 		response.setContentType("application/xml;charset=UTF-8");
 		response.getWriter().write(out.toString(StandardCharsets.UTF_8));
+	}
+
+	/**
+	 * Whether the {@code Accept} header lists ONLY media types this server never emits. An absent or
+	 * blank header, or any range we can satisfy (JSON, XML, or a wildcard), is acceptable; a header
+	 * naming only e.g. {@code text/csv} or {@code application/atom+xml} (Atom is not emitted, 4.01
+	 * deprecated) is not → the caller answers 406.
+	 */
+	private static boolean notAcceptable(HttpServletRequest request) {
+		String accept = request.getHeader("Accept");
+		if (accept == null || accept.isBlank()) {
+			return false;
+		}
+		for (String range : accept.split(",")) {
+			String media = range.split(";")[0].trim().toLowerCase(Locale.ROOT);
+			if (media.isEmpty() || media.equals("*/*") || media.equals("application/*")
+					|| media.equals("text/*") || media.equals("application/json")
+					|| media.equals("application/xml") || media.equals("text/xml")) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private boolean wantsXml(HttpServletRequest request) {

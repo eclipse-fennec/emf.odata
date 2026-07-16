@@ -1069,6 +1069,37 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("CORS: an allowlist echo sets Vary: Origin (shared-cache poisoning guard)")
+	void corsVariesByOrigin() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		servlet.activate(Map.of("odata.cors.origin", "https://allowed.example"));
+		try {
+			Response allowed = call("GET", "/Product", Map.of(), null, null,
+					Map.of("Origin", "https://allowed.example"));
+			assertEquals("https://allowed.example", allowed.headers().get("Access-Control-Allow-Origin"));
+			assertEquals("Origin", allowed.headers().get("Vary"),
+					"an allowlisted-origin echo must carry Vary: Origin");
+		} finally {
+			servlet.activate(Map.of());
+		}
+	}
+
+	@Test
+	@DisplayName("content negotiation: an unsatisfiable Accept header → 406, satisfiable/wildcard → 200")
+	void contentNegotiation406() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		assertEquals(406, call("GET", "/Product", Map.of(), "text/csv", null, Map.of()).status(),
+				"a type we never emit is unacceptable");
+		assertEquals(406, call("GET", "/Product", Map.of(), "application/atom+xml", null, Map.of())
+				.status(), "Atom is not emitted (4.01 deprecated)");
+		assertEquals(200, call("GET", "/Product", Map.of(), "application/json", null, Map.of()).status());
+		assertEquals(200, call("GET", "/Product", Map.of(), "*/*", null, Map.of()).status());
+		assertEquals(200, call("GET", "/Product", Map.of(),
+				"application/json;odata.metadata=minimal", null, Map.of()).status(),
+				"a parameterised json range is acceptable");
+	}
+
+	@Test
 	@DisplayName("renamed entity sets ([OData-CSDL] 13.2): served, listed and emitted under the set name")
 	void renamedEntitySets() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));
