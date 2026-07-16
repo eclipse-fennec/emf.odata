@@ -459,8 +459,11 @@ public class ODataServlet extends HttpServlet {
 
 		String path = request.getPathInfo() == null ? "/" : request.getPathInfo();
 		// content negotiation: an Accept header that lists ONLY media types we never produce is
-		// unsatisfiable → 406 (the async status monitor speaks application/http and is exempt)
-		if (!path.startsWith("/$async/") && notAcceptable(request)) {
+		// unsatisfiable → 406. Only the JSON/XML-producing paths are checked; the paths whose
+		// content type is path-dependent are exempt — /$count (text/plain), /$value (a media
+		// entity's own content type, arbitrary) and the /$async/ monitor (application/http).
+		if (!path.startsWith("/$async/") && !path.endsWith("/$count") && !path.endsWith("/$value")
+				&& notAcceptable(request)) {
 			error(response, 406, "no acceptable representation for the requested media type");
 			return;
 		}
