@@ -72,8 +72,9 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - [x] **T0.5 [Security] `$batch` Catch-All** — ✅ Ausführung in sanitisiertem try/catch, offene
   Atomicity-Gruppe wird zurückgerollt (`rollbackQuietly`), generisches 500 + internes Logging.
   Test: fehlschlagender transaktionaler Commit → 500 ohne Detail-Leak + Rollback.
-- [ ] **T0.6 [E2E-Nachweis] JPA über HTTP-Servlet** — itest: ODataServlet + JPA/H2 über echtes
-  HTTP: $filter/$orderby/$count/$apply/$expand/Write/$batch/nextLink.
+- [x] **T0.6 [E2E-Nachweis] JPA über HTTP-Servlet** — ✅ `JpaWiringIntegrationTest.httpEndToEndOverJpaBackend`:
+  Write (POST→JPA), $filter+$orderby+$count und $apply-Aggregat über echtes HTTP → SQL-Pushdown,
+  Single-Entity. 17/17 itests grün, voller `build testOSGi` grün.
 
 ## Tier 1 — Hoch
 
@@ -129,3 +130,5 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 ## Fortschritts-Log
 - 2026-07-16: Dokument angelegt; Review abgeschlossen (6 Bereiche), Blocker-Satz fixiert.
+- 2026-07-16: **Tier 0 KOMPLETT** (T0.1–T0.6) + T2.14, je mit Tests committet; voller
+  `build testOSGi` grün. Nächster: Tier 1.
