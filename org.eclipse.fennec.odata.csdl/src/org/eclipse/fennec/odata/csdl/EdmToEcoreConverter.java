@@ -174,7 +174,12 @@ public class EdmToEcoreConverter {
 				EEnumLiteral lit = ecore.createEEnumLiteral();
 				lit.setName(m.getName());
 				lit.setLiteral(m.getName());
-				lit.setValue((int) m.getValue());
+				long memberValue = m.getValue();
+				if (memberValue < Integer.MIN_VALUE || memberValue > Integer.MAX_VALUE) {
+					throw new IllegalArgumentException("enum member '" + m.getName() + "' value "
+							+ memberValue + " exceeds the EMF EEnum int range");
+				}
+				lit.setValue((int) memberValue);
 				ee.getELiterals().add(lit);
 			}
 			register(pkg, byName, ee);
