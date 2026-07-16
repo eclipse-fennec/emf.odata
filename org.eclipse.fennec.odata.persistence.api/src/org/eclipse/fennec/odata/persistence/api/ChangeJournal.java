@@ -43,6 +43,10 @@ public final class ChangeJournal {
 	/** One structural change to a set member, in journal order. */
 	public record Change(long seq, EClass type, String storeKey,
 			Map<String, Object> keyValues, boolean deleted) {
+
+		public Change {
+			keyValues = keyValues == null ? Map.of() : Map.copyOf(keyValues); // defensive, immutable
+		}
 	}
 
 	/**
