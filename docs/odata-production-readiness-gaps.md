@@ -57,10 +57,10 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
   (`triState()`-Helfer), Short-Circuit auf dominantem Wert, UNKNOWN propagiert. Tests:
   `OclEvaluatorTest` (11 Fälle, volle Tabelle + Nesting + null-Literal) + 4 Differenzial-Fälle
   (In-Memory ↔ JPA-Parität). Commit auf snapshot.
-- [ ] **T0.2 [Concurrency] `JpaQueryService` ambient EM/TX ThreadLocal** — striktes `finally`-
-  Cleanup (`ambient.remove()` + EM/TX schließen), Doppel-`begin()` absichern, Leak bei
-  Teil-Fehler in `begin()` schließen. Tests: Exception zwischen begin/commit → kein Leak,
-  Folge-Request auf gleichem Thread sieht kein ambientes EM.
+- [x] **T0.2 [Concurrency] `JpaQueryService` ambient EM/TX ThreadLocal** — ✅ `begin()` verwirft
+  ein geleaktes ambientes TX sicher (rollback+close+WARN) bevor es ein frisches öffnet;
+  Teil-Fehler in `begin()` schließt bereits geöffnete EMs (`discard()`). Servlet-`finally`-Garantie
+  folgt in T0.5. Tests: `JpaTransactionRobustnessTest` (3). FQN-Bereinigung dieser Datei mit erledigt.
 - [ ] **T0.3 [Datenverlust/Concurrency] `MemoryWriteRepository`** — (a) `rollback()` darf keine
   fremden Commits zerstören (per-TX Undo statt Whole-Store-Restore) inkl. `media`; (b)
   `entities()`/`changesSince()` geben defensive Kopien heraus (kein Live-Objekt-Leak). Tests:

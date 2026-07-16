@@ -63,11 +63,31 @@ public class MemoryWriteRepository
 	/** Media streams of HasStream entities, keyed like the entity store (reference semantics). */
 	private final Map<EClass, Map<String, MediaStream>> media = new ConcurrentHashMap<>();
 	/**
-	 * Per-thread snapshot of the whole store, taken at {@link #begin()} and restored on
-	 * {@link #rollback()}. The reference backend gives $batch change sets ATOMICITY (all-or-nothing)
-	 * this way, not full isolation from concurrent writers — a real transactional backend (JPA) would.
+	 * Per-thread transaction scope for {@code $batch} atomicity: on the FIRST mutation of an
+	 * entity/media value within the transaction its prior state is captured (a deep copy, or the
+	 * absent marker), and {@link #rollback()} restores ONLY the captured — i.e. TOUCHED — keys.
+	 * This gives change sets all-or-nothing atomicity WITHOUT (a) a costly whole-store copy at
+	 * {@link #begin()} and WITHOUT (b) clobbering entities a CONCURRENT writer committed in the
+	 * meantime (the previous whole-store restore destroyed foreign commits). It is atomicity, not
+	 * isolation: two batches writing the SAME entity still race — a real transactional backend
+	 * (JPA) provides isolation.
 	 */
-	private final ThreadLocal<Map<EClass, Map<String, EObject>>> snapshot = new ThreadLocal<>();
+	private final ThreadLocal<TxScope> tx = new ThreadLocal<>();
+
+	/** Identity of a stored value across the entity and media maps. */
+	private record StoreKey(EClass type, String key) {
+	}
+
+	/**
+	 * Captured prior state of the keys a transaction touched. A key present in the map with a
+	 * {@code null} value was ABSENT before the transaction (→ remove on rollback); a non-null value
+	 * is the prior copy (→ restore on rollback). {@code containsKey} distinguishes captured from
+	 * not-yet-touched (first-touch-only capture).
+	 */
+	private static final class TxScope {
+		private final Map<StoreKey, EObject> priorEntities = new LinkedHashMap<>();
+		private final Map<StoreKey, MediaStream> priorMedia = new LinkedHashMap<>();
+	}
 
 	// --- change journal (DeltaService, [OData-Protocol] 11.3) ---
 
@@ -99,15 +119,36 @@ public class MemoryWriteRepository
 		// polymorphic like the JPA backend and FileEntityRepository: a base-set query MUST see
 		// derived instances too ([OData-URL] 4.11) — the store keys entities by their EXACT
 		// eClass (write-side identity), so a base read unions every subtype's class store
-		List<EObject> result = new ArrayList<>();
+		// defensive deep copy: the query pipeline iterates these OUTSIDE any store lock, so a
+		// concurrent writer structurally mutating a multi-valued feature would throw a
+		// ConcurrentModificationException — at the reader AND during the copy itself. Every write
+		// to an entity happens under its class-store lock, so the copy of each class runs under the
+		// SAME lock. Cross-class references resolve to the live originals (benign scalar race).
+		// (Reference-backend cost: O(n) per query.)
+		List<EObject> copies = new ArrayList<>();
 		store.forEach((type, entities) -> {
 			if (entityType.isSuperTypeOf(type)) {
 				synchronized (entities) {
-					result.addAll(entities.values());
+					EcoreUtil.Copier copier = new EcoreUtil.Copier();
+					copier.copyAll(entities.values());
+					copier.copyReferences();
+					entities.values().forEach(entity -> copies.add((EObject) copier.get(entity)));
 				}
 			}
 		});
-		return result;
+		return copies;
+	}
+
+	/** Deep-copies each live entity under its class-store lock (CME-safe); cross-refs stay live. */
+	private List<EObject> copyUnderLock(List<EObject> live) {
+		List<EObject> copies = new ArrayList<>(live.size());
+		for (EObject entity : live) {
+			Map<String, EObject> classStore = store.get(entity.eClass());
+			synchronized (classStore != null ? classStore : entity) {
+				copies.add(EcoreUtil.copy(entity));
+			}
+		}
+		return copies;
 	}
 
 	// --- transactions (thread-bound; atomic change sets for $batch) ---
@@ -119,55 +160,84 @@ public class MemoryWriteRepository
 
 	@Override
 	public void begin() {
-		EcoreUtil.Copier copier = new EcoreUtil.Copier();
-		List<EObject> all = new ArrayList<>();
-		store.forEach((type, entities) -> {
-			synchronized (entities) {
-				all.addAll(entities.values());
-			}
-		});
-		copier.copyAll(all); // one copier over the whole store keeps cross-entity references consistent
-		copier.copyReferences();
-		Map<EClass, Map<String, EObject>> snap = new LinkedHashMap<>();
-		store.forEach((type, entities) -> {
-			synchronized (entities) {
-				Map<String, EObject> copy = new LinkedHashMap<>();
-				entities.forEach((key, value) -> copy.put(key, copier.get(value)));
-				snap.put(type, copy);
-			}
-		});
-		snapshot.set(snap);
+		// no whole-store copy: prior state is captured lazily on first touch (see TxScope)
+		tx.set(new TxScope());
 		journal.begin();
 	}
 
 	@Override
 	public void commit() {
 		journal.commit();
-		snapshot.remove();
+		tx.remove();
 	}
 
 	@Override
 	public void rollback() {
 		journal.rollback(); // a rolled-back transaction never happened, journal-wise
-		Map<EClass, Map<String, EObject>> snap = snapshot.get();
-		if (snap == null) {
+		TxScope scope = tx.get();
+		if (scope == null) {
 			return;
 		}
-		store.forEach((type, entities) -> { // classes that gained a store during the tx are emptied
-			if (!snap.containsKey(type)) {
-				synchronized (entities) {
-					entities.clear();
+		// restore ONLY the keys this transaction touched — entries a concurrent writer committed
+		// meanwhile are left intact
+		scope.priorEntities.forEach((sk, prior) -> {
+			Map<String, EObject> entities = classStore(sk.type());
+			synchronized (entities) {
+				if (prior == null) {
+					entities.remove(sk.key()); // was absent → undo the create
+				} else {
+					entities.put(sk.key(), prior); // restore the prior state
 				}
 			}
 		});
-		snap.forEach((type, copy) -> {
-			Map<String, EObject> entities = classStore(type);
-			synchronized (entities) {
-				entities.clear();
-				entities.putAll(copy);
+		scope.priorMedia.forEach((sk, prior) -> {
+			// media is guarded by the entity class-store lock (see writeMedia)
+			synchronized (classStore(sk.type())) {
+				Map<String, MediaStream> streams = media.get(sk.type());
+				if (prior == null) {
+					if (streams != null) {
+						streams.remove(sk.key());
+					}
+				} else {
+					media.computeIfAbsent(sk.type(), type -> new ConcurrentHashMap<>())
+							.put(sk.key(), prior);
+				}
 			}
 		});
-		snapshot.remove();
+		tx.remove();
+	}
+
+	/**
+	 * Captures the prior state of an entity key on FIRST touch within a transaction (a deep copy,
+	 * or the absent marker) so {@link #rollback()} can restore exactly it. No-op outside a
+	 * transaction. MUST be called under the class-store lock, before the mutation.
+	 */
+	private void captureEntity(EClass type, String key) {
+		TxScope scope = tx.get();
+		if (scope == null) {
+			return;
+		}
+		StoreKey sk = new StoreKey(type, key);
+		if (scope.priorEntities.containsKey(sk)) {
+			return; // first-touch only
+		}
+		Map<String, EObject> entities = store.get(type);
+		EObject current = entities == null ? null : entities.get(key);
+		scope.priorEntities.put(sk, current == null ? null : EcoreUtil.copy(current));
+	}
+
+	/** Media counterpart of {@link #captureEntity}; called under the class-store lock. */
+	private void captureMedia(EClass type, String key) {
+		TxScope scope = tx.get();
+		if (scope == null) {
+			return;
+		}
+		StoreKey sk = new StoreKey(type, key);
+		if (scope.priorMedia.containsKey(sk)) {
+			return;
+		}
+		Map<String, MediaStream> streams = media.get(type);
+		scope.priorMedia.put(sk, streams == null ? null : streams.get(key));
 	}
 
 	// --- write side ---
@@ -187,6 +257,7 @@ public class MemoryWriteRepository
 				throw new WriteConflictException(
 						"an entity with this key already exists in " + entityType.getName());
 			}
+			captureEntity(entityType, key); // prior = absent → rollback removes it
 			entities.put(key, entity);
 			journal(entity, entityType, key, false);
 		}
@@ -200,6 +271,7 @@ public class MemoryWriteRepository
 		payload.eSet(id, EcoreUtil.createFromString(id.getEAttributeType(), key)); // URL key wins
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
+			captureEntity(entityType, key); // capture prior state (absent → upsert, else the pre-PATCH state)
 			EObject existing = entities.get(key);
 			if (existing == null) { // OData upsert (13.1.1/29)
 				entities.put(key, payload);
@@ -220,6 +292,7 @@ public class MemoryWriteRepository
 		}
 		String key = unquote(rawKey);
 		synchronized (entities) {
+			captureEntity(entityType, key); // prior = the entity → rollback re-adds it
 			EObject removed = entities.remove(key);
 			if (removed != null) {
 				journal(removed, entityType, key, true);
@@ -244,6 +317,7 @@ public class MemoryWriteRepository
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
 			EObject owner = requiredEntity(entities, rawKey);
+			captureEntity(entityType, unquote(rawKey)); // owner is mutated by attach
 			attach(owner, reference, child);
 			journal(owner, entityType, unquote(rawKey), false); // expand membership changed
 		}
@@ -260,6 +334,7 @@ public class MemoryWriteRepository
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
 			EObject owner = requiredEntity(entities, rawKey);
+			captureEntity(entityType, unquote(rawKey)); // owner is mutated by attach
 			attach(owner, reference, target);
 			journal(owner, entityType, unquote(rawKey), false); // expand membership changed
 		}
@@ -271,6 +346,7 @@ public class MemoryWriteRepository
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
 			EObject owner = requiredEntity(entities, rawKey);
+			captureEntity(entityType, unquote(rawKey)); // owner is mutated below
 			boolean removed;
 			if (reference.isMany()) {
 				String key = unquote(targetRawKey);
@@ -359,6 +435,7 @@ public class MemoryWriteRepository
 		EAttribute id = requiredKeyAttribute(entityType);
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
+			captureEntity(entityType, key); // prior state for rollback (absent → upsert, else pre-PATCH)
 			EObject existing = entities.get(key);
 			if (existing == null) { // upsert: URL key components win over payload values
 				namedKeys.forEach((name, raw) -> {
@@ -382,6 +459,7 @@ public class MemoryWriteRepository
 		String key = keyOf(entityType, namedKeys);
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
+			captureEntity(entityType, key); // prior = the entity → rollback re-adds it
 			EObject removed = entities.remove(key);
 			if (removed != null) {
 				journal(removed, entityType, key, true);
@@ -448,7 +526,10 @@ public class MemoryWriteRepository
 				}
 			}
 		}
-		return new DeltaResult(changed, removals, window.nextToken(), window.more());
+		// defensive deep copy of the upserts (same reason as entities()): the delta payload is
+		// serialized OUTSIDE any store lock. (Residual: expanded members reachable via a copied
+		// owner are not themselves copied — a narrower race than the hot read path.)
+		return new DeltaResult(copyUnderLock(changed), removals, window.nextToken(), window.more());
 	}
 
 	/** Tracked-set owners whose EXPANDED navigation contains one of the changed entities. */
@@ -528,6 +609,7 @@ public class MemoryWriteRepository
 			if (!entities.containsKey(key)) {
 				return false; // the media value belongs to an EXISTING entity (404)
 			}
+			captureMedia(entityType, key); // prior stream (or absent) for rollback
 			media.computeIfAbsent(entityType, type -> new ConcurrentHashMap<>()).put(key, stream);
 			return true;
 		}
