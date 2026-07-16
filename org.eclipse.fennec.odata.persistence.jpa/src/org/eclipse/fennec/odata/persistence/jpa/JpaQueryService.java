@@ -727,6 +727,13 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 		journal.rollback();
 	}
 
+	/**
+	 * Finishes every ambient EntityManager. On rollback, all roll back. On commit, there is NO
+	 * two-phase commit across persistence units: once one unit's commit fails, the REMAINING units
+	 * are rolled back rather than committed, so the failure cannot spread to more units — but a unit
+	 * that already committed stays committed. A change set spanning multiple persistence units is
+	 * therefore best-effort-atomic, not truly atomic (documented; use a single PU for atomicity).
+	 */
 	private void finishAmbient(boolean commit) {
 		Map<EntityManagerFactory, EntityManager> managers = ambient.get();
 		if (managers == null) {
@@ -734,17 +741,21 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 		}
 		ambient.remove();
 		RuntimeException failure = null;
+		boolean commitRemaining = commit;
 		for (EntityManager em : managers.values()) {
 			try {
 				if (em.getTransaction().isActive()) {
-					if (commit) {
+					if (commitRemaining) {
 						em.getTransaction().commit();
 					} else {
 						em.getTransaction().rollback();
 					}
 				}
 			} catch (RuntimeException e) {
-				failure = e; // remember, but still close every manager
+				if (failure == null) {
+					failure = e; // report the first fault
+				}
+				commitRemaining = false; // a unit failed → do not commit any further unit (no 2PC)
 			} finally {
 				em.close();
 			}
