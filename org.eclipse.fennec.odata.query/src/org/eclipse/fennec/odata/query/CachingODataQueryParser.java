@@ -15,7 +15,7 @@ package org.eclipse.fennec.odata.query;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.WeakHashMap;
+import java.util.LinkedHashMap;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
@@ -24,7 +24,8 @@ import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 /**
  * {@link ODataQueryParser} with the §3.6.1 ad-hoc query cache: parsed {@code $filter}/
  * {@code $orderby} results are kept in one {@link ODataQueryLruCache} per context
- * {@link EClass} (weakly keyed, so unregistered models can be collected).
+ * {@link EClass}, and the number of per-class caches is itself LRU-bounded so a flood of
+ * transient models cannot grow the map without limit.
  *
  * <p><b>Sharing contract</b> (same as the m2x expression cache): cache hits return the SAME
  * AST instance — consumers must treat parsed expressions as read-only and must NOT re-parent
@@ -42,16 +43,28 @@ public class CachingODataQueryParser extends ODataQueryParser {
 	private static final String ORDERBY_PREFIX = "$orderby=";
 	private static final String APPLY_PREFIX = "$apply=";
 
+	/** Backstop cap on the NUMBER of per-EClass caches (bounds total memory: classes × cacheSize). */
+	private static final int MAX_CACHED_CLASSES = 256;
+
 	private final int cacheSize;
 	/**
-	 * NOTE on lifecycle: the weak keying alone cannot free entries, because cached ASTs
-	 * reference their EClass via {@code referredProperty} (value → key). Bounded growth comes
-	 * from the per-class LRU capacity; FREEING a class's memory requires
-	 * {@link #invalidate(EClass)} — which the ODataAspectProvider adapter calls on package
-	 * unregistration (ADR-0004 phase 2).
+	 * NOTE on lifecycle: a weak key alone cannot free entries, because a cached AST references its
+	 * EClass via {@code referredProperty} (value → key). Growth is bounded two ways: the per-class
+	 * LRU capacity ({@code cacheSize}) AND this access-ordered LRU over the CLASSES themselves
+	 * (evicting the least-recently-used class's whole cache past {@link #MAX_CACHED_CLASSES}), so a
+	 * flood of transient EClasses cannot grow the map without limit. {@link #invalidate(EClass)}
+	 * still lets the ODataAspectProvider adapter free a class PROACTIVELY on package unregistration
+	 * (ADR-0004 phase 2, the complementary proactive path).
 	 */
-	private final Map<EClass, ODataQueryLruCache> caches =
-			Collections.synchronizedMap(new WeakHashMap<>());
+	private final Map<EClass, ODataQueryLruCache> caches = Collections.synchronizedMap(
+			new LinkedHashMap<>(16, 0.75f, true) {
+				private static final long serialVersionUID = 1L;
+
+				@Override
+				protected boolean removeEldestEntry(Map.Entry<EClass, ODataQueryLruCache> eldest) {
+					return size() > MAX_CACHED_CLASSES;
+				}
+			});
 
 	public CachingODataQueryParser() {
 		this(ODataQueryLruCache.DEFAULT_MAX_SIZE);
