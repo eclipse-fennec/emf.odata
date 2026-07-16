@@ -26,6 +26,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import java.math.RoundingMode;
+import java.math.BigInteger;
+import java.time.LocalTime;
 import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EObject;
@@ -318,9 +321,9 @@ public class OclEvaluator {
 			case "second" -> dateTime(source).getSecond();
 			case "date" -> dateTime(source).toLocalDate().toString();
 			case "time" -> dateTime(source).toLocalTime().toString();
-			case "round" -> decimal(source).setScale(0, java.math.RoundingMode.HALF_UP).longValue();
-			case "floor" -> decimal(source).setScale(0, java.math.RoundingMode.FLOOR).longValue();
-			case "ceiling" -> decimal(source).setScale(0, java.math.RoundingMode.CEILING).longValue();
+			case "round" -> decimal(source).setScale(0, RoundingMode.HALF_UP).longValue();
+			case "floor" -> decimal(source).setScale(0, RoundingMode.FLOOR).longValue();
+			case "ceiling" -> decimal(source).setScale(0, RoundingMode.CEILING).longValue();
 			default -> throw new IllegalArgumentException("unsupported operation '" + name + "'");
 		};
 	}
@@ -347,7 +350,7 @@ public class OclEvaluator {
 			case "String" -> value instanceof String;
 			case "Boolean" -> value instanceof Boolean;
 			case "Integer" -> value instanceof Integer || value instanceof Long || value instanceof Short
-					|| value instanceof Byte || value instanceof java.math.BigInteger;
+					|| value instanceof Byte || value instanceof BigInteger;
 			case "Real" -> value instanceof Number;
 			case null, default -> false;
 		};
@@ -512,7 +515,7 @@ public class OclEvaluator {
 			// TimeOfDay ("13:20[:00[.f]]"): no date part, no zone designator — anchor it on the epoch
 			// date so hour/minute/second and time comparisons work (a length heuristic mis-parsed it)
 			if (!text.contains("T") && !text.contains("-") && text.contains(":")) {
-				return java.time.LocalTime.parse(text).atDate(java.time.LocalDate.EPOCH)
+				return LocalTime.parse(text).atDate(LocalDate.EPOCH)
 						.atZone(ZoneOffset.UTC);
 			}
 			if (text.length() == 10) {
