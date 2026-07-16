@@ -356,18 +356,30 @@ public class OclEvaluator {
 	private Object substring(Object source, List<OclExpression> args, Object self,
 			Map<Variable, Object> bindings) {
 		String value = text(source);
-		int start = decimal(evaluate(args.get(0), self, bindings)).intValue();
+		// saturate to int range: a huge literal must not wrap via intValue() into a bogus offset
+		int start = clampToInt(decimal(evaluate(args.get(0), self, bindings)));
 		// [OData-URL] 5.1.1.7: start beyond the end → empty string; a negative start counts
 		// from the end of the string (clamped to the full string)
 		int effectiveStart = start < 0
 				? Math.max(0, value.length() + start)
 				: Math.min(start, value.length());
 		if (args.size() > 1) {
-			int length = decimal(evaluate(args.get(1), self, bindings)).intValue();
+			int length = clampToInt(decimal(evaluate(args.get(1), self, bindings)));
 			int end = Math.min(value.length(), Math.max(effectiveStart, effectiveStart + length));
 			return value.substring(effectiveStart, end);
 		}
 		return value.substring(effectiveStart);
+	}
+
+	/** Saturates a numeric substring offset/length to the int range (no silent overflow wrap). */
+	private static int clampToInt(BigDecimal value) {
+		if (value.compareTo(BigDecimal.valueOf(Integer.MAX_VALUE)) > 0) {
+			return Integer.MAX_VALUE;
+		}
+		if (value.compareTo(BigDecimal.valueOf(Integer.MIN_VALUE)) < 0) {
+			return Integer.MIN_VALUE;
+		}
+		return value.intValue();
 	}
 
 	// --- value coercion ---
@@ -496,7 +508,13 @@ public class OclEvaluator {
 		if (value instanceof Date date) {
 			return date.toInstant().atZone(ZoneOffset.UTC);
 		}
-		if (value instanceof String text) { // pre-typed Date/DateTimeOffset literals stay strings
+		if (value instanceof String text) { // pre-typed Date/DateTimeOffset/TimeOfDay literals stay strings
+			// TimeOfDay ("13:20[:00[.f]]"): no date part, no zone designator — anchor it on the epoch
+			// date so hour/minute/second and time comparisons work (a length heuristic mis-parsed it)
+			if (!text.contains("T") && !text.contains("-") && text.contains(":")) {
+				return java.time.LocalTime.parse(text).atDate(java.time.LocalDate.EPOCH)
+						.atZone(ZoneOffset.UTC);
+			}
 			if (text.length() == 10) {
 				return LocalDate.parse(text).atStartOfDay(ZoneOffset.UTC);
 			}
