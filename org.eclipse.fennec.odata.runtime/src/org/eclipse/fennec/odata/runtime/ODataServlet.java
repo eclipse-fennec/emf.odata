@@ -40,6 +40,16 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.stream.Collectors;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Date;
+import java.util.Objects;
+import java.util.concurrent.Semaphore;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.time.format.DateTimeFormatter;
+import jakarta.servlet.ServletException;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -151,12 +161,12 @@ import jakarta.servlet.http.HttpServletResponseWrapper;
  * </ul>
  *
  * <p><b>Security posture:</b> every request runs against hard limits BEFORE parsing —
- * expression length ({@value #DEFAULT_MAX_EXPRESSION_LENGTH}), parenthesis nesting depth
- * ({@value #DEFAULT_MAX_NESTING_DEPTH}, parser-bomb guard) and an enforced {@code $top} ceiling
- * ({@value #DEFAULT_MAX_TOP}, applied even when the client sends none). There is no string
- * concatenation into any backend — the ONLY query path is the typed OCL IR, unknown properties/
- * functions fail the parse (400). Error responses carry sanitized messages, never stack traces
- * or exception class names; unexpected failures answer with a generic 500.
+ * expression length, parenthesis nesting depth (parser-bomb guard), an enforced {@code $top}
+ * ceiling (applied even when the client sends none) and a {@code $batch} operation cap; the
+ * defaults and configuration keys live in {@link RequestLimits} and the servlet PID. There is no
+ * string concatenation into any backend — the ONLY query path is the typed OCL IR, unknown
+ * properties/functions fail the parse (400). Error responses carry sanitized messages, never stack
+ * traces or exception class names; unexpected failures answer with a generic 500.
  */
 @Component(service = Servlet.class, configurationPid = ODataServlet.PID, property = {
 		"osgi.http.whiteboard.servlet.pattern=/odata/*",
@@ -187,7 +197,7 @@ public class ODataServlet extends HttpServlet {
 	private final OclEvaluator expandFilterEvaluator = new OclEvaluator();
 	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
 	private final Map<EPackage, ODataPackageProfile> profiles =
-			java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+			Collections.synchronizedMap(new java.util.WeakHashMap<>());
 	private final EntityShaper shaper = new EntityShaper();
 
 	private volatile MetadataService metadataService;
@@ -208,8 +218,8 @@ public class ODataServlet extends HttpServlet {
 	 * Bounds concurrently executing respond-async requests. {@code null} = unbounded (the
 	 * {@code odata.max.async.inflight <= 0} foot-gun). Rebuilt on {@link #activate} before serving.
 	 */
-	private volatile java.util.concurrent.Semaphore asyncInflight =
-			new java.util.concurrent.Semaphore(DEFAULT_MAX_ASYNC_INFLIGHT);
+	private volatile Semaphore asyncInflight =
+			new Semaphore(DEFAULT_MAX_ASYNC_INFLIGHT);
 	private volatile int maxAsyncMonitors = DEFAULT_MAX_ASYNC_MONITORS;
 
 	@Activate
@@ -218,7 +228,7 @@ public class ODataServlet extends HttpServlet {
 		Object origin = configuration.get("odata.cors.origin");
 		corsOrigin = origin == null ? "" : String.valueOf(origin).trim();
 		int inflight = intConfig(configuration, "odata.max.async.inflight", DEFAULT_MAX_ASYNC_INFLIGHT);
-		asyncInflight = inflight > 0 ? new java.util.concurrent.Semaphore(inflight) : null;
+		asyncInflight = inflight > 0 ? new Semaphore(inflight) : null;
 		maxAsyncMonitors = intConfig(configuration, "odata.max.async.monitors", DEFAULT_MAX_ASYNC_MONITORS);
 	}
 
@@ -311,9 +321,9 @@ public class ODataServlet extends HttpServlet {
 			"$filter", "$search", "$select", "$compute", "$format", "$expand");
 
 	/** The {@code odata.metadata=} format parameter of an Accept header or {@code $format}. */
-	private static final java.util.regex.Pattern METADATA_PARAM =
-			java.util.regex.Pattern.compile("odata\\.metadata\\s*=\\s*(full|minimal|none)",
-					java.util.regex.Pattern.CASE_INSENSITIVE);
+	private static final Pattern METADATA_PARAM =
+			Pattern.compile("odata\\.metadata\\s*=\\s*(full|minimal|none)",
+					Pattern.CASE_INSENSITIVE);
 
 	/**
 	 * The response metadata level for the current request, carried request-scoped so the many
@@ -333,9 +343,9 @@ public class ODataServlet extends HttpServlet {
 			source = request.getHeader("Accept");
 		}
 		if (source != null) {
-			java.util.regex.Matcher matcher = METADATA_PARAM.matcher(source);
+			Matcher matcher = METADATA_PARAM.matcher(source);
 			if (matcher.find() && !matcher.group(1).equalsIgnoreCase("minimal")) {
-				return matcher.group(1).toLowerCase(java.util.Locale.ROOT);
+				return matcher.group(1).toLowerCase(Locale.ROOT);
 			}
 		}
 		return "minimal";
@@ -361,9 +371,9 @@ public class ODataServlet extends HttpServlet {
 		return "none".equals(responseMetadataLevel());
 	}
 
-	private static final java.util.regex.Pattern IEEE754_PARAM =
-			java.util.regex.Pattern.compile("IEEE754Compatible\\s*=\\s*(true|false)",
-					java.util.regex.Pattern.CASE_INSENSITIVE);
+	private static final Pattern IEEE754_PARAM =
+			Pattern.compile("IEEE754Compatible\\s*=\\s*(true|false)",
+					Pattern.CASE_INSENSITIVE);
 
 	/** Whether the current response runs {@code IEEE754Compatible=true}; request-scoped like the metadata level. */
 	private static final ThreadLocal<Boolean> IEEE754 = new ThreadLocal<>();
@@ -377,7 +387,7 @@ public class ODataServlet extends HttpServlet {
 		if (source == null) {
 			return false;
 		}
-		java.util.regex.Matcher matcher = IEEE754_PARAM.matcher(source);
+		Matcher matcher = IEEE754_PARAM.matcher(source);
 		return matcher.find() && "true".equalsIgnoreCase(matcher.group(1));
 	}
 
@@ -488,7 +498,7 @@ public class ODataServlet extends HttpServlet {
 
 	@Override
 	protected void service(HttpServletRequest request, HttpServletResponse response)
-			throws jakarta.servlet.ServletException, IOException {
+			throws ServletException, IOException {
 		String pathInfo = request.getPathInfo() == null ? "/" : request.getPathInfo();
 		if (applyCors(request, response)) {
 			return; // a CORS preflight was answered
@@ -657,7 +667,7 @@ public class ODataServlet extends HttpServlet {
 		try {
 			for (JsonNode sub : requests) {
 				String group = sub.path("atomicityGroup").asString(null);
-				if (!java.util.Objects.equals(group, currentGroup)) {
+				if (!Objects.equals(group, currentGroup)) {
 					finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
 					groupOpen = false;
 					groupBuffer = new ArrayList<>();
@@ -737,7 +747,7 @@ public class ODataServlet extends HttpServlet {
 		ArrayNode requests = JSON.createArrayNode();
 		int changeset = 0;
 		int generated = 0;
-		for (String part : body.split("\\r?\\n?--" + java.util.regex.Pattern.quote(boundary))) {
+		for (String part : body.split("\\r?\\n?--" + Pattern.quote(boundary))) {
 			if (part.isBlank() || part.startsWith("--")) {
 				continue;
 			}
@@ -751,7 +761,7 @@ public class ODataServlet extends HttpServlet {
 			if (partHeaders.toLowerCase(Locale.ROOT).contains("multipart/mixed") && nested != null) {
 				changeset++;
 				String group = "cs" + changeset;
-				for (String member : partBody.split("\\r?\\n?--" + java.util.regex.Pattern.quote(nested))) {
+				for (String member : partBody.split("\\r?\\n?--" + Pattern.quote(nested))) {
 					if (member.isBlank() || member.startsWith("--")) {
 						continue;
 					}
@@ -805,7 +815,7 @@ public class ODataServlet extends HttpServlet {
 			index++; // inner request headers (Accept, Content-Type, …)
 		}
 		String requestBody = index >= lines.length ? ""
-				: String.join("\n", java.util.Arrays.asList(lines)
+				: String.join("\n", Arrays.asList(lines)
 						.subList(Math.min(index + 1, lines.length), lines.length)).trim();
 		if (url.startsWith("http://") || url.startsWith("https://")) {
 			// absolute-form request lines: reduce to service-root-relative (keep the query!)
@@ -1076,7 +1086,7 @@ public class ODataServlet extends HttpServlet {
 				if (existing == null) {
 					map.put(name, new String[] { value });
 				} else {
-					String[] grown = java.util.Arrays.copyOf(existing, existing.length + 1);
+					String[] grown = Arrays.copyOf(existing, existing.length + 1);
 					grown[existing.length] = value;
 					map.put(name, grown);
 				}
@@ -1252,7 +1262,7 @@ public class ODataServlet extends HttpServlet {
 		// DoS guard: bound concurrently EXECUTING async requests so respond-async cannot open an
 		// unbounded number of backend sessions/threads. At the limit, refuse with 503 + Retry-After
 		// rather than accept work we cannot run ([OData-Protocol] 11.6 does not mandate acceptance).
-		java.util.concurrent.Semaphore permits = asyncInflight;
+		Semaphore permits = asyncInflight;
 		boolean bounded = permits != null;
 		if (bounded && !permits.tryAcquire()) {
 			response.setHeader("Retry-After", "1");
@@ -2226,7 +2236,7 @@ public class ODataServlet extends HttpServlet {
 				URI.createURI("request.odatajson"), metadataService);
 		String payloadContentType = request.getContentType();
 		if (payloadContentType != null) { // IEEE754Compatible=true payloads carry Int64/Decimal as strings
-			java.util.regex.Matcher matcher = IEEE754_PARAM.matcher(payloadContentType);
+			Matcher matcher = IEEE754_PARAM.matcher(payloadContentType);
 			resource.ieee754Compatible(matcher.find() && "true".equalsIgnoreCase(matcher.group(1)));
 		}
 		Map<Object, Object> options = new HashMap<>();
@@ -2522,11 +2532,11 @@ public class ODataServlet extends HttpServlet {
 	private static boolean wantsJsonMetadata(HttpServletRequest request) {
 		String format = request.getParameter("$format");
 		if (format != null && !format.isBlank()) {
-			String normalized = format.trim().toLowerCase(java.util.Locale.ROOT);
+			String normalized = format.trim().toLowerCase(Locale.ROOT);
 			return normalized.equals("json") || normalized.startsWith("application/json");
 		}
 		String accept = request.getHeader("Accept");
-		return accept != null && accept.toLowerCase(java.util.Locale.ROOT).contains("application/json");
+		return accept != null && accept.toLowerCase(Locale.ROOT).contains("application/json");
 	}
 
 	private void metadataDocument(HttpServletRequest request, HttpServletResponse response)
@@ -3456,7 +3466,7 @@ public class ODataServlet extends HttpServlet {
 					+ entity.eClass().getName() + "/$entity", json));
 			return;
 		}
-		if (result instanceof java.util.Collection<?> collection) {
+		if (result instanceof Collection<?> collection) {
 			StringBuilder body = new StringBuilder("{\"value\":[");
 			boolean first = true;
 			for (Object element : collection) {
@@ -4089,8 +4099,8 @@ public class ODataServlet extends HttpServlet {
 		}
 		StringBuilder json = envelopeHead(ODataJson.sanitize(context));
 		envelopeProperty(json).append("\"value\":");
-		ODataJson.value(json, value instanceof java.util.Date date
-				? java.time.format.DateTimeFormatter.ISO_INSTANT.format(date.toInstant()) : value,
+		ODataJson.value(json, value instanceof Date date
+				? DateTimeFormatter.ISO_INSTANT.format(date.toInstant()) : value,
 				ieee754());
 		json.append('}');
 		response.setContentType(contentTypeJson());
@@ -4461,7 +4471,7 @@ public class ODataServlet extends HttpServlet {
 		return "{" + (inner.isEmpty() ? members.substring(1) : inner + members) + "}";
 	}
 
-	private <T> T parseChecked(String expression, java.util.function.Function<String, T> parse) {
+	private <T> T parseChecked(String expression, Function<String, T> parse) {
 		if (expression == null || expression.isBlank()) {
 			return null;
 		}
@@ -4657,7 +4667,7 @@ public class ODataServlet extends HttpServlet {
 		int levels = 1;
 		for (String option : SelectTree.splitTopLevel(optionList, ';')) {
 			String trimmed = option.trim();
-			java.util.regex.Matcher matcher = NESTED_LEVELS.matcher(trimmed);
+			Matcher matcher = NESTED_LEVELS.matcher(trimmed);
 			if (matcher.find()) {
 				String value = trimmed.substring(matcher.end()).trim();
 				levels = "max".equalsIgnoreCase(value) ? MAX_EXPAND_LEVELS
@@ -4677,8 +4687,8 @@ public class ODataServlet extends HttpServlet {
 		return new ExpandItem(options.build(), refOnly, cast, levels);
 	}
 
-	private static final java.util.regex.Pattern NESTED_LEVELS =
-			java.util.regex.Pattern.compile("(?i)^\\$?levels=");
+	private static final Pattern NESTED_LEVELS =
+			Pattern.compile("(?i)^\\$?levels=");
 
 	private static int parsedLevels(String value) {
 		try {
