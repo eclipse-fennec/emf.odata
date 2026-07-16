@@ -193,22 +193,64 @@ public class OclEvaluator {
 		return forAll;
 	}
 
+	/**
+	 * Evaluates a boolean sub-expression to a Kleene tri-state: {@code TRUE}, {@code FALSE} or
+	 * {@code null} = UNKNOWN (a relational comparison that hit a null value, signalled internally
+	 * as {@link NullComparison}). Non-null faults (type/format errors) are NOT swallowed — they
+	 * propagate and become a client 400, consistent with the rest of the evaluator.
+	 */
+	private Boolean triState(OclExpression expression, Object self, Map<Variable, Object> bindings) {
+		try {
+			return Boolean.TRUE.equals(evaluate(expression, self, bindings));
+		} catch (NullComparison unknown) {
+			return null;
+		}
+	}
+
 	private Object operation(OperationCallExp op, Object self, Map<Variable, Object> bindings) {
 		String name = op.getName();
 		List<OclExpression> args = op.getOwnedArguments();
 
-		// logic short-circuits before evaluating the other side
+		// boolean connectives follow Kleene three-valued logic (OData/SQL semantics): a relational
+		// comparison against a null value is UNKNOWN, not false. The dominant value short-circuits
+		// (false for AND, true for OR — no evaluation of the other side, preserving the previous
+		// behaviour AND any hard error it would hide); otherwise UNKNOWN propagates as NullComparison
+		// so that e.g. `unknown OR true = true` and `unknown AND false = false`.
 		switch (name) {
 			case "and" -> {
-				return Boolean.TRUE.equals(evaluate(op.getOwnedSource(), self, bindings))
-						&& Boolean.TRUE.equals(evaluate(args.get(0), self, bindings));
+				Boolean left = triState(op.getOwnedSource(), self, bindings);
+				if (Boolean.FALSE.equals(left)) {
+					return false;
+				}
+				Boolean right = triState(args.get(0), self, bindings);
+				if (Boolean.FALSE.equals(right)) {
+					return false;
+				}
+				if (left == null || right == null) {
+					throw new NullComparison(); // unknown AND true = unknown
+				}
+				return true;
 			}
 			case "or" -> {
-				return Boolean.TRUE.equals(evaluate(op.getOwnedSource(), self, bindings))
-						|| Boolean.TRUE.equals(evaluate(args.get(0), self, bindings));
+				Boolean left = triState(op.getOwnedSource(), self, bindings);
+				if (Boolean.TRUE.equals(left)) {
+					return true;
+				}
+				Boolean right = triState(args.get(0), self, bindings);
+				if (Boolean.TRUE.equals(right)) {
+					return true;
+				}
+				if (left == null || right == null) {
+					throw new NullComparison(); // unknown OR false = unknown
+				}
+				return false;
 			}
 			case "not" -> {
-				return !Boolean.TRUE.equals(evaluate(op.getOwnedSource(), self, bindings));
+				Boolean value = triState(op.getOwnedSource(), self, bindings);
+				if (value == null) {
+					throw new NullComparison(); // NOT unknown = unknown
+				}
+				return !value;
 			}
 			case "oclIsKindOf", "oclAsType" -> {
 				// unbound cast(T)/isof(T) has no source and tests the instance itself
