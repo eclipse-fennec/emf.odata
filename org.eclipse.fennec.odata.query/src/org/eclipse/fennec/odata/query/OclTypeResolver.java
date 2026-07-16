@@ -15,6 +15,8 @@ package org.eclipse.fennec.odata.query;
 import java.util.Map;
 import java.util.Set;
 
+import java.math.BigInteger;
+import java.math.BigDecimal;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EDataType;
 import org.eclipse.emf.ecore.EEnum;
@@ -74,10 +76,10 @@ public class OclTypeResolver {
 			Map.entry(Long.class, "Integer"), Map.entry(long.class, "Integer"),
 			Map.entry(Short.class, "Integer"), Map.entry(short.class, "Integer"),
 			Map.entry(Byte.class, "Integer"), Map.entry(byte.class, "Integer"),
-			Map.entry(java.math.BigInteger.class, "Integer"),
+			Map.entry(BigInteger.class, "Integer"),
 			Map.entry(Double.class, "Real"), Map.entry(double.class, "Real"),
 			Map.entry(Float.class, "Real"), Map.entry(float.class, "Real"),
-			Map.entry(java.math.BigDecimal.class, "Real"));
+			Map.entry(BigDecimal.class, "Real"));
 
 	/** Types the expression tree in place and returns it (bottom-up, idempotent). */
 	public <T extends OclExpression> T resolve(T expression) {
