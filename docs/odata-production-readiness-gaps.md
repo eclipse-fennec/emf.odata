@@ -47,7 +47,10 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 ## TODO / offene Entscheidungen (sinnlose Default-Kombinationen — mit User klären)
 
 - **T2.7 God-Object-Refactor** (ODataServlet ~4900 Z.): als eigenes Follow-up NACH dem Merge (Pre-Merge-Refactor ist selbst ein Risiko; Helfer sind bereits extrahiert).
-- **T1.4 example-jpa.bndrun**: per `bnd run`/Eclipse starten und verifizieren (in dieser Umgebung nicht startbar).
+- **JPA-WriteService Nicht-Containment-Referenzen**: `copyFeatures` überspringt sie derzeit
+  („non-containment bindings are a follow-up"). Folge: über den Write-Pfad angelegte Entitäten
+  verlieren ihre Nicht-Containment-Links (z.B. `Product.category`). Follow-up = Referenzen per
+  Key auflösen (`em.getReference`) und binden.
 - **T2.2 CSDL-Annotation-Typinferenz**: braucht Term-Typ-Modellierung (round-trip-stabil) — gemeinsam entscheiden.
 - **T2.9 Coverage-Floor** bewusst nicht blind angehoben; wenn gewünscht, mit Messlauf einen sicheren Wert wählen.
 - **T3.1/T3.4** Rest-FQN + Konstanten-Export: mechanischer Sammel-Pass (IDE „Organize Imports").
@@ -91,12 +94,24 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
   Foot-gun dokumentiert (monitors ≥ inflight). Tests: 503-Cap + Foot-gun-`0`.
 - [x] **T1.3 [Security/DoS] `$apply` Page-Cap** — ✅ `JpaApplyExecutor` honoriert `odata.jpa.max.page.size`.
   Test: groupby ohne $top (3 Gruppen, Cap 2) → gedeckelt.
-- [~] **T1.4 [Beispiele] JPA-Beispiel-Scaffold VORBEREITET** (example-jpa.bndrun -resolve:auto + README; per bnd run/Eclipse zu verifizieren). Der JPA-über-HTTP-Pfad ist bereits
-  **bewiesen** (T0.6 `httpEndToEndOverJpaBackend` = lauffähige, verifizierte Demonstration).
-  Für ein *startbares* `example-jpa.bndrun` braucht es eine Beispiel-Komponente (ConfigAdmin:
-  H2-DataSource + PersistenceUnit + EPackage + Demo-Seed, Muster = `JpaWiringIntegrationTest`)
-  und einen `-resolve: auto`-bndrun; die Lauffähigkeit muss per `bnd run`/Eclipse verifiziert
-  werden (in dieser Umgebung nicht startbar). Bewusst NICHT als unverifiziertes Artefakt committet.
+- [x] **T1.4 [Beispiele] Lauffähiger JPA-Beispiel + proper Modell-Registrierung** — ✅ End-to-end
+  headless verifiziert (Port 8092): `$metadata`=200, `GET /Product` liefert geseedete Daten aus H2,
+  `$filter=price gt 2.00 & $orderby=price desc & $count=true` → `@odata.count:2` mit SQL-Pushdown,
+  `POST /Product`→201 + Round-Trip, `GET /Review` (Containment, gekeyt). Umsetzung:
+  - **Proper Modell-Registrierung** (`ShopExampleComponent`, shared): statt nacktem `EPackage` jetzt
+    `EPackageConfigurator` + `EPackage` mit `emf.name`/`emf.nsURI`/`emf.registration=provided`/
+    `emf.model.scope=resourceset` + `EPackage.Registry.INSTANCE` — Voraussetzung, damit die
+    emf.osgi-Registry das Modell trackt und die PU es über `(emf.name=webshop)` findet.
+  - **Neues Bundle `org.eclipse.fennec.odata.example.jpa`** (`ShopJpaBackendComponent`): generiert
+    das `.eorm`-Mapping (`EntityMapper`) in den Bundle-Datenbereich, legt DataSource- +
+    PersistenceUnit-Factory-Configs automatisch an, seedet asynchron sobald `JpaQueryService` bindet.
+  - **Ecore**: `Review` erhielt ein `id`-Schlüsselattribut — keylose Entität ist im EclipseLink-
+    Descriptor nicht baubar (`EntityMapper`-Synthese-PK → `DescriptorException` „no non-read-only
+    mapping for primary key REVIEW.PK_REVIEW"); Embeddable-Mapping wird von `EntityMapper` nicht
+    generisch unterstützt (empirisch geprüft).
+  - **Bekannte Grenze (dokumentiert)**: `Product.category` (Nicht-Containment) bindet der JPA-
+    `WriteService` noch nicht (`copyFeatures` überspringt Nicht-Containment-Refs) → Demo seedet
+    Produkte flach; `Product.reviews` (Containment) reitet mit.
 
 ## Tier 2 — Mittel
 
