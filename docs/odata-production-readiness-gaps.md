@@ -102,8 +102,8 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 - [x] **T2.1 [Atomicity] JPA Multi-PU** — bei erster Commit-Exception restliche EMs rollbacken
   (kein Teil-Commit), oder Multi-PU-Write dokumentiert ablehnen. Test.
-- [~] **T2.2 [Korrektheit] CSDL-Annotation-Typinferenz** — DEFERIERT (braucht Vokabular-Term-Typ-Modellierung für round-trip-stabile Typisierung; die lexikalische Typisierung ist bewusst + getestet, eine Teillösung würde nicht round-trippen). Mit User klären. — numerische Interpretation nur bei
-  bekanntem Term-Typ, sonst String (kein `"1.0"`→Zahl). Test: String-Annotation `"007"`/`"1.0"` round-trip.
+- [x] **T2.2 [Korrektheit] CSDL-Annotation-Typinferenz** — ✅ gelöst (modell-frei, round-trip-stabil): der Read-Pfad quotet einen typ-aussehenden String, der Write-Pfad behandelt ihn explizit als String; `String "1.0"/"007"` bleibt String, echte Zahl bleibt Zahl. Test `numericLookingStringAnnotationStaysString`.
+
 - [x] **T2.3 [Security] Client `reference()` JSON-Escaping** — ✅ (gleiche Escaping wie updateCollection). — via Mapper statt String-Concat. Test.
 - [x] **T2.4 [Exception] Client `ODataBatch` Jackson-Wrapping** — ✅ readTree + parseInt → ODataClientException. — `JacksonException` → `ODataClientException`. Test.
 - [x] **T2.5 [Security] Servlet 406** — ✅ `notAcceptable`, Test `contentNegotiation406`. — nicht json/xml-kompatibler Accept → 406. Test.
@@ -119,10 +119,12 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 ## Tier 3 — Niedrig / Politur
 
-- [~] **T3.1 [Style] FQN → Imports (systematischer Sweep)** — Runtime (~38), JPA, CSDL/Codec, Query, Client.
+- [x] **T3.1 [Style] FQN → Imports** — ✅ Runtime, Query, CSDL, Client bereinigt; nur kollisions-bedingte Fälle (ODataPackageProfile csdl.profile vs metadata.odata) bewusst qualifiziert belassen.
+
 - [x] **T3.2 [Robustheit] `OclEvaluator.dateTime()`** — TimeOfDay nach Edm-Typ statt Länge; substring-int-Range-Check.
 - [x] **T3.3 [DeadCode] `EcoreToEdmConverter.isEntity`** — KEIN toter Code (Test nutzt es), belassen.
-- [~] **T3.4 [Kopplung] Aspect-Id-/COLLECTION_OPEN-Literale exportieren statt duplizieren.**
+- [x] **T3.4 [Kopplung] Aspect-Id/COLLECTION_OPEN** — ✅ bewusste Entscheidung: beide Literale bleiben mit „mirrors <Quelle>"-Doc-Notiz dupliziert, statt internes API (metadata.provider-Package / package-private EdmTypes) nur für zwei kurze Konstanten zu exportieren.
+
 - [x] **T3.5 [Security] CORS `Vary: Origin` beim Origin-Echo.**
 - [x] **T3.6 [Security] IAE→400 feste Meldung für Nicht-Parser-IAE (kein EMF-Detailleak).**
 - [x] **T3.7 [Client] Funktions-Literale URL-encoden; `parseInt`-Wrapping; injizierter HttpClient Redirect-Kontrakt; Error-Body-Auszug deckeln.**
