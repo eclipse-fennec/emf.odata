@@ -46,7 +46,11 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 ## TODO / offene Entscheidungen (sinnlose Default-Kombinationen — mit User klären)
 
-- (wird beim Umsetzen befüllt)
+- **T2.7 God-Object-Refactor** (ODataServlet ~4900 Z.): als eigenes Follow-up NACH dem Merge (Pre-Merge-Refactor ist selbst ein Risiko; Helfer sind bereits extrahiert).
+- **T1.4 example-jpa.bndrun**: per `bnd run`/Eclipse starten und verifizieren (in dieser Umgebung nicht startbar).
+- **T2.2 CSDL-Annotation-Typinferenz**: braucht Term-Typ-Modellierung (round-trip-stabil) — gemeinsam entscheiden.
+- **T2.9 Coverage-Floor** bewusst nicht blind angehoben; wenn gewünscht, mit Messlauf einen sicheren Wert wählen.
+- **T3.1/T3.4** Rest-FQN + Konstanten-Export: mechanischer Sammel-Pass (IDE „Organize Imports").
 
 ---
 
@@ -87,7 +91,7 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
   Foot-gun dokumentiert (monitors ≥ inflight). Tests: 503-Cap + Foot-gun-`0`.
 - [x] **T1.3 [Security/DoS] `$apply` Page-Cap** — ✅ `JpaApplyExecutor` honoriert `odata.jpa.max.page.size`.
   Test: groupby ohne $top (3 Gruppen, Cap 2) → gedeckelt.
-- [ ] **T1.4 [Beispiele] lauffähiges JPA-Beispiel** — OFFEN. Der JPA-über-HTTP-Pfad ist bereits
+- [~] **T1.4 [Beispiele] JPA-Beispiel-Scaffold VORBEREITET** (example-jpa.bndrun -resolve:auto + README; per bnd run/Eclipse zu verifizieren). Der JPA-über-HTTP-Pfad ist bereits
   **bewiesen** (T0.6 `httpEndToEndOverJpaBackend` = lauffähige, verifizierte Demonstration).
   Für ein *startbares* `example-jpa.bndrun` braucht es eine Beispiel-Komponente (ConfigAdmin:
   H2-DataSource + PersistenceUnit + EPackage + Demo-Seed, Muster = `JpaWiringIntegrationTest`)
@@ -96,7 +100,7 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 ## Tier 2 — Mittel
 
-- [ ] **T2.1 [Atomicity] JPA Multi-PU** — bei erster Commit-Exception restliche EMs rollbacken
+- [x] **T2.1 [Atomicity] JPA Multi-PU** — bei erster Commit-Exception restliche EMs rollbacken
   (kein Teil-Commit), oder Multi-PU-Write dokumentiert ablehnen. Test.
 - [~] **T2.2 [Korrektheit] CSDL-Annotation-Typinferenz** — DEFERIERT (braucht Vokabular-Term-Typ-Modellierung für round-trip-stabile Typisierung; die lexikalische Typisierung ist bewusst + getestet, eine Teillösung würde nicht round-trippen). Mit User klären. — numerische Interpretation nur bei
   bekanntem Term-Typ, sonst String (kein `"1.0"`→Zahl). Test: String-Annotation `"007"`/`"1.0"` round-trip.
@@ -104,27 +108,27 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - [x] **T2.4 [Exception] Client `ODataBatch` Jackson-Wrapping** — ✅ readTree + parseInt → ODataClientException. — `JacksonException` → `ODataClientException`. Test.
 - [x] **T2.5 [Security] Servlet 406** — ✅ `notAcceptable`, Test `contentNegotiation406`. — nicht json/xml-kompatibler Accept → 406. Test.
 - [x] **T2.6 [Concurrency] `ODataClient.maxResponseBytes`** — ✅ volatile. — `volatile` oder aus config. Test/Review.
-- [ ] **T2.7 [SOLID] `ODataServlet` God-Object** — Batch-/Async-/Write-Dispatcher extrahieren.
-- [ ] **T2.8 [Concurrency/Leak] `CachingODataQueryParser.invalidate` verdrahten** — Provider-Unregister-Hook oder Klassen-Zahl-Cap.
-- [ ] **T2.9 [Coverage] Floor anheben + `persistence.api` gaten; `$apply`-Ausschluss prüfen.**
-- [ ] **T2.10 [Coverage] `ChangeJournal` direkte Unit-Tests** — Eviction→410, rollback, Token-Staleness.
-- [ ] **T2.11 [E2E] Concurrency-/Last-Test über HTTP** — paralleler HttpClient-Fan-out inkl. konkurrierender Writes.
-- [ ] **T2.12 [E2E] Große-Payload-/Tiefpaging-Test** — >1000 Rows, mehrseitiger nextLink über HTTP.
-- [ ] **T2.13 [Beispiele] README-Widerspruch** — read-only vs. POST 201 auflösen.
+- [~] **T2.7 [SOLID] `ODataServlet` God-Object** — Batch-/Async-/Write-Dispatcher extrahieren.
+- [x] **T2.8 [Concurrency/Leak] `CachingODataQueryParser.invalidate` verdrahten** — Provider-Unregister-Hook oder Klassen-Zahl-Cap.
+- [~] **T2.9 [Coverage] Floor anheben + `persistence.api` gaten; `$apply`-Ausschluss prüfen.**
+- [x] **T2.10 [Coverage] `ChangeJournal` direkte Unit-Tests** — Eviction→410, rollback, Token-Staleness.
+- [x] **T2.11 [E2E] Concurrency-/Last-Test über HTTP** — paralleler HttpClient-Fan-out inkl. konkurrierender Writes.
+- [x] **T2.12 [E2E] Große-Payload-/Tiefpaging-Test** — >1000 Rows, mehrseitiger nextLink über HTTP.
+- [x] **T2.13 [Beispiele] README-Widerspruch** — read-only vs. POST 201 auflösen.
 - [x] **T2.14 [Performance] `MemoryWriteRepository.begin()`** — ✅ mit T0.3 erledigt (Lazy-Capture statt Whole-Store-Kopie).
 
 ## Tier 3 — Niedrig / Politur
 
-- [ ] **T3.1 [Style] FQN → Imports (systematischer Sweep)** — Runtime (~38), JPA, CSDL/Codec, Query, Client.
-- [ ] **T3.2 [Robustheit] `OclEvaluator.dateTime()`** — TimeOfDay nach Edm-Typ statt Länge; substring-int-Range-Check.
+- [~] **T3.1 [Style] FQN → Imports (systematischer Sweep)** — Runtime (~38), JPA, CSDL/Codec, Query, Client.
+- [x] **T3.2 [Robustheit] `OclEvaluator.dateTime()`** — TimeOfDay nach Edm-Typ statt Länge; substring-int-Range-Check.
 - [x] **T3.3 [DeadCode] `EcoreToEdmConverter.isEntity`** — KEIN toter Code (Test nutzt es), belassen.
-- [ ] **T3.4 [Kopplung] Aspect-Id-/COLLECTION_OPEN-Literale exportieren statt duplizieren.**
+- [~] **T3.4 [Kopplung] Aspect-Id-/COLLECTION_OPEN-Literale exportieren statt duplizieren.**
 - [x] **T3.5 [Security] CORS `Vary: Origin` beim Origin-Echo.**
 - [x] **T3.6 [Security] IAE→400 feste Meldung für Nicht-Parser-IAE (kein EMF-Detailleak).**
 - [x] **T3.7 [Client] Funktions-Literale URL-encoden; `parseInt`-Wrapping; injizierter HttpClient Redirect-Kontrakt; Error-Body-Auszug deckeln.**
-- [ ] **T3.8 [Kapselung] defensive Kopien: `ODataPage`, `ComputedRow`, `ChangeJournal.Change`.**
+- [x] **T3.8 [Kapselung] defensive Kopien: `ODataPage`, `ComputedRow`, `ChangeJournal.Change`.**
 - [x] **T3.9 [Robustheit] `ODataVocabularies` Leer-Schema-Check; Enum long→int-Range.**
-- [ ] **T3.10 [Style] Magic Numbers → benannte Konstanten/Config; gebrochene `{@value}`-Javadoc.**
+- [~] **T3.10 [Style] Magic Numbers → benannte Konstanten/Config; gebrochene `{@value}`-Javadoc.**
 
 ---
 
@@ -136,6 +140,10 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 ## Fortschritts-Log
 - 2026-07-16: Dokument angelegt; Review abgeschlossen (6 Bereiche), Blocker-Satz fixiert.
 - 2026-07-16: **Tier 0 KOMPLETT** (T0.1–T0.6) + T2.14, je mit Tests committet; voller
+  `build testOSGi` grün.
+- 2026-07-16: **Tier 2 + Tier 3 im Wesentlichen KOMPLETT** — alle korrektheits-/security-/robustheits-
+  relevanten Punkte umgesetzt+getestet+committet; verbleibend nur bewusste Deferrals (T2.7 God-Object,
+  T2.2 Annotation-Typinferenz, Rest-FQN/Konstanten) + T1.4-Scaffold (launch-zu-verifizieren). Voller
   `build testOSGi` grün.
 - 2026-07-16: **Tier 1 Sicherheits-/DoS-Kern KOMPLETT** (T1.1 CSDL-XML-Härtung, T1.2 async
   In-Flight-Cap, T1.3 $apply-Page-Cap) mit Tests committet. **Offen T1.4** (lauffähiges
