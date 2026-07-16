@@ -53,9 +53,10 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 ## Tier 0 — Merge-Blocker (Korrektheit / Datenverlust / Security)
 
-- [ ] **T0.1 [Korrektheit] `OclEvaluator` 3VL für `and`/`or`/`not`** — Kleene-Tri-State statt
-  Exception-Propagation; `unknown OR true = true` etc. Tests: Wahrheitstabelle inkl.
-  verschachtelter Fälle (`(unknown AND false) OR true`), null-Operanden, kombiniert mit `not`.
+- [x] **T0.1 [Korrektheit] `OclEvaluator` 3VL für `and`/`or`/`not`** — ✅ Kleene-Tri-State
+  (`triState()`-Helfer), Short-Circuit auf dominantem Wert, UNKNOWN propagiert. Tests:
+  `OclEvaluatorTest` (11 Fälle, volle Tabelle + Nesting + null-Literal) + 4 Differenzial-Fälle
+  (In-Memory ↔ JPA-Parität). Commit auf snapshot.
 - [ ] **T0.2 [Concurrency] `JpaQueryService` ambient EM/TX ThreadLocal** — striktes `finally`-
   Cleanup (`ambient.remove()` + EM/TX schließen), Doppel-`begin()` absichern, Leak bei
   Teil-Fehler in `begin()` schließen. Tests: Exception zwischen begin/commit → kein Leak,
