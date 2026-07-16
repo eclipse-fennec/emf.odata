@@ -118,6 +118,9 @@ public final class ODataVocabularies {
 
 			EObject root = res.getContents().get(0);
 			TEdmx edmx = (root instanceof EdmxRoot er) ? er.getEdmx() : (TEdmx) root;
+			if (edmx.getDataServices() == null || edmx.getDataServices().getSchema().isEmpty()) {
+				throw new IllegalStateException("vocabulary " + namespace + " carries no schema");
+			}
 			SchemaType schema = edmx.getDataServices().getSchema().get(0);
 			return new EdmToEcoreConverter().toEPackage(schema);
 		} catch (IOException e) {
