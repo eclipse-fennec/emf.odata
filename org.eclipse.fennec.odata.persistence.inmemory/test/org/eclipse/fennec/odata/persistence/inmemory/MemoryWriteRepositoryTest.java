@@ -23,6 +23,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
@@ -118,19 +124,26 @@ class MemoryWriteRepositoryTest {
 		repository.create(categoryClass, dairy);
 		repository.create(productClass, product("m1", "Milk", "1.20"));
 
+		// reads return defensive COPIES (no live-object leak), so re-read after each mutation to
+		// observe it — a held read reflects the store state AT THE TIME OF THE READ, by design
 		repository.link(productClass, "'m1'", "category", "'c1'");
-		EObject milk = read().get(0);
-		assertEquals(dairy, milk.eGet(productClass.getEStructuralFeature("category")));
+		EObject linkedCategory = (EObject) read().get(0)
+				.eGet(productClass.getEStructuralFeature("category"));
+		assertEquals("c1", linkedCategory == null ? null
+				: linkedCategory.eGet(categoryClass.getEStructuralFeature("id")),
+				"the linked category is visible on a fresh read");
 
 		assertTrue(repository.unlink(productClass, "'m1'", "category", null));
-		assertNull(milk.eGet(productClass.getEStructuralFeature("category")));
+		assertNull(read().get(0).eGet(productClass.getEStructuralFeature("category")),
+				"the unlink is visible on a fresh read");
 		assertFalse(repository.unlink(productClass, "'m1'", "category", null));
 
 		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
 		EObject review = pkg.getEFactoryInstance().create(reviewClass);
 		review.eSet(reviewClass.getEStructuralFeature("stars"), 5);
 		repository.createRelated(productClass, "'m1'", "reviews", review);
-		assertEquals(1, ((List<?>) milk.eGet(productClass.getEStructuralFeature("reviews"))).size());
+		assertEquals(1, ((List<?>) read().get(0)
+				.eGet(productClass.getEStructuralFeature("reviews"))).size());
 
 		assertThrows(IllegalArgumentException.class,
 				() -> repository.link(productClass, "'m1'", "category", "'nosuch'"));
@@ -162,6 +175,119 @@ class MemoryWriteRepositoryTest {
 		assertEquals(threads * perThread,
 				((List<?>) milk.eGet(productClass.getEStructuralFeature("reviews"))).size(),
 				"every concurrent add is retained under the per-owner lock");
+	}
+
+	@Test
+	@DisplayName("a concurrent commit survives another thread's rollback (no foreign-data loss)")
+	void concurrentCommitSurvivesForeignRollback() throws Exception {
+		CountDownLatch ghostCreated = new CountDownLatch(1);
+		CountDownLatch foreignCommitted = new CountDownLatch(1);
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			// Thread A: open a batch, create 'Ghost', wait for the foreign write, then roll back
+			Future<?> a = pool.submit(() -> {
+				repository.begin();
+				repository.create(productClass, product("ghost", "Ghost", "1.00"));
+				ghostCreated.countDown();
+				await(foreignCommitted);
+				repository.rollback();
+			});
+			// Thread B: after A's in-batch create, write 'Survivor' WITHOUT a transaction (its own
+			// thread has no ambient tx → the write commits immediately and A never touched its key)
+			Future<?> b = pool.submit(() -> {
+				await(ghostCreated);
+				repository.create(productClass, product("survivor", "Survivor", "2.00"));
+				foreignCommitted.countDown();
+			});
+			a.get(10, TimeUnit.SECONDS);
+			b.get(10, TimeUnit.SECONDS);
+		} finally {
+			pool.shutdownNow();
+		}
+		List<String> names = allNames();
+		assertFalse(names.contains("Ghost"), "the rolled-back batch's write must be gone");
+		assertTrue(names.contains("Survivor"),
+				"a concurrent commit on an untouched key MUST survive the foreign rollback");
+	}
+
+	@Test
+	@DisplayName("concurrent read during structural mutation does not throw (defensive copy)")
+	void concurrentReadDuringMutationHasNoCme() throws Exception {
+		repository.create(productClass, product("m1", "Milk", "1.20"));
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		AtomicBoolean writerDone = new AtomicBoolean(false);
+		int writes = 400; // bounded: keeps the multi-valued feature from growing without limit
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			Future<?> writer = pool.submit(() -> {
+				for (int i = 0; i < writes; i++) {
+					EObject r = pkg.getEFactoryInstance().create(reviewClass);
+					r.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+					repository.createRelated(productClass, "'m1'", "reviews", r);
+				}
+				writerDone.set(true);
+			});
+			// the reader iterates a multi-valued feature of the returned entities WHILE the writer
+			// structurally mutates it; on LIVE objects this would throw ConcurrentModificationException
+			// (at the reader or inside the copy) — the class-store-locked defensive copy must prevent it
+			Future<?> reader = pool.submit(() -> {
+				do {
+					for (EObject product : repository.entities(productClass)) {
+						Object reviews = product.eGet(productClass.getEStructuralFeature("reviews"));
+						if (reviews instanceof List<?> list) {
+							for (Object ignored : list) {
+								// merely iterating a live shared EList would CME
+							}
+						}
+					}
+				} while (!writerDone.get());
+			});
+			writer.get(20, TimeUnit.SECONDS);
+			reader.get(20, TimeUnit.SECONDS); // completes only if no CME/exception escaped
+		} finally {
+			pool.shutdownNow();
+		}
+		assertEquals(writes, ((List<?>) read().get(0)
+				.eGet(productClass.getEStructuralFeature("reviews"))).size(),
+				"every concurrent add is retained");
+	}
+
+	@Test
+	@DisplayName("media writes participate in the transaction (rolled back / committed)")
+	void mediaRolledBackWithTransaction() {
+		repository.create(productClass, product("m1", "Milk", "1.20"));
+		repository.writeMedia(productClass, "'m1'",
+				new MediaService.MediaStream(new byte[] { 1 }, "image/png"));
+
+		repository.begin();
+		repository.writeMedia(productClass, "'m1'",
+				new MediaService.MediaStream(new byte[] { 2, 2 }, "image/png"));
+		repository.rollback();
+		assertEquals(1, repository.readMedia(productClass, "'m1'").orElseThrow().content().length,
+				"the media write is rolled back to the prior stream");
+
+		repository.begin();
+		repository.writeMedia(productClass, "'m1'",
+				new MediaService.MediaStream(new byte[] { 3, 3, 3 }, "image/png"));
+		repository.commit();
+		assertEquals(3, repository.readMedia(productClass, "'m1'").orElseThrow().content().length,
+				"a committed media write persists");
+	}
+
+	private List<String> allNames() {
+		return read().stream()
+				.map(e -> String.valueOf(e.eGet(productClass.getEStructuralFeature("name")))).toList();
+	}
+
+	private static void await(CountDownLatch latch) {
+		try {
+			if (!latch.await(10, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("timed out waiting for the other thread");
+			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException(e);
+		}
 	}
 
 	@Test
