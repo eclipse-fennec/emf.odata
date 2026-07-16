@@ -14,6 +14,7 @@ package org.eclipse.fennec.odata.csdl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -101,6 +102,40 @@ class OdataAnnotationResolutionTest {
 		if (ecoreHelper != null) {
 			ecoreHelper.releaseAll();
 		}
+	}
+
+	@Test
+	void numericLookingStringAnnotationStaysString() {
+		EClass documentClass = (EClass) model.getEClassifier("Document");
+		EAnnotation holder = documentClass.getEAnnotation(ODataAnnotationConstants.ANNOTATIONS_SOURCE);
+		if (holder == null) {
+			holder = org.eclipse.emf.ecore.EcoreFactory.eINSTANCE.createEAnnotation();
+			holder.setSource(ODataAnnotationConstants.ANNOTATIONS_SOURCE);
+			documentClass.getEAnnotations().add(holder);
+		}
+		// the read path stores a numeric-looking STRING quoted; a genuine integer is stored plain
+		holder.getDetails().put("My.Custom.Ver", "\"1.0\"");
+		holder.getDetails().put("My.Custom.Code", "\"007\"");
+		holder.getDetails().put("My.Custom.Count", "42");
+
+		SchemaType schema = new EcoreToEdmConverter().toSchema(model);
+		TEntityType docType = byName(schema.getEntityType(), TEntityType::getName, "Document");
+		AnnotationType ver = byName(docType.getAnnotation(), AnnotationType::getTerm, "My.Custom.Ver");
+		assertEquals("1.0", ver.getString1(), "a quoted numeric-looking value must stay a String");
+		assertNull(ver.getDecimal1(), "it must NOT be retyped to Decimal");
+		assertEquals("007", byName(docType.getAnnotation(), AnnotationType::getTerm, "My.Custom.Code")
+				.getString1());
+		AnnotationType count = byName(docType.getAnnotation(), AnnotationType::getTerm, "My.Custom.Count");
+		assertEquals(42, count.getInt1().intValue(), "an unquoted integer is still typed Int");
+		assertNull(count.getString1());
+
+		// round-trip stable: the String forms come back quoted, the integer plain
+		EPackage read = new EdmToEcoreConverter().toEPackage(schema);
+		EAnnotation readDoc = ((EClass) read.getEClassifier("Document"))
+				.getEAnnotation(ODataAnnotationConstants.ANNOTATIONS_SOURCE);
+		assertEquals("\"1.0\"", readDoc.getDetails().get("My.Custom.Ver"));
+		assertEquals("\"007\"", readDoc.getDetails().get("My.Custom.Code"));
+		assertEquals("42", readDoc.getDetails().get("My.Custom.Count"));
 	}
 
 	@Test

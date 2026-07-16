@@ -291,7 +291,11 @@ public class EdmToEcoreConverter {
 	/** The constant-expression value in attribute form, or {@code null} for rich expressions. */
 	private static String constantValue(AnnotationType a) {
 		if (a.getString1() != null) {
-			return a.getString1();
+			String s = a.getString1();
+			// a String value that LOOKS numeric/boolean (e.g. "1.0", "007", "true") would be
+			// lexically retyped to a number/bool when written back — quote it so the write path
+			// keeps it a String (round-trip stability); ordinary strings are stored verbatim
+			return ODataAnnotationConstants.looksNumericOrBoolean(s) ? "\"" + s + "\"" : s;
 		}
 		if (a.isSetBool1()) {
 			return String.valueOf(a.isBool1());
