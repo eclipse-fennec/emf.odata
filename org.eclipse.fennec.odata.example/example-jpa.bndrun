@@ -25,9 +25,9 @@
 # The shop EPackage is registered by ShopExampleComponent (shared with example.bndrun). Once the
 # factory appears, JpaQueryService serves it and the README curls answer from H2.
 
--resolve: auto
+-resolve: manual
 
--runfw: org.apache.felix.framework
+-runfw: org.apache.felix.framework;version='[7.0.5,7.0.5]'
 -runee: JavaSE-21
 
 -runrequires: \

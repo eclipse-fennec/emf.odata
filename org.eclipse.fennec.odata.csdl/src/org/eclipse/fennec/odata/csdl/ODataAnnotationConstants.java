@@ -109,4 +109,14 @@ public final class ODataAnnotationConstants {
 
 	private ODataAnnotationConstants() {
 	}
+
+	/**
+	 * Whether a stored annotation value's lexical form would make the write path type it as a
+	 * boolean/integer/decimal rather than a string. The read path quotes such a value when it came
+	 * from a String constant, so the write path can keep it a string (round-trip stability).
+	 */
+	public static boolean looksNumericOrBoolean(String value) {
+		return "true".equals(value) || "false".equals(value)
+				|| value.matches("[+-]?\\d+") || value.matches("[+-]?\\d+\\.\\d+");
+	}
 }

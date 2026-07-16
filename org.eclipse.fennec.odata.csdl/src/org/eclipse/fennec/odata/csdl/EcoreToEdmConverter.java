@@ -390,6 +390,12 @@ public class EcoreToEdmConverter {
 	 * and become the corresponding EDM expression tree; plain constants keep the lexical
 	 * typing: {@code true|false} → Bool, integral → Int, decimal → Decimal, else String.
 	 */
+	/** A value the read path wrapped in quotes to force String typing (its inner form looks typed). */
+	private static boolean isQuotedTypedLiteral(String value) {
+		return value.length() >= 2 && value.charAt(0) == '"' && value.charAt(value.length() - 1) == '"'
+				&& ODataAnnotationConstants.looksNumericOrBoolean(value.substring(1, value.length() - 1));
+	}
+
 	private void addAnnotations(List<ODataAnnotation> annotations, List<AnnotationType> out) {
 		for (ODataAnnotation annotation : annotations) {
 			AnnotationType a = edm.createAnnotationType();
@@ -400,7 +406,12 @@ public class EcoreToEdmConverter {
 				out.add(a);
 				continue;
 			}
-			if ("true".equals(value) || "false".equals(value)) {
+			// a value the read path quoted BECAUSE it looks numeric/boolean is an EXPLICIT string —
+			// unquote it and keep it String (this is what makes a string like "1.0"/"007" round-trip
+			// instead of being lexically retyped to a number)
+			if (isQuotedTypedLiteral(value)) {
+				a.setString1(value.substring(1, value.length() - 1));
+			} else if ("true".equals(value) || "false".equals(value)) {
 				a.setBool1(Boolean.parseBoolean(value));
 			} else if (value.matches("[+-]?\\d+")) {
 				a.setInt1(new BigInteger(value));
