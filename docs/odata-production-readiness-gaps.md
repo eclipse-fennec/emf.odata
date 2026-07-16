@@ -98,12 +98,12 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 - [ ] **T2.1 [Atomicity] JPA Multi-PU** — bei erster Commit-Exception restliche EMs rollbacken
   (kein Teil-Commit), oder Multi-PU-Write dokumentiert ablehnen. Test.
-- [ ] **T2.2 [Korrektheit] CSDL-Annotation-Typinferenz** — numerische Interpretation nur bei
+- [~] **T2.2 [Korrektheit] CSDL-Annotation-Typinferenz** — DEFERIERT (braucht Vokabular-Term-Typ-Modellierung für round-trip-stabile Typisierung; die lexikalische Typisierung ist bewusst + getestet, eine Teillösung würde nicht round-trippen). Mit User klären. — numerische Interpretation nur bei
   bekanntem Term-Typ, sonst String (kein `"1.0"`→Zahl). Test: String-Annotation `"007"`/`"1.0"` round-trip.
-- [ ] **T2.3 [Security] Client `reference()` JSON-Escaping** — via Mapper statt String-Concat. Test.
-- [ ] **T2.4 [Exception] Client `ODataBatch` Jackson-Wrapping** — `JacksonException` → `ODataClientException`. Test.
-- [ ] **T2.5 [Security] Servlet 406** — nicht json/xml-kompatibler Accept → 406. Test.
-- [ ] **T2.6 [Concurrency] `ODataClient.maxResponseBytes`** — `volatile` oder aus config. Test/Review.
+- [x] **T2.3 [Security] Client `reference()` JSON-Escaping** — ✅ (gleiche Escaping wie updateCollection). — via Mapper statt String-Concat. Test.
+- [x] **T2.4 [Exception] Client `ODataBatch` Jackson-Wrapping** — ✅ readTree + parseInt → ODataClientException. — `JacksonException` → `ODataClientException`. Test.
+- [x] **T2.5 [Security] Servlet 406** — ✅ `notAcceptable`, Test `contentNegotiation406`. — nicht json/xml-kompatibler Accept → 406. Test.
+- [x] **T2.6 [Concurrency] `ODataClient.maxResponseBytes`** — ✅ volatile. — `volatile` oder aus config. Test/Review.
 - [ ] **T2.7 [SOLID] `ODataServlet` God-Object** — Batch-/Async-/Write-Dispatcher extrahieren.
 - [ ] **T2.8 [Concurrency/Leak] `CachingODataQueryParser.invalidate` verdrahten** — Provider-Unregister-Hook oder Klassen-Zahl-Cap.
 - [ ] **T2.9 [Coverage] Floor anheben + `persistence.api` gaten; `$apply`-Ausschluss prüfen.**
@@ -117,13 +117,13 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 - [ ] **T3.1 [Style] FQN → Imports (systematischer Sweep)** — Runtime (~38), JPA, CSDL/Codec, Query, Client.
 - [ ] **T3.2 [Robustheit] `OclEvaluator.dateTime()`** — TimeOfDay nach Edm-Typ statt Länge; substring-int-Range-Check.
-- [ ] **T3.3 [DeadCode] `EcoreToEdmConverter.isEntity` entfernen.**
+- [x] **T3.3 [DeadCode] `EcoreToEdmConverter.isEntity`** — KEIN toter Code (Test nutzt es), belassen.
 - [ ] **T3.4 [Kopplung] Aspect-Id-/COLLECTION_OPEN-Literale exportieren statt duplizieren.**
-- [ ] **T3.5 [Security] CORS `Vary: Origin` beim Origin-Echo.**
-- [ ] **T3.6 [Security] IAE→400 feste Meldung für Nicht-Parser-IAE (kein EMF-Detailleak).**
-- [ ] **T3.7 [Client] Funktions-Literale URL-encoden; `parseInt`-Wrapping; injizierter HttpClient Redirect-Kontrakt; Error-Body-Auszug deckeln.**
+- [x] **T3.5 [Security] CORS `Vary: Origin` beim Origin-Echo.**
+- [x] **T3.6 [Security] IAE→400 feste Meldung für Nicht-Parser-IAE (kein EMF-Detailleak).**
+- [x] **T3.7 [Client] Funktions-Literale URL-encoden; `parseInt`-Wrapping; injizierter HttpClient Redirect-Kontrakt; Error-Body-Auszug deckeln.**
 - [ ] **T3.8 [Kapselung] defensive Kopien: `ODataPage`, `ComputedRow`, `ChangeJournal.Change`.**
-- [ ] **T3.9 [Robustheit] `ODataVocabularies` Leer-Schema-Check; Enum long→int-Range.**
+- [x] **T3.9 [Robustheit] `ODataVocabularies` Leer-Schema-Check; Enum long→int-Range.**
 - [ ] **T3.10 [Style] Magic Numbers → benannte Konstanten/Config; gebrochene `{@value}`-Javadoc.**
 
 ---
