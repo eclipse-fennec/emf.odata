@@ -199,11 +199,32 @@ public class ODataServlet extends HttpServlet {
 	 */
 	private volatile String corsOrigin = "";
 
+	/** Default maximum of concurrently EXECUTING respond-async requests (secure default). */
+	static final int DEFAULT_MAX_ASYNC_INFLIGHT = 16;
+	/** Default maximum of PARKED async status monitors (LRU; unretrieved results age out). */
+	static final int DEFAULT_MAX_ASYNC_MONITORS = 100;
+
+	/**
+	 * Bounds concurrently executing respond-async requests. {@code null} = unbounded (the
+	 * {@code odata.max.async.inflight <= 0} foot-gun). Rebuilt on {@link #activate} before serving.
+	 */
+	private volatile java.util.concurrent.Semaphore asyncInflight =
+			new java.util.concurrent.Semaphore(DEFAULT_MAX_ASYNC_INFLIGHT);
+	private volatile int maxAsyncMonitors = DEFAULT_MAX_ASYNC_MONITORS;
+
 	@Activate
 	void activate(Map<String, Object> configuration) {
 		limits = RequestLimits.fromConfiguration(configuration);
 		Object origin = configuration.get("odata.cors.origin");
 		corsOrigin = origin == null ? "" : String.valueOf(origin).trim();
+		int inflight = intConfig(configuration, "odata.max.async.inflight", DEFAULT_MAX_ASYNC_INFLIGHT);
+		asyncInflight = inflight > 0 ? new java.util.concurrent.Semaphore(inflight) : null;
+		maxAsyncMonitors = intConfig(configuration, "odata.max.async.monitors", DEFAULT_MAX_ASYNC_MONITORS);
+	}
+
+	private static int intConfig(Map<String, Object> configuration, String key, int fallback) {
+		Object value = configuration == null ? null : configuration.get(key);
+		return value == null ? fallback : Integer.parseInt(String.valueOf(value));
 	}
 
 	@Deactivate
@@ -1179,8 +1200,9 @@ public class ODataServlet extends HttpServlet {
 
 				@Override
 				protected boolean removeEldestEntry(Map.Entry<String, Future<AsyncResult>> eldest) {
-					if (size() > 100) {
-						eldest.getValue().cancel(true);
+					// maxAsyncMonitors <= 0 means unbounded parking (never evict) — a foot-gun
+					if (maxAsyncMonitors > 0 && size() > maxAsyncMonitors) {
+						eldest.getValue().cancel(true); // releases the in-flight permit if still running
 						return true;
 					}
 					return false;
@@ -1208,14 +1230,33 @@ public class ODataServlet extends HttpServlet {
 	 * original request/response objects when this method returns, so the background thread must
 	 * never touch them.
 	 */
-	private void respondAsync(HttpServletRequest request, HttpServletResponse response) {
+	private void respondAsync(HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
+		// DoS guard: bound concurrently EXECUTING async requests so respond-async cannot open an
+		// unbounded number of backend sessions/threads. At the limit, refuse with 503 + Retry-After
+		// rather than accept work we cannot run ([OData-Protocol] 11.6 does not mandate acceptance).
+		java.util.concurrent.Semaphore permits = asyncInflight;
+		boolean bounded = permits != null;
+		if (bounded && !permits.tryAcquire()) {
+			response.setHeader("Retry-After", "1");
+			error(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+					"the server is at its concurrent asynchronous-request limit");
+			return;
+		}
 		BatchHttpRequest snapshot = BatchHttpRequest.asyncSnapshot(request);
 		BatchHttpResponse captured = new BatchHttpResponse(response);
 		String metadataLevel = METADATA_LEVEL.get();
 		Boolean ieee754 = IEEE754.get();
 		String id = UUID.randomUUID().toString();
-		asyncResults.put(id, asyncExecutor.submit(
-				() -> executeAsync(snapshot, captured, metadataLevel, ieee754)));
+		asyncResults.put(id, asyncExecutor.submit(() -> {
+			try {
+				return executeAsync(snapshot, captured, metadataLevel, ieee754);
+			} finally {
+				if (bounded) {
+					permits.release(); // in-flight = executing; the permit frees when the run ends
+				}
+			}
+		}));
 		response.setStatus(HttpServletResponse.SC_ACCEPTED);
 		response.setHeader("Location", contextRoot(request) + "/$async/" + id);
 		response.setHeader("Preference-Applied", "respond-async");

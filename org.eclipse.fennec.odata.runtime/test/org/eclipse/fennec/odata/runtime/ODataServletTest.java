@@ -2359,6 +2359,50 @@ class ODataServletTest {
 		}
 	}
 
+	@Test
+	@DisplayName("respond-async: the in-flight cap refuses excess concurrent executions with 503")
+	void asyncInflightCapReturns503() throws Exception {
+		servlet.activate(Map.of("odata.max.async.inflight", "1"));
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		CountDownLatch gate = new CountDownLatch(1);
+		backendGate.set(gate);
+		try {
+			// the first async request takes the single permit; its execution blocks on the gate
+			Response first = call("GET", "/Product", Map.of(), null, null,
+					Map.of("Prefer", "respond-async"));
+			assertEquals(202, first.status(), first.body());
+			// the second finds no permit → refused with 503 + Retry-After (not accepted-and-queued)
+			Response second = call("GET", "/Product", Map.of(), null, null,
+					Map.of("Prefer", "respond-async"));
+			assertEquals(503, second.status(), second.body());
+			assertEquals("1", second.headers().get("Retry-After"), second.body());
+
+			// release the first execution, drain it → the permit frees
+			gate.countDown();
+			awaitMonitor(first.headers().get("Location").substring("/odata".length()));
+
+			backendGate.set(null);
+			Response third = call("GET", "/Product", Map.of(), null, null,
+					Map.of("Prefer", "respond-async"));
+			assertEquals(202, third.status(), "a fresh async request is accepted again: " + third.body());
+		} finally {
+			backendGate.set(null);
+			gate.countDown();
+		}
+	}
+
+	@Test
+	@DisplayName("respond-async: a non-positive in-flight cap disables the guard (documented foot-gun)")
+	void asyncInflightCapDisabled() throws Exception {
+		servlet.activate(Map.of("odata.max.async.inflight", "0"));
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		// with the guard off, several concurrent async requests are all accepted
+		for (int i = 0; i < 5; i++) {
+			assertEquals(202, call("GET", "/Product", Map.of(), null, null,
+					Map.of("Prefer", "respond-async")).status());
+		}
+	}
+
 	/** Polls a status monitor until the background execution delivered (or fails the test). */
 	private Response awaitMonitor(String monitorPath) throws Exception {
 		for (int attempt = 0; attempt < 500; attempt++) {
