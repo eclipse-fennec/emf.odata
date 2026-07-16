@@ -27,6 +27,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
@@ -464,5 +472,76 @@ public class ODataHttpIntegrationTest {
 
 		assertEquals(404, get("/Product('atomic-e2e')").statusCode(),
 				"the first create was rolled back — nothing persisted");
+	}
+
+	@Test
+	@Order(20)
+	@DisplayName("concurrency: parallel reads and writes over HTTP all succeed and stay consistent")
+	void concurrentRequests() throws Exception {
+		int threads = 12;
+		ExecutorService pool = Executors.newFixedThreadPool(threads);
+		try {
+			List<Future<Integer>> reads = new ArrayList<>();
+			List<Future<Integer>> writes = new ArrayList<>();
+			for (int i = 0; i < threads; i++) {
+				reads.add(pool.submit(() -> get("/Product?$count=true").statusCode()));
+				String id = "cc-" + i;
+				writes.add(pool.submit(() -> post("/Product",
+						"{\"id\":\"" + id + "\",\"name\":\"Concurrent " + id + "\"}").statusCode()));
+			}
+			for (Future<Integer> r : reads) {
+				assertEquals(200, r.get(20, TimeUnit.SECONDS), "every concurrent read succeeds");
+			}
+			for (Future<Integer> w : writes) {
+				assertEquals(201, w.get(20, TimeUnit.SECONDS), "every concurrent create succeeds");
+			}
+		} finally {
+			pool.shutdownNow();
+		}
+		// all concurrently-created rows are readable and none was lost
+		String all = get("/Product?$top=1000").body();
+		for (int i = 0; i < threads; i++) {
+			assertTrue(all.contains("Concurrent cc-" + i), "cc-" + i + " missing: race/lost write");
+		}
+	}
+
+	@Test
+	@Order(21)
+	@DisplayName("deep server-driven paging over HTTP: follow @odata.nextLink to the last page")
+	void deepPagingOverHttp() throws Exception {
+		int rows = 45;
+		for (int i = 0; i < rows; i++) {
+			String id = String.format("pg-%02d", i);
+			assertEquals(201, post("/Product",
+					"{\"id\":\"" + id + "\",\"name\":\"" + id + "\"}").statusCode());
+		}
+		// page with a small $top and follow nextLink to the end, collecting the paged ids
+		Set<String> seen = new java.util.HashSet<>();
+		String pathAndQuery = "/Product?$filter=" + encode("startswith(name,'pg-')") + "&$top=10";
+		int pages = 0;
+		while (pathAndQuery != null && pages++ < 100) {
+			HttpResponse<String> page = get(pathAndQuery);
+			assertEquals(200, page.statusCode(), page.body());
+			Matcher ids = Pattern.compile("\"id\":\"(pg-\\d\\d)\"").matcher(page.body());
+			while (ids.find()) {
+				assertTrue(seen.add(ids.group(1)), "a row appeared on two pages: " + ids.group(1));
+			}
+			Matcher next = Pattern.compile("\"@odata.nextLink\":\"([^\"]+)\"").matcher(page.body());
+			pathAndQuery = next.find() ? relativeNextLink(next.group(1)) : null;
+		}
+		assertEquals(rows, seen.size(), "every paged row is visited exactly once across the pages");
+	}
+
+	/** The nextLink relative to BASE (it may be absolute or already relative). */
+	private static String relativeNextLink(String nextLink) {
+		int odata = nextLink.indexOf("/odata");
+		return odata >= 0 ? nextLink.substring(odata + "/odata".length()) : nextLink;
+	}
+
+	private HttpResponse<String> post(String path, String json) throws Exception {
+		return client.send(HttpRequest.newBuilder(URI.create(BASE + path))
+				.header("Content-Type", "application/json")
+				.POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8)).build(),
+				HttpResponse.BodyHandlers.ofString());
 	}
 }
