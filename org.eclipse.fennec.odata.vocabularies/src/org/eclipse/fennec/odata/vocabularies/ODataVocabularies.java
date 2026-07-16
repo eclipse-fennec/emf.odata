@@ -110,7 +110,7 @@ public final class ODataVocabularies {
 			rs.getPackageRegistry().put(EdmxPackage.eNS_URI, EdmxPackage.eINSTANCE);
 
 			Resource res = rs.createResource(URI.createURI(namespace + ".xml"));
-			res.load(in, CsdlXmlLoad.secureOptions()); // XXE-hardened, shared with the CSDL read path
+			CsdlXmlLoad.loadSecurely(res, in); // XXE-hardened + depth-guarded, shared load path
 			if (!res.getErrors().isEmpty()) {
 				throw new IllegalStateException("vocabulary " + namespace + " did not parse cleanly: "
 						+ res.getErrors().get(0).getMessage());
