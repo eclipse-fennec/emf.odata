@@ -12,6 +12,7 @@
  */
 package org.eclipse.fennec.odata.client;
 
+import java.util.Locale;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -112,7 +113,7 @@ public final class EntitySetRequest {
 	 * producing a response the client cannot decode.
 	 */
 	public EntitySetRequest format(String format) {
-		String normalized = format.trim().toLowerCase(java.util.Locale.ROOT);
+		String normalized = format.trim().toLowerCase(Locale.ROOT);
 		if (!normalized.equals("json") && !normalized.startsWith("application/json")) {
 			throw new ODataClientException(
 					"the client decodes JSON only; $format='" + format + "' is not supported");

@@ -12,6 +12,8 @@
  */
 package org.eclipse.fennec.odata.csdl;
 
+import java.util.Locale;
+import java.util.function.IntConsumer;
 import java.util.List;
 
 import org.eclipse.emf.ecore.EAnnotation;
@@ -313,13 +315,13 @@ public class OdataResolver {
 			return byReturn;
 		}
 		try {
-			return ODataOperationKind.valueOf(override.toUpperCase(java.util.Locale.ROOT));
+			return ODataOperationKind.valueOf(override.toUpperCase(Locale.ROOT));
 		} catch (IllegalArgumentException e) {
 			return byReturn; // malformed override → fall back, resolver stays lenient
 		}
 	}
 
-	private static void annInt(EModelElement element, String key, java.util.function.IntConsumer setter) {
+	private static void annInt(EModelElement element, String key, IntConsumer setter) {
 		String v = ann(element, key);
 		if (v != null) {
 			try {

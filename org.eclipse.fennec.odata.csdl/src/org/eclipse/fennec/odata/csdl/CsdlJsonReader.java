@@ -12,6 +12,7 @@
  */
 package org.eclipse.fennec.odata.csdl;
 
+import java.util.function.Consumer;
 import java.math.BigInteger;
 
 import org.open.oasis.docs.odata.ns.edm.AnnotationType;
@@ -187,8 +188,8 @@ public final class CsdlJsonReader {
 		return t;
 	}
 
-	private void structural(ObjectNode node, java.util.function.Consumer<TProperty> properties,
-			java.util.function.Consumer<TNavigationProperty> navigations) {
+	private void structural(ObjectNode node, Consumer<TProperty> properties,
+			Consumer<TNavigationProperty> navigations) {
 		node.propertyStream().forEach(entry -> {
 			String name = entry.getKey();
 			if (name.startsWith("$") || name.startsWith("@")
@@ -288,7 +289,7 @@ public final class CsdlJsonReader {
 	}
 
 	private void parameters(JsonNode overload,
-			java.util.function.Consumer<TActionFunctionParameter> out) {
+			Consumer<TActionFunctionParameter> out) {
 		if (!(overload.get("$Parameter") instanceof ArrayNode parameters)) {
 			return;
 		}
@@ -351,7 +352,7 @@ public final class CsdlJsonReader {
 	}
 
 	private void bindings(ObjectNode member,
-			java.util.function.Consumer<TNavigationPropertyBinding> out) {
+			Consumer<TNavigationPropertyBinding> out) {
 		if (member.get("$NavigationPropertyBinding") instanceof ObjectNode bindings) {
 			bindings.propertyStream().forEach(entry -> {
 				TNavigationPropertyBinding binding = edm.createTNavigationPropertyBinding();
@@ -363,7 +364,7 @@ public final class CsdlJsonReader {
 	}
 
 	/** {@code "@Term": value} members → {@link AnnotationType}s (constants and rich expressions). */
-	private void annotations(ObjectNode node, java.util.function.Consumer<AnnotationType> out) {
+	private void annotations(ObjectNode node, Consumer<AnnotationType> out) {
 		node.propertyStream().forEach(entry -> {
 			if (!entry.getKey().startsWith("@")) {
 				return;

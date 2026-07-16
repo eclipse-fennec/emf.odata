@@ -12,6 +12,7 @@
  */
 package org.eclipse.fennec.odata.client;
 
+import java.util.LinkedHashMap;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -179,7 +180,7 @@ final class ODataJsonDecoder {
 			}
 			stripControlInformation(object);
 			ObjectNode entityNode = MAPPER.createObjectNode();
-			Map<String, Object> computed = new java.util.LinkedHashMap<>();
+			Map<String, Object> computed = new LinkedHashMap<>();
 			object.propertyStream().forEach(member -> {
 				if (entityType.getEStructuralFeature(member.getKey()) != null) {
 					entityNode.set(member.getKey(), member.getValue());

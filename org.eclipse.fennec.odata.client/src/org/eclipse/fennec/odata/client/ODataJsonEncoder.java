@@ -12,6 +12,7 @@
  */
 package org.eclipse.fennec.odata.client;
 
+import java.util.Arrays;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -110,7 +111,7 @@ final class ODataJsonEncoder {
 					+ " children by deep insert, do not @odata.bind them");
 		}
 		if (reference.isMany()) {
-			Iterable<?> urls = target instanceof Object[] array ? java.util.Arrays.asList(array)
+			Iterable<?> urls = target instanceof Object[] array ? Arrays.asList(array)
 					: target instanceof Iterable<?> iterable ? iterable
 					: null;
 			if (urls == null) {
