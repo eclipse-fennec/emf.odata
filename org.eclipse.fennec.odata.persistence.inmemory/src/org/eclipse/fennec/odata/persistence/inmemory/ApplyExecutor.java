@@ -28,7 +28,6 @@ import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.odata.query.OclEvaluator;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.apply.AggregateExpression;
-import org.eclipse.fennec.odata.query.apply.AggregateMethod;
 import org.eclipse.fennec.odata.query.apply.AggregateTransformation;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 import org.eclipse.fennec.odata.query.apply.ApplyTransformation;
