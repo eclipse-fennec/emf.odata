@@ -29,7 +29,12 @@ import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.emf.ecore.resource.Resource;
+import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
+import org.eclipse.emf.common.util.URI;
 import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
 import org.eclipse.fennec.m2x.model.ocl.CollectionKind;
 import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
@@ -48,6 +53,7 @@ import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.OrderBySegment;
+import org.eclipse.fennec.persistence.eclipselink.resource.JPAResourceFactory;
 import org.eclipse.persistence.jpa.JpaHelper;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -218,7 +224,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 			for (Object row : typedQuery.getResultList()) {
 				entities.add((EObject) row);
 			}
-			materializeExpanded(entities, query);
+			materializeExpanded(entities, query, factory);
 
 			long total = query.count() ? count(query, em, cb, factory, entity) : -1;
 			return new QueryResult(entities, total);
@@ -253,15 +259,30 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 	}
 
 	/**
-	 * Touches the expanded navigation chains while the EntityManager is still open, so their
-	 * values are REAL materialized objects afterwards — the SPI contract promises the caller
-	 * plain readable results, never unresolved proxies or post-close lazy loads.
+	 * Materializes the expanded navigation chains, so their values are REAL objects afterwards —
+	 * the SPI contract promises the caller plain readable results, never unresolved proxies.
+	 *
+	 * <p>Non-containment navigations come back from the Fennec Persistence layer as lightweight EMF
+	 * proxies ({@code jpa://} URIs carrying the target key). Attaching the results to a ResourceSet
+	 * wired with the {@link JPAResourceFactory} lets them resolve through the standard EMF machinery
+	 * on access; with the lazy {@code JPAResource} (emf.persistence-jpa#17) each resolution is a
+	 * keyed {@code em.find} that hits the shared cache the LEFT fetch joins above just warmed — one
+	 * statement for the page, not a per-row (N+1) or whole-table load. Touching the chains here
+	 * forces that resolution eagerly so nothing is left as a proxy for the caller.
 	 */
-	private void materializeExpanded(List<EObject> entities, EntityQuery query) {
+	private void materializeExpanded(List<EObject> entities, EntityQuery query,
+			EntityManagerFactory factory) {
 		List<List<EReference>> paths = expandPaths(query);
 		if (paths.isEmpty()) {
 			return;
 		}
+		ResourceSet resourceSet = new ResourceSetImpl();
+		resourceSet.getResourceFactoryRegistry().getProtocolToFactoryMap()
+				.put("jpa", new JPAResourceFactory(factory));
+		resourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap()
+				.put("*", new XMIResourceFactoryImpl());
+		Resource holder = resourceSet.createResource(URI.createURI("odata:expand-result"));
+		holder.getContents().addAll(entities);
 		for (EObject entity : entities) {
 			for (List<EReference> chain : paths) {
 				descend(entity, chain, 0);
@@ -273,7 +294,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 		if (index >= chain.size()) {
 			return;
 		}
-		Object value = object.eGet(chain.get(index));
+		Object value = object.eGet(chain.get(index)); // eGet resolves the proxy via the ResourceSet
 		if (value instanceof List<?> members) {
 			for (Object member : members) { // touching loads the batched collection
 				if (member instanceof EObject child) {

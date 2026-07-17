@@ -12,6 +12,7 @@ Bundle-Description: JPA QueryService (E5): translates the OCL predicate IR into 
 	jakarta.persistence-api;version=latest,\
 	org.eclipse.persistence.core;version=latest,\
 	org.eclipse.persistence.jpa;version=latest,\
+	org.eclipse.fennec.persistence.eclipselink;version=latest,\
 	org.eclipse.fennec.emf.osgi.api;version=latest
 
 # Tests bootstrap a real EclipseLink + H2 persistence unit (dynamic EMF entities) via the
