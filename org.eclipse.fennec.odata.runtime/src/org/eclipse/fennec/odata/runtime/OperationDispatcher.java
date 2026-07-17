@@ -424,7 +424,7 @@ private void writeFunctionResult(Object result, HttpServletRequest request,
 	}
 	response.setContentType(ODataServlet.contentTypeJson());
 	if (result instanceof EObject entity) {
-		String json = servlet.entityJson(entity, entity.eClass(), null, Set.of());
+		String json = servlet.formats.entityJson(entity, entity.eClass(), null, Set.of());
 		response.getWriter().write(ODataServlet.withContext(ODataServlet.contextRoot(request) + "/$metadata#"
 				+ entity.eClass().getName() + "/$entity", json));
 		return;
@@ -436,7 +436,7 @@ private void writeFunctionResult(Object result, HttpServletRequest request,
 			if (!(element instanceof EObject entity)) {
 				throw new ODataQueryParseException("a collection function result must hold entities");
 			}
-			body.append(first ? "" : ",").append(servlet.entityJson(entity, entity.eClass(), null, Set.of()));
+			body.append(first ? "" : ",").append(servlet.formats.entityJson(entity, entity.eClass(), null, Set.of()));
 			first = false;
 		}
 		response.getWriter().write(body.append("]}").toString());

@@ -223,7 +223,7 @@ void deltaResponse(String setName, String castName, EClass castType, ODataServle
 		return;
 	}
 	EClass context = castType != null ? castType : target.entityType();
-	Map<String, ODataServlet.ExpandItem> expand = servlet.expandOption(request, context);
+	Map<String, ResponseFormatter.ExpandItem> expand = servlet.formats.expandOption(request, context);
 	if (!expand.isEmpty()) {
 		if ("4.0".equals(ODataServlet.negotiateVersion(request))) {
 			// 4.0 deltas MUST flatten expanded changes into link objects ([OData-JSON]) —
@@ -237,7 +237,7 @@ void deltaResponse(String setName, String castName, EClass castType, ODataServle
 		}
 	}
 	Map<String, String> aliases = servlet.parameterAliases(request);
-	SelectTree select = servlet.selectOption(request, context);
+	SelectTree select = servlet.formats.selectOption(request, context);
 	EntityQuery definingQuery = new EntityQuery(target.entityType(), castType,
 			servlet.parseChecked(servlet.filterWithSearch(request, context),
 					filter -> aliases.isEmpty() ? servlet.parser.parseFilter(filter, context)
@@ -271,7 +271,7 @@ void deltaResponse(String setName, String castName, EClass castType, ODataServle
 		// upserts ride the regular expand pipeline: an expanding defining query serializes
 		// the FULL current representation of the expanded navigations ([OData-JSON] — the
 		// spec-legal alternative to nested delta representations)
-		json.append(servlet.entityJson(entity, context, select, expand));
+		json.append(servlet.formats.entityJson(entity, context, select, expand));
 	}
 	boolean v40 = "4.0".equals(ODataServlet.negotiateVersion(request));
 	for (DeltaService.Removal removal : delta.removals()) {

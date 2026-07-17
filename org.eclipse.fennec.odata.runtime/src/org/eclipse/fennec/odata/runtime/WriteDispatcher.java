@@ -306,7 +306,7 @@ private void writeBelowEntity(ResourcePath path, EClass entityType, WriteService
 				reference.getName(), child.entity());
 		response.setStatus(HttpServletResponse.SC_CREATED);
 		response.setHeader("Location", request.getRequestURI());
-		String json = servlet.entityJson(created, created.eClass(), null, Set.of());
+		String json = servlet.formats.entityJson(created, created.eClass(), null, Set.of());
 		response.setContentType(ODataServlet.contentTypeJson());
 		response.getWriter().write(json);
 		return;
@@ -813,7 +813,7 @@ private void respondCreated(String setName, EObject entity, EClass entityType,
 		response.setHeader("Preference-Applied", "return=representation");
 	}
 	response.setStatus(HttpServletResponse.SC_CREATED);
-	String json = servlet.entityJson(entity, entityType, null, Set.of());
+	String json = servlet.formats.entityJson(entity, entityType, null, Set.of());
 	response.setContentType(ODataServlet.contentTypeJson());
 	response.getWriter().write(ODataServlet.withContext(
 			ODataServlet.contextRoot(request) + "/$metadata#" + setName + "/$entity", json));
@@ -829,7 +829,7 @@ private void respondUpdated(String setName, EObject entity, EClass entityType,
 	if ("representation".equals(returnPreference(request)) && entity != null) {
 		response.setHeader("Preference-Applied", "return=representation");
 		response.setStatus(HttpServletResponse.SC_OK);
-		String json = servlet.entityJson(entity, entityType, null, Set.of());
+		String json = servlet.formats.entityJson(entity, entityType, null, Set.of());
 		response.setContentType(ODataServlet.contentTypeJson());
 		response.getWriter().write(ODataServlet.withContext(
 				ODataServlet.contextRoot(request) + "/$metadata#" + setName + "/$entity", json));
