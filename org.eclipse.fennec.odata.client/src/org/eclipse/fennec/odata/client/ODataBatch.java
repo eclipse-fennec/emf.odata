@@ -39,6 +39,8 @@ import tools.jackson.databind.node.ObjectNode;
 public final class ODataBatch {
 
 	private static final ObjectMapper MAPPER = new ObjectMapper();
+	/** Header prefix of a multipart part's correlation id ([OData-Protocol] 11.7.4). */
+	private static final String CONTENT_ID_HEADER = "Content-ID:";
 
 	private final ODataClient client;
 	private final ArrayNode requests = MAPPER.createArrayNode();
@@ -291,8 +293,8 @@ public final class ODataBatch {
 	private Result httpPart(String partHeaders, String content) {
 		String id = null;
 		for (String line : partHeaders.split("\\r?\\n")) {
-			if (line.regionMatches(true, 0, "Content-ID:", 0, 11)) {
-				id = line.substring(11).trim();
+			if (line.regionMatches(true, 0, CONTENT_ID_HEADER, 0, CONTENT_ID_HEADER.length())) {
+				id = line.substring(CONTENT_ID_HEADER.length()).trim();
 			}
 		}
 		String[] lines = content.split("\\r?\\n", -1);
@@ -312,8 +314,8 @@ public final class ODataBatch {
 			}
 		}
 		while (index < lines.length && !lines[index].isBlank()) {
-			if (lines[index].regionMatches(true, 0, "Content-ID:", 0, 11)) {
-				id = lines[index].substring(11).trim();
+			if (lines[index].regionMatches(true, 0, CONTENT_ID_HEADER, 0, CONTENT_ID_HEADER.length())) {
+				id = lines[index].substring(CONTENT_ID_HEADER.length()).trim();
 			}
 			index++; // response headers of the inner HTTP message
 		}

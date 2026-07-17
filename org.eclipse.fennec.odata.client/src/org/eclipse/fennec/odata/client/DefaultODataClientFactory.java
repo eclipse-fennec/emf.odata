@@ -13,8 +13,6 @@
 package org.eclipse.fennec.odata.client;
 
 import java.net.http.HttpClient;
-import java.time.Duration;
-
 import org.eclipse.fennec.odata.schema.api.ODataSchemaResolver;
 import org.eclipse.fennec.odata.schema.api.SchemaScope;
 import org.osgi.service.component.annotations.Activate;
@@ -37,7 +35,7 @@ public final class DefaultODataClientFactory implements ODataClientFactory, Auto
 	@Activate
 	public DefaultODataClientFactory(@Reference ODataSchemaResolver resolver) {
 		this.resolver = resolver;
-		this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+		this.http = HttpClient.newBuilder().connectTimeout(ODataClient.DEFAULT_CONNECT_TIMEOUT).build();
 	}
 
 	@Override

@@ -187,6 +187,8 @@ public class ODataServlet extends HttpServlet {
 	 * than per request (Jackson's documented reuse contract).
 	 */
 	private static final ObjectMapper JSON = new ObjectMapper();
+	/** Header prefix of a multipart batch part's correlation id ([OData-Protocol] 11.7.4). */
+	private static final String CONTENT_ID_HEADER = "Content-ID:";
 
 	private final ODataResourceParser resourceParser = new ODataResourceParser();
 
@@ -796,8 +798,8 @@ public class ODataServlet extends HttpServlet {
 		ObjectNode node = JSON.createObjectNode();
 		String id = null;
 		for (String line : partHeaders.split("\\r?\\n")) {
-			if (line.regionMatches(true, 0, "Content-ID:", 0, 11)) {
-				id = line.substring(11).trim();
+			if (line.regionMatches(true, 0, CONTENT_ID_HEADER, 0, CONTENT_ID_HEADER.length())) {
+				id = line.substring(CONTENT_ID_HEADER.length()).trim();
 			}
 		}
 		String[] lines = content.split("\\r?\\n", -1);
@@ -815,8 +817,8 @@ public class ODataServlet extends HttpServlet {
 			}
 		}
 		while (index < lines.length && !lines[index].isBlank()) {
-			if (lines[index].regionMatches(true, 0, "Content-ID:", 0, 11)) {
-				id = lines[index].substring(11).trim();
+			if (lines[index].regionMatches(true, 0, CONTENT_ID_HEADER, 0, CONTENT_ID_HEADER.length())) {
+				id = lines[index].substring(CONTENT_ID_HEADER.length()).trim();
 			}
 			index++; // inner request headers (Accept, Content-Type, …)
 		}

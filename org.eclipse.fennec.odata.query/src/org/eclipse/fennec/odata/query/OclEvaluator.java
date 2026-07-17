@@ -65,6 +65,9 @@ import org.eclipse.fennec.m2x.model.ocl.VariableExp;
  */
 public class OclEvaluator {
 
+	/** Length of an ISO local date literal ({@code yyyy-MM-dd}) — distinguishes Edm.Date from Edm.DateTimeOffset. */
+	private static final int ISO_LOCAL_DATE_LENGTH = 10;
+
 	/**
 	 * Evaluates a boolean predicate against the given context (an EObject or a $apply row map).
 	 * Null-valued relational comparisons yield {@code false} (three-valued logic collapsed), and
@@ -518,7 +521,7 @@ public class OclEvaluator {
 				return LocalTime.parse(text).atDate(LocalDate.EPOCH)
 						.atZone(ZoneOffset.UTC);
 			}
-			if (text.length() == 10) {
+			if (text.length() == ISO_LOCAL_DATE_LENGTH) {
 				return LocalDate.parse(text).atStartOfDay(ZoneOffset.UTC);
 			}
 			return OffsetDateTime.parse(text).toZonedDateTime();

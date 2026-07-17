@@ -57,6 +57,13 @@ import org.eclipse.fennec.odata.schema.api.SchemaScope;
  */
 public final class ODataClient implements AutoCloseable {
 
+	/**
+	 * Connect timeout of the built-in {@link HttpClient} instances (the request timeout comes
+	 * from {@link ODataClientConfig}). Callers needing a different value inject their own
+	 * transport via {@link #connect(String, HttpClient)}.
+	 */
+	static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
+
 	private final HttpClient http;
 	private final boolean ownsHttp;
 	private final URI serviceRoot;
@@ -98,7 +105,7 @@ public final class ODataClient implements AutoCloseable {
 		// the HttpClient is created here, so this client OWNS it and closes it in close();
 		// a connect timeout bounds establishing the connection (the request timeout bounds the rest)
 		// cookies enabled so a CSRF session cookie survives between the token fetch and the write
-		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+		HttpClient http = HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT)
 				.cookieHandler(new CookieManager()).build();
 		return connect(serviceRoot, http, null, true, ODataClientConfig.DEFAULTS);
 	}
@@ -106,7 +113,7 @@ public final class ODataClient implements AutoCloseable {
 	/** {@link #connect(String)} with transport config (auth headers, version, timeout, size cap). */
 	public static ODataClient connect(String serviceRoot, ODataClientConfig config) {
 		// cookies enabled so a CSRF session cookie survives between the token fetch and the write
-		HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+		HttpClient http = HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT)
 				.cookieHandler(new CookieManager()).build();
 		return connect(serviceRoot, http, null, true, config);
 	}

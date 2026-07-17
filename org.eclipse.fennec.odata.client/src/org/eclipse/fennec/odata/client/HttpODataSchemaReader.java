@@ -21,7 +21,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
@@ -64,7 +63,7 @@ public final class HttpODataSchemaReader implements ODataSchemaReader {
 	/** DS constructor: owns a connect-timed {@link HttpClient} released on deactivation. */
 	@Activate
 	public HttpODataSchemaReader() {
-		this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+		this.http = HttpClient.newBuilder().connectTimeout(ODataClient.DEFAULT_CONNECT_TIMEOUT).build();
 		this.ownsHttp = true;
 		this.config = ODataClientConfig.DEFAULTS;
 	}

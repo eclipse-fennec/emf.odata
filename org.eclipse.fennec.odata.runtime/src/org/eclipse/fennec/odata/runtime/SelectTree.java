@@ -21,7 +21,6 @@ import java.util.regex.Pattern;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EStructuralFeature;
-import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 
 /**
