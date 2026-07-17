@@ -14,14 +14,6 @@ src=${^src},src-gen
 
 -includeresource.model: model=model
 
-# The CSDL-JSON representation (CsdlJsonWriter/CsdlJsonReader) needs Jackson 3 — an OPTIONAL
-# capability of this bundle: consumers that only use the XML form (e.g. the metadata whiteboard
-# tests) resolve without Jackson; the runtime/client wire it for real.
-Import-Package: \
-	tools.jackson.*;resolution:=optional,\
-	com.fasterxml.jackson.*;resolution:=optional,\
-	*
-
 # The OASIS-XSD-generated EDM/EDMX model, consumed from the fennecEMFModels bnd library
 # (external dependency -> version=latest). EMF ecore.xmi is needed for XML (de)serialization;
 # Jackson 3 drives the CSDL-JSON representation (CsdlJsonWriter/CsdlJsonReader).

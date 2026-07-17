@@ -193,7 +193,7 @@ public class EntityShaper {
 		return comparator;
 	}
 
-	@SuppressWarnings({ "unchecked", "rawtypes" })
+	@SuppressWarnings("unchecked")
 	private static int compareValues(Object left, Object right) {
 		if (left == null || right == null) {
 			return left == right ? 0 : left == null ? -1 : 1; // nulls first, both directions

@@ -1283,6 +1283,7 @@ class ODataServletTest {
 		return sb.append("]}").toString();
 	}
 
+	@SuppressWarnings("unchecked")
 	@Test
 	@DisplayName("query options on a navigation path: $filter/$top/$count on the collection; $orderby → 501")
 	void navigationPathQueryOptions() throws Exception {

@@ -12,64 +12,50 @@
  */
 package org.eclipse.fennec.odata.runtime;
 
-import java.io.BufferedReader;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Enumeration;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.Set;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.HexFormat;
 import java.util.Locale;
-import java.util.UUID;
-import java.util.concurrent.CancellationException;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.stream.Collectors;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Date;
-import java.util.Objects;
 import java.util.concurrent.Semaphore;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.time.format.DateTimeFormatter;
-import jakarta.servlet.ServletException;
-
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import java.util.stream.Collectors;
 
 import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EAnnotation;
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EDataType;
-import org.eclipse.emf.ecore.EOperation;
-import org.eclipse.emf.ecore.EParameter;
-import org.eclipse.emf.ecore.EStructuralFeature;
-import org.eclipse.emf.ecore.EReference;
-import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EOperation;
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.emf.ecore.EParameter;
+import org.eclipse.emf.ecore.EReference;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
@@ -88,10 +74,8 @@ import org.eclipse.fennec.odata.csdl.CsdlJsonWriter;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
 import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.eclipse.fennec.odata.csdl.OdataResolver;
-import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
-import org.eclipse.emf.ecore.util.EcoreUtil;
-import org.eclipse.fennec.codec.resource.CodecResource;
+import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
@@ -100,31 +84,30 @@ import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
-import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.CachingODataQueryParser;
-import org.eclipse.fennec.odata.query.OclEvaluator;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataResourceParser;
-import org.eclipse.fennec.odata.query.ResourcePath;
+import org.eclipse.fennec.odata.query.OclEvaluator;
 import org.eclipse.fennec.odata.query.OrderBySegment;
+import org.eclipse.fennec.odata.query.ResourcePath;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 import org.eclipse.fennec.odata.query.apply.ComputeExpression;
 import org.eclipse.fennec.odata.query.apply.ComputeTransformation;
-import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edm.AnnotationType;
 import org.open.oasis.docs.odata.ns.edm.EdmFactory;
+import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
 import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
 import org.open.oasis.docs.odata.ns.edm.TPropertyValue;
 import org.open.oasis.docs.odata.ns.edm.TRecordExpression;
 import org.open.oasis.docs.odata.ns.edmx.EdmxFactory;
-import org.open.oasis.docs.odata.ns.edmx.TInclude;
-import org.open.oasis.docs.odata.ns.edmx.TReference;
 import org.open.oasis.docs.odata.ns.edmx.EdmxPackage;
 import org.open.oasis.docs.odata.ns.edmx.EdmxRoot;
 import org.open.oasis.docs.odata.ns.edmx.TDataServices;
 import org.open.oasis.docs.odata.ns.edmx.TEdmx;
+import org.open.oasis.docs.odata.ns.edmx.TInclude;
+import org.open.oasis.docs.odata.ns.edmx.TReference;
 import org.open.oasis.docs.odata.ns.edmx.TVersion;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -136,21 +119,14 @@ import org.osgi.service.servlet.whiteboard.annotations.RequireHttpWhiteboard;
 import org.osgi.service.servlet.whiteboard.propertytypes.HttpWhiteboardServletName;
 import org.osgi.service.servlet.whiteboard.propertytypes.HttpWhiteboardServletPattern;
 
-import jakarta.servlet.ReadListener;
 import jakarta.servlet.Servlet;
-import jakarta.servlet.ServletInputStream;
-import jakarta.servlet.ServletOutputStream;
-import jakarta.servlet.WriteListener;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
-
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletRequestWrapper;
-import jakarta.servlet.http.HttpServletResponse;
-import jakarta.servlet.http.HttpServletResponseWrapper;
 
 /**
  * Catch-all OData servlet (E6/E7 skeleton, ADR-0001: plain Jakarta Servlet on the OSGi HTTP
@@ -195,7 +171,7 @@ public class ODataServlet extends HttpServlet {
 	final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
 	private final List<MediaService> mediaServices = new CopyOnWriteArrayList<>();
 	private final List<DeltaService> deltaServices = new CopyOnWriteArrayList<>();
-	private final List<ODataOperationHandler> operationHandlers = new CopyOnWriteArrayList<>();
+	final List<ODataOperationHandler> operationHandlers = new CopyOnWriteArrayList<>();
 	private final CachingODataQueryParser parser = new CachingODataQueryParser();
 	private final OclEvaluator expandFilterEvaluator = new OclEvaluator();
 	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
@@ -208,6 +184,7 @@ public class ODataServlet extends HttpServlet {
 	private final BatchDispatcher batchDispatcher = new BatchDispatcher(this);
 	final AsyncDispatcher asyncDispatcher = new AsyncDispatcher(this);
 	private final WriteDispatcher writeDispatcher = new WriteDispatcher(this);
+	final OperationDispatcher operations = new OperationDispatcher(this);
 
 	/**
 	 * CORS origin(s) served to browser clients (e.g. the XOData explorer): {@code "*"} or a
@@ -898,10 +875,10 @@ public class ODataServlet extends HttpServlet {
 		return annotation;
 	}
 
-	private record Target(EClass entityType, QueryService queryService) {
+	record Target(EClass entityType, QueryService queryService) {
 	}
 
-	private Target resolveTarget(String setName, HttpServletResponse response) throws IOException {
+	Target resolveTarget(String setName, HttpServletResponse response) throws IOException {
 		EClass entityType = resolveEntityType(setName);
 		if (entityType == null) {
 			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown entity set '" + ODataJson.sanitize(setName) + "'");
@@ -1252,21 +1229,21 @@ public class ODataServlet extends HttpServlet {
 		}
 		// a set name with named args is a COMPOUND KEY predicate (Set(id='x'), [OData-URL]),
 		// not a function call — only a non-set name routes to the function imports
-		if (isFunctionCall(rawPath)
+		if (OperationDispatcher.isFunctionCall(rawPath)
 				&& resolveEntityType(rawPath.substring(0, rawPath.indexOf('('))) == null) {
-			functionImport(rawPath, request, response); // GET FuncName(p=…) — the resource parser
+			operations.functionImport(rawPath, request, response); // GET FuncName(p=…) — the resource parser
 			return;                                      // deliberately does not model function segments
 		}
 		// 4.01 13.2.1/9.3: a parameterless function import invoked WITHOUT parentheses — a bare
 		// name that is neither a set nor a singleton but an unbound operation
 		if (rawPath.indexOf('/') < 0 && rawPath.indexOf('(') < 0
 				&& resolveEntityType(rawPath) == null && resolveSingleton(rawPath) == null
-				&& resolveUnboundFunction(rawPath) != null) {
-			functionImport(rawPath + "()", request, response);
+				&& resolveUnoperations.boundFunction(rawPath) != null) {
+			operations.functionImport(rawPath + "()", request, response);
 			return;
 		}
-		if (isBoundFunctionCall(rawPath)) {
-			boundFunction(rawPath, request, response); // GET Set(key)/Ns.Func(p=…)
+		if (OperationDispatcher.isBoundFunctionCall(rawPath)) {
+			operations.boundFunction(rawPath, request, response); // GET Set(key)/Ns.Func(p=…)
 			return;
 		}
 		ResourcePath path;
@@ -1438,309 +1415,6 @@ public class ODataServlet extends HttpServlet {
 		}
 		response.setContentType("text/plain;charset=UTF-8");
 		response.getWriter().write(String.valueOf(delta.changed().size() + delta.removals().size()));
-	}
-
-	// --- function/action invocation (unbound function imports, GET) ---
-
-	/** A single-segment path {@code Name()} / {@code Name(p=…)} — a function/action import call. */
-	private static boolean isFunctionCall(String rawPath) {
-		if (rawPath.indexOf('/') >= 0 || !rawPath.endsWith(")")) {
-			return false;
-		}
-		int paren = rawPath.indexOf('(');
-		if (paren <= 0) {
-			return false;
-		}
-		return isFunctionArgs(rawPath.substring(paren + 1, rawPath.length() - 1));
-	}
-
-	/** A multi-segment path whose LAST segment is a function call — a bound function invocation. */
-	private static boolean isBoundFunctionCall(String rawPath) {
-		int lastSlash = rawPath.lastIndexOf('/');
-		if (lastSlash < 0 || !rawPath.endsWith(")")) {
-			return false;
-		}
-		String segment = rawPath.substring(lastSlash + 1);
-		int paren = segment.indexOf('(');
-		return paren > 0 && isFunctionArgs(segment.substring(paren + 1, segment.length() - 1));
-	}
-
-	/** Function arguments distinguish a call from an entity key: named params (or none). */
-	private static boolean isFunctionArgs(String inside) {
-		return inside.isBlank() || inside.matches("\\s*[A-Za-z_]\\w*\\s*=.*");
-	}
-
-	/** Invokes a bound function {@code Set(key)/Ns.Func(p=…)} on the addressed entity. */
-	private void boundFunction(String rawPath, HttpServletRequest request, HttpServletResponse response)
-			throws IOException {
-		int lastSlash = rawPath.lastIndexOf('/');
-		String prefix = rawPath.substring(0, lastSlash);
-		String segment = rawPath.substring(lastSlash + 1);
-		int paren = segment.indexOf('(');
-		String qualified = segment.substring(0, paren);
-		String localName = qualified.contains(".")
-				? qualified.substring(qualified.lastIndexOf('.') + 1) : qualified;
-		String parameterList = segment.substring(paren + 1, segment.length() - 1);
-
-		ResourcePath path;
-		try {
-			path = resourceParser.parse(prefix);
-		} catch (ODataQueryParseException e) {
-			error(response, HttpServletResponse.SC_NOT_FOUND, "resource not found");
-			return;
-		}
-		path = keyAsSegment(path);
-		if (path.key() == null || !path.segments().isEmpty()) {
-			error(response, HttpServletResponse.SC_NOT_FOUND,
-					"a bound function is invoked on a keyed entity");
-			return;
-		}
-		Target target = resolveTarget(path.entitySet(), response);
-		if (target == null) {
-			return;
-		}
-		EObject entity = fetchByKey(target, path.key(), path.namedKeys(), Set.of(), response);
-		if (entity == null) {
-			return; // error already written
-		}
-		invokeBoundFunction(entity, target.entityType(), localName, parameterList, request, response);
-	}
-
-	/** Whether the type carries a BOUND operation with the given (local) name. */
-	static boolean hasBoundOperation(EClass entityType, String localName) {
-		return entityType.getEAllOperations().stream()
-				.anyMatch(op -> op.getName().equals(localName) && !isUnbound(op));
-	}
-
-	/** Resolves and dispatches a bound function on an already-loaded entity (shared tail). */
-	private void invokeBoundFunction(EObject entity, EClass declaredType, String localName,
-			String parameterList, HttpServletRequest request, HttpServletResponse response)
-			throws IOException {
-		EOperation operation = entity.eClass().getEAllOperations().stream()
-				.filter(op -> op.getName().equals(localName) && !isUnbound(op)).findFirst().orElse(null);
-		if (operation == null) {
-			error(response, HttpServletResponse.SC_NOT_FOUND, "no bound function '" + localName + "'");
-			return;
-		}
-		String qualifiedName = operationNamespace(declaredType) + "." + localName;
-		ODataOperationHandler handler = operationHandlers.stream()
-				.filter(h -> h.handles(qualifiedName)).findFirst().orElse(null);
-		if (handler == null) {
-			error(response, 501, "no handler for the operation");
-			return;
-		}
-		Object result = handler.invoke(operation, entity, functionParameters(parameterList, operation));
-		writeFunctionResult(result, request, response);
-	}
-
-	/**
-	 * Invokes a bound action {@code POST Set(key)/Ns.Action} on the addressed entity, with the
-	 * parameters in the JSON body ([OData-Protocol] 11.5.4.2). Mirrors {@link #boundFunction} but for
-	 * the POST/body shape; the result is serialised like any operation result (void → 204).
-	 */
-	void boundAction(ResourcePath path, String qualified, HttpServletRequest request,
-			HttpServletResponse response) throws IOException {
-		String localName = qualified.contains(".")
-				? qualified.substring(qualified.lastIndexOf('.') + 1) : qualified;
-		Target target = resolveTarget(path.entitySet(), response);
-		if (target == null) {
-			return;
-		}
-		EObject entity = fetchByKey(target, path.key(), path.namedKeys(), Set.of(), response);
-		if (entity == null) {
-			return; // error already written
-		}
-		EOperation operation = entity.eClass().getEAllOperations().stream()
-				.filter(op -> op.getName().equals(localName) && !isUnbound(op)).findFirst().orElse(null);
-		if (operation == null) {
-			error(response, HttpServletResponse.SC_NOT_FOUND, "no bound action '" + localName + "'");
-			return;
-		}
-		Map<String, Object> parameters = readActionParameters(request, operation, response);
-		if (parameters == null) {
-			return; // error already written
-		}
-		String qualifiedName = operationNamespace(target.entityType()) + "." + localName;
-		ODataOperationHandler handler = operationHandlers.stream()
-				.filter(h -> h.handles(qualifiedName)).findFirst().orElse(null);
-		if (handler == null) {
-			error(response, 501, "no handler for the operation");
-			return;
-		}
-		writeFunctionResult(handler.invoke(operation, entity, parameters), request, response);
-	}
-
-	private String operationNamespace(EClass entityType) {
-		return profiles.computeIfAbsent(entityType.getEPackage(), p -> new OdataResolver().resolve(p))
-				.getNamespace();
-	}
-
-	/** A bare name (no key, no nav) that is an unbound operation rather than an entity set. */
-	boolean isActionImport(String segment) {
-		return segment.indexOf('/') < 0 && segment.indexOf('(') < 0
-				&& resolveEntityType(segment) == null && resolveUnboundFunction(segment) != null;
-	}
-
-	/** Invokes an unbound action import: {@code POST ActionName} with the parameters in the body. */
-	void actionImport(String name, HttpServletRequest request, HttpServletResponse response)
-			throws IOException {
-		UnboundOperation resolved = resolveUnboundFunction(name);
-		Map<String, Object> parameters = readActionParameters(request, resolved.operation(), response);
-		if (parameters == null) {
-			return; // error already written
-		}
-		ODataOperationHandler handler = operationHandlers.stream()
-				.filter(h -> h.handles(resolved.qualifiedName())).findFirst().orElse(null);
-		if (handler == null) {
-			error(response, 501, "no handler for the operation");
-			return;
-		}
-		writeFunctionResult(handler.invoke(resolved.operation(), null, parameters), request, response);
-	}
-
-	/** Reads action parameters from the JSON request body, coerced to the operation's parameter types. */
-	private Map<String, Object> readActionParameters(HttpServletRequest request, EOperation operation,
-			HttpServletResponse response) throws IOException {
-		byte[] body = request.getInputStream().readNBytes(limits.maxBodyBytes() + 1);
-		if (body.length > limits.maxBodyBytes()) {
-			error(response, 413, "payload exceeds the maximum size of " + limits.maxBodyBytes() + " bytes");
-			return null;
-		}
-		Map<String, Object> parameters = new LinkedHashMap<>();
-		if (body.length == 0) {
-			return parameters; // a parameterless action
-		}
-		JsonNode node;
-		try {
-			node = JSON.readTree(body);
-		} catch (Exception e) {
-			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
-			return null;
-		}
-		if (!(node instanceof ObjectNode object)) {
-			error(response, HttpServletResponse.SC_BAD_REQUEST, "action parameters must be a JSON object");
-			return null;
-		}
-		for (EParameter parameter : operation.getEParameters()) {
-			JsonNode value = object.get(parameter.getName());
-			if (value != null && !value.isNull()) {
-				parameters.put(parameter.getName(), parameter.getEType() instanceof EDataType dataType
-						? EcoreUtil.createFromString(dataType, value.asString())
-						: value.asString());
-			}
-		}
-		return parameters;
-	}
-
-	/** Invokes an unbound function import: resolve the operation, coerce params, dispatch, serialize. */
-	private void functionImport(String rawPath, HttpServletRequest request, HttpServletResponse response)
-			throws IOException {
-		int paren = rawPath.indexOf('(');
-		String name = rawPath.substring(0, paren);
-		String parameterList = rawPath.substring(paren + 1, rawPath.length() - 1);
-		UnboundOperation resolved = resolveUnboundFunction(name);
-		if (resolved == null) {
-			error(response, HttpServletResponse.SC_NOT_FOUND, "no function import '" + name + "'");
-			return;
-		}
-		Map<String, Object> parameters = functionParameters(parameterList, resolved.operation());
-		ODataOperationHandler handler = operationHandlers.stream()
-				.filter(h -> h.handles(resolved.qualifiedName())).findFirst().orElse(null);
-		if (handler == null) {
-			error(response, 501, "no handler for the operation");
-			return;
-		}
-		Object result = handler.invoke(resolved.operation(), null, parameters);
-		writeFunctionResult(result, request, response);
-	}
-
-	/** An unbound operation plus its namespace-qualified name (the handler dispatch key). */
-	private record UnboundOperation(EOperation operation, String qualifiedName) {
-	}
-
-	/** Finds an unbound ({@code @OData.Bound=false}) operation with the given name across the models. */
-	private UnboundOperation resolveUnboundFunction(String name) {
-		for (EPackage pkg : packages) {
-			ODataPackageProfile profile = profiles.computeIfAbsent(pkg,
-					p -> new OdataResolver().resolve(p));
-			for (EClassifier classifier : pkg.getEClassifiers()) {
-				if (classifier instanceof EClass eClass) {
-					for (EOperation operation : eClass.getEAllOperations()) {
-						if (operation.getName().equals(name) && isUnbound(operation)) {
-							return new UnboundOperation(operation, profile.getNamespace() + "." + name);
-						}
-					}
-				}
-			}
-		}
-		return null;
-	}
-
-	private static boolean isUnbound(EOperation operation) {
-		EAnnotation annotation = operation.getEAnnotation(ODataAnnotationConstants.SOURCE);
-		return annotation != null
-				&& "false".equals(annotation.getDetails().get(ODataAnnotationConstants.BOUND));
-	}
-
-	private static Map<String, Object> functionParameters(String parameterList, EOperation operation) {
-		Map<String, Object> parameters = new LinkedHashMap<>();
-		if (parameterList.isBlank()) {
-			return parameters;
-		}
-		for (String part : parameterList.split(",")) {
-			int equals = part.indexOf('=');
-			if (equals < 0) {
-				throw new ODataQueryParseException("function parameter must be name=value: " + part);
-			}
-			String parameterName = part.substring(0, equals).trim();
-			String raw = part.substring(equals + 1).trim();
-			EParameter parameter = operation.getEParameters().stream()
-					.filter(p -> p.getName().equals(parameterName)).findFirst()
-					.orElseThrow(() -> new ODataQueryParseException(
-							"unknown parameter '" + parameterName + "'"));
-			parameters.put(parameterName, coerceParameter(raw, parameter));
-		}
-		return parameters;
-	}
-
-	private static Object coerceParameter(String raw, EParameter parameter) {
-		String literal = raw.length() >= 2 && raw.startsWith("'") && raw.endsWith("'")
-				? raw.substring(1, raw.length() - 1).replace("''", "'")
-				: raw;
-		if (parameter.getEType() instanceof EDataType dataType) {
-			return EcoreUtil.createFromString(dataType, literal);
-		}
-		return literal;
-	}
-
-	/** Serializes a function/action result: void (204), a single entity, a collection, or a value. */
-	private void writeFunctionResult(Object result, HttpServletRequest request,
-			HttpServletResponse response) throws IOException {
-		if (result == null) {
-			response.setStatus(HttpServletResponse.SC_NO_CONTENT);
-			return;
-		}
-		response.setContentType(contentTypeJson());
-		if (result instanceof EObject entity) {
-			String json = entityJson(entity, entity.eClass(), null, Set.of());
-			response.getWriter().write(withContext(contextRoot(request) + "/$metadata#"
-					+ entity.eClass().getName() + "/$entity", json));
-			return;
-		}
-		if (result instanceof Collection<?> collection) {
-			StringBuilder body = new StringBuilder("{\"value\":[");
-			boolean first = true;
-			for (Object element : collection) {
-				if (!(element instanceof EObject entity)) {
-					throw new ODataQueryParseException("a collection function result must hold entities");
-				}
-				body.append(first ? "" : ",").append(entityJson(entity, entity.eClass(), null, Set.of()));
-				first = false;
-			}
-			response.getWriter().write(body.append("]}").toString());
-			return;
-		}
-		response.getWriter().write("{\"value\":" + JSON.writeValueAsString(result) + "}");
 	}
 
 	/**
@@ -1995,7 +1669,7 @@ public class ODataServlet extends HttpServlet {
 	 * attribute) or compound ({@code namedKeys}, [OData-URL] compoundKey — composite keys and the
 	 * named single-key form). The predicate is BUILT as a typed AST, never expression-parsed.
 	 */
-	private EObject fetchByKey(Target target, String rawKey, Map<String, String> namedKeys,
+	EObject fetchByKey(Target target, String rawKey, Map<String, String> namedKeys,
 			Set<String> expand, HttpServletResponse response) throws IOException {
 		OclExpression predicate;
 		if (namedKeys.isEmpty()) {

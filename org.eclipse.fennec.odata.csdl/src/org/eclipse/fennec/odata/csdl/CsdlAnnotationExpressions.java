@@ -259,7 +259,7 @@ final class CsdlAnnotationExpressions {
 			return rich;
 		}
 		if (get(member, "string1") instanceof String text) {
-			return MAPPER.createObjectNode().textNode(text);
+			return MAPPER.createObjectNode().stringNode(text);
 		}
 		if (member.eIsSet(feature(member, "bool1"))) {
 			return MAPPER.createObjectNode().booleanNode((Boolean) get(member, "bool1"));
@@ -275,7 +275,7 @@ final class CsdlAnnotationExpressions {
 		}
 		// element-notation constants (<String>…</String> etc.)
 		for (Object wrapped : list(member, "string")) {
-			return MAPPER.createObjectNode().textNode(((TStringConstantExpression) wrapped).getValue());
+			return MAPPER.createObjectNode().stringNode(((TStringConstantExpression) wrapped).getValue());
 		}
 		for (Object wrapped : list(member, "bool")) {
 			return MAPPER.createObjectNode().booleanNode(((TBoolConstantExpression) wrapped).isValue());

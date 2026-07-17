@@ -12,147 +12,39 @@
  */
 package org.eclipse.fennec.odata.runtime;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.Set;
 import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.stream.Collectors;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Date;
-import java.util.Objects;
-import java.util.concurrent.Semaphore;
-import java.util.function.Function;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.time.format.DateTimeFormatter;
-import jakarta.servlet.ServletException;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-
-import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.emf.common.util.URI;
-import org.eclipse.emf.ecore.EAnnotation;
-import org.eclipse.emf.ecore.EClass;
-import org.eclipse.emf.ecore.EClassifier;
-import org.eclipse.emf.ecore.EDataType;
-import org.eclipse.emf.ecore.EOperation;
-import org.eclipse.emf.ecore.EParameter;
-import org.eclipse.emf.ecore.EStructuralFeature;
-import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EAttribute;
+import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
-import org.eclipse.emf.ecore.EPackage;
-import org.eclipse.emf.ecore.resource.Resource;
-import org.eclipse.emf.ecore.resource.ResourceSet;
-import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
-import org.eclipse.emf.ecore.xmi.XMLResource;
-import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
-import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
-import org.eclipse.fennec.m2x.model.ocl.IntegerLiteralExp;
-import org.eclipse.fennec.m2x.model.ocl.OclExpression;
-import org.eclipse.fennec.m2x.model.ocl.OclFactory;
-import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
-import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
-import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
-import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
-import org.eclipse.fennec.m2x.model.ocl.Variable;
-import org.eclipse.fennec.m2x.model.ocl.VariableExp;
-import org.eclipse.fennec.model.metadata.api.MetadataService;
-import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
-import org.eclipse.fennec.odata.csdl.CsdlJsonWriter;
-import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
-import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
-import org.eclipse.fennec.odata.csdl.OdataResolver;
-import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
-import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
+import org.eclipse.emf.ecore.EReference;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.codec.resource.CodecResource;
-import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
-import org.eclipse.fennec.odata.persistence.api.ApplyResult;
-import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
-import org.eclipse.fennec.odata.persistence.api.DeltaService;
-import org.eclipse.fennec.odata.persistence.api.EntityQuery;
-import org.eclipse.fennec.odata.persistence.api.MediaService;
-import org.eclipse.fennec.odata.persistence.api.QueryResult;
+import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
-import org.eclipse.fennec.odata.query.CachingODataQueryParser;
-import org.eclipse.fennec.odata.query.OclEvaluator;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
-import org.eclipse.fennec.odata.query.ODataResourceParser;
 import org.eclipse.fennec.odata.query.ResourcePath;
-import org.eclipse.fennec.odata.query.OrderBySegment;
-import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
-import org.eclipse.fennec.odata.query.apply.ComputeExpression;
-import org.eclipse.fennec.odata.query.apply.ComputeTransformation;
-import org.open.oasis.docs.odata.ns.edm.EdmPackage;
-import org.open.oasis.docs.odata.ns.edm.AnnotationType;
-import org.open.oasis.docs.odata.ns.edm.EdmFactory;
-import org.open.oasis.docs.odata.ns.edm.SchemaType;
-import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
-import org.open.oasis.docs.odata.ns.edm.TPropertyValue;
-import org.open.oasis.docs.odata.ns.edm.TRecordExpression;
-import org.open.oasis.docs.odata.ns.edmx.EdmxFactory;
-import org.open.oasis.docs.odata.ns.edmx.TInclude;
-import org.open.oasis.docs.odata.ns.edmx.TReference;
-import org.open.oasis.docs.odata.ns.edmx.EdmxPackage;
-import org.open.oasis.docs.odata.ns.edmx.EdmxRoot;
-import org.open.oasis.docs.odata.ns.edmx.TDataServices;
-import org.open.oasis.docs.odata.ns.edmx.TEdmx;
-import org.open.oasis.docs.odata.ns.edmx.TVersion;
-import org.osgi.service.component.annotations.Activate;
-import org.osgi.service.component.annotations.Component;
-import org.osgi.service.component.annotations.Deactivate;
-import org.osgi.service.component.annotations.Reference;
-import org.osgi.service.component.annotations.ReferenceCardinality;
-import org.osgi.service.component.annotations.ReferencePolicy;
-import org.osgi.service.servlet.whiteboard.annotations.RequireHttpWhiteboard;
-import org.osgi.service.servlet.whiteboard.propertytypes.HttpWhiteboardServletName;
-import org.osgi.service.servlet.whiteboard.propertytypes.HttpWhiteboardServletPattern;
-
-import jakarta.servlet.ReadListener;
-import jakarta.servlet.Servlet;
-import jakarta.servlet.ServletInputStream;
-import jakarta.servlet.ServletOutputStream;
-import jakarta.servlet.WriteListener;
-import jakarta.servlet.http.HttpServlet;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ArrayNode;
-import tools.jackson.databind.node.ObjectNode;
 
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.servlet.http.HttpServletResponseWrapper;
-
-import java.io.ByteArrayInputStream;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * The write arm of {@link ODataServlet} (OASIS "Updatable Service": POST to the set,
@@ -209,8 +101,8 @@ private void dispatchWrite(HttpServletRequest request, HttpServletResponse respo
 				"this resource is not writable");
 		return;
 	}
-	if ("POST".equals(request.getMethod()) && servlet.isActionImport(rawPath.substring(1))) {
-		servlet.actionImport(rawPath.substring(1), request, response); // POST ActionName, params in the body
+	if ("POST".equals(request.getMethod()) && servlet.operations.isActionImport(rawPath.substring(1))) {
+		servlet.operations.actionImport(rawPath.substring(1), request, response); // POST ActionName, params in the body
 		return;
 	}
 	ResourcePath path;
@@ -236,7 +128,7 @@ private void dispatchWrite(HttpServletRequest request, HttpServletResponse respo
 	// not the write backend, so it is intercepted before the WriteService is resolved.
 	if ("POST".equals(request.getMethod()) && path.key() != null && path.segments().size() == 1
 			&& path.segments().get(0) instanceof ResourcePath.TypeCastSegment action) {
-		servlet.boundAction(path, action.qualifiedName(), request, response);
+		servlet.operations.boundAction(path, action.qualifiedName(), request, response);
 		return;
 	}
 	// 4.01 13.2.1/9.5: the same action invoked UNQUALIFIED (default namespace) parses as a
@@ -245,8 +137,8 @@ private void dispatchWrite(HttpServletRequest request, HttpServletResponse respo
 			&& path.segments().get(0) instanceof ResourcePath.PropertySegment property
 			&& property.key() == null
 			&& entityType.getEStructuralFeature(property.name()) == null
-			&& servlet.hasBoundOperation(entityType, property.name())) {
-		servlet.boundAction(path, property.name(), request, response);
+			&& ODataServlet.hasBoundOperation(entityType, property.name())) {
+		servlet.operations.boundAction(path, property.name(), request, response);
 		return;
 	}
 	// entity-level compound-key writes go through the named-key SPI overloads; below the
