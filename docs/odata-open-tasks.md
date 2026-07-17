@@ -17,10 +17,12 @@ andere ist nach Komponente gruppiert. Erledigtes wird GELÖSCHT, nicht durchgest
 
 | # | Aufgabe | Kontext |
 |---|---|---|
-| U1 | **Interop-Eskalation**: Microsoft-Graph-Test (braucht OAuth-Zugang), SAP-V4-Endpoint (Demo-Account, ehem. Q18), XOData/Power BI/Excel als Fremd-Clients gegen unseren Server (ehem. Q4) | Live-Suite deckt TripPin/RESTier/Demo/Northwind ab; die kommerziellen Ökosysteme fehlen |
-| U2 | **Release auf `main`** (Central-Release via `release.yml` steht bereit; Branch `initial` bleibt unangetastet) | CI/Versionierung verifiziert, nur der Push/Merge ist User-Sache |
-| U3 | **BSI-TRs bestätigen** (TR-02102-1/-2, TR-03116 angenommen; ehem. Q1) — betrifft nur Doku/Deployment-Empfehlungen, Auth/TLS sind out-of-scope (vorgelagerte Infrastruktur) | |
-| U4 | **Limit-Defaults formal absegnen** (ehem. Q6): `$top`-Ceiling 1000, Expression-Länge 4096, Nesting 64, Body 1 MiB, JPA-Page-Cap 1000 — implementiert und konfigurierbar, Defaults nie formal beschlossen | `manual/04-configuration.md` |
+| U1 | **Interop-Eskalation**: Microsoft-Graph-Test (braucht OAuth-Zugang), SAP-V4-Endpoint (Demo-Account, ehem. Q18), XOData/Power BI/Excel als Fremd-Clients gegen unseren Server (ehem. Q4) | ZURÜCKGESTELLT 2026-07-17: keine Zugangsdaten/Portale verfügbar. Live-Suite deckt TripPin/RESTier/Demo/Northwind ab; die kommerziellen Ökosysteme fehlen |
+| U2 | **Release auf `main`** (Central-Release via `release.yml` steht bereit; Branch `initial` bleibt unangetastet) | ZURÜCKGESTELLT 2026-07-17. CI/Versionierung verifiziert, nur der Push/Merge ist User-Sache |
+
+*(U3 BSI-TRs und U4 Limit-Defaults: 2026-07-17 vom User bestätigt — dokumentiert in
+`manual/04-configuration.md` (Crypto-Baseline-Zeile bzw. Default-Bestätigungsabsatz);
+Defaults sind Startwerte, Feintuning zeigt die Praxis. Einträge gemäß Konvention gelöscht.)*
 
 ## 2. Spec-Lücken (Conformance-Kür)
 

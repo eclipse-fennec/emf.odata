@@ -53,8 +53,8 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
   ausgelassene Navigation bleibt bei PATCH UND PUT erhalten (11.4.3: replace ist
   structural-only — In-Memory-`apply` entsprechend korrigiert). Tests: JPA (2), In-Memory (1),
   Differential-Write-Parität (1); Beispiel-Seed bindet Kategorien jetzt mit.
-- **T2.9 Coverage-Floor** bewusst nicht blind angehoben; wenn gewünscht, mit Messlauf einen sicheren Wert wählen.
-- **T3.10** Magic Numbers → Konstanten/Config + `{@value}`-Javadoc: mechanischer Sammel-Pass.
+- [x] **T2.9 / T3.10** — ✅ 2026-07-17 erledigt (Details in den Tier-Listen). U3 (BSI-TRs)
+  und U4 (Limit-Defaults) am selben Tag vom User bestätigt → `manual/04-configuration.md`.
   *(Bereinigt 2026-07-17: T2.2/T3.1/T3.4 standen hier noch als offen — sind in den
   Tier-Listen längst ✅.)*
 
@@ -128,7 +128,13 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - [x] **T2.6 [Concurrency] `ODataClient.maxResponseBytes`** — ✅ volatile. — `volatile` oder aus config. Test/Review.
 - [~] **T2.7 [SOLID] `ODataServlet` God-Object** — Batch-/Async-/Write-Dispatcher extrahieren.
 - [x] **T2.8 [Concurrency/Leak] `CachingODataQueryParser.invalidate` verdrahten** — Provider-Unregister-Hook oder Klassen-Zahl-Cap.
-- [~] **T2.9 [Coverage] Floor anheben + `persistence.api` gaten; `$apply`-Ausschluss prüfen.**
+- [x] **T2.9 [Coverage] Floor anheben + `persistence.api` gaten; `$apply`-Ausschluss prüfen** —
+  ✅ 2026-07-17: Messlauf (Floor temporär 0.99 → Ist-Werte aus den Violations, exakt die
+  Gate-Sicht) → per-Bundle-Floors je ~10 Punkte unter Ist (csdl .90→.80, jpa .86→.75,
+  runtime .84→.75, inmemory .83→.75, client .79→.70, codec.json .77→.65, vocabularies
+  .64→.55, query .56→.45, persistence.api .47→.40). `persistence.api` gegated —
+  `ChangeJournalTest` dafür ins api-Bundle umgezogen (testet eine api-Klasse; lag im
+  inmemory-Bundle). `query/apply`-Ausschluss verifiziert: rein src-gen, kein Handcode dahinter.
 - [x] **T2.10 [Coverage] `ChangeJournal` direkte Unit-Tests** — Eviction→410, rollback, Token-Staleness.
 - [x] **T2.11 [E2E] Concurrency-/Last-Test über HTTP** — paralleler HttpClient-Fan-out inkl. konkurrierender Writes.
 - [x] **T2.12 [E2E] Große-Payload-/Tiefpaging-Test** — >1000 Rows, mehrseitiger nextLink über HTTP.
@@ -148,7 +154,12 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - [x] **T3.7 [Client] Funktions-Literale URL-encoden; `parseInt`-Wrapping; injizierter HttpClient Redirect-Kontrakt; Error-Body-Auszug deckeln.**
 - [x] **T3.8 [Kapselung] defensive Kopien: `ODataPage`, `ComputedRow`, `ChangeJournal.Change`.**
 - [x] **T3.9 [Robustheit] `ODataVocabularies` Leer-Schema-Check; Enum long→int-Range.**
-- [~] **T3.10 [Style] Magic Numbers → benannte Konstanten/Config; gebrochene `{@value}`-Javadoc.**
+- [x] **T3.10 [Style] Magic Numbers → benannte Konstanten/Config; gebrochene `{@value}`-Javadoc** —
+  ✅ 2026-07-17: `CONTENT_ID_HEADER` (Batch-Parser, Servlet + Client, ersetzt `11`/Literal-Duplikate),
+  `ODataClient.DEFAULT_CONNECT_TIMEOUT` (4× `Duration.ofSeconds(10)`),
+  `OclEvaluator.ISO_LOCAL_DATE_LENGTH` (Datum-Heuristik). HTTP-Statuscodes bewusst literal
+  (idiomatisch). Alle verbliebenen `{@value}`-Tags verifiziert auflösbar (3 Fundstellen,
+  Konstanten existieren) — die gebrochenen waren durch frühere Pässe bereits gefixt.
 
 ---
 
@@ -171,5 +182,8 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - 2026-07-17: **Nicht-Containment-Write-Bindung geschlossen** (beide Backends, s. TODO-Abschnitt)
   — Gegenstück zum Read-Pfad-Fix vom selben Tag (`$expand`-Proxy-Auflösung via
   JPAResourceFactory-ResourceSet, emf.persistence-jpa#17). Demo-Seed bindet Kategorien;
-  Manual 02-server dokumentiert die Nested-Member-Semantik. Verbleibend: T2.7 (post-merge),
-  T2.9, T3.10.
+  Manual 02-server dokumentiert die Nested-Member-Semantik.
+- 2026-07-17 (2): **T2.9 + T3.10 erledigt** (Messlauf-basierte per-Bundle-Floors inkl.
+  persistence.api-Gate; Konstanten-Pass) und **U3/U4 vom User bestätigt** (BSI-Baseline +
+  Limit-Defaults → Manual 04). U1/U2 zurückgestellt (keine Zugangsdaten bzw. später).
+  **Verbleibend im Härtungslauf: NUR T2.7** (God-Object, bewusst post-merge).
