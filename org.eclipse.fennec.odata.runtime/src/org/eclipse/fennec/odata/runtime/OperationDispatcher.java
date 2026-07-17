@@ -215,7 +215,7 @@ static boolean hasBoundOperation(EClass entityType, String localName) {
 }
 
 /** Resolves and dispatches a bound function on an already-loaded entity (shared tail). */
-private void invokeBoundFunction(EObject entity, EClass declaredType, String localName,
+void invokeBoundFunction(EObject entity, EClass declaredType, String localName,
 		String parameterList, HttpServletRequest request, HttpServletResponse response)
 		throws IOException {
 	EOperation operation = entity.eClass().getEAllOperations().stream()
@@ -273,7 +273,7 @@ void boundAction(ResourcePath path, String qualified, HttpServletRequest request
 }
 
 private String operationNamespace(EClass entityType) {
-	return profiles.computeIfAbsent(entityType.getEPackage(), p -> new OdataResolver().resolve(p))
+	return servlet.profiles.computeIfAbsent(entityType.getEPackage(), p -> new OdataResolver().resolve(p))
 			.getNamespace();
 }
 
@@ -361,9 +361,9 @@ private record UnboundOperation(EOperation operation, String qualifiedName) {
 }
 
 /** Finds an unbound ({@code @OData.Bound=false}) operation with the given name across the models. */
-private UnboundOperation resolveUnboundFunction(String name) {
-	for (EPackage pkg : packages) {
-		ODataPackageProfile profile = profiles.computeIfAbsent(pkg,
+UnboundOperation resolveUnboundFunction(String name) {
+	for (EPackage pkg : servlet.packages) {
+		ODataPackageProfile profile = servlet.profiles.computeIfAbsent(pkg,
 				p -> new OdataResolver().resolve(p));
 		for (EClassifier classifier : pkg.getEClassifiers()) {
 			if (classifier instanceof EClass eClass) {

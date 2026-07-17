@@ -137,7 +137,7 @@ private void dispatchWrite(HttpServletRequest request, HttpServletResponse respo
 			&& path.segments().get(0) instanceof ResourcePath.PropertySegment property
 			&& property.key() == null
 			&& entityType.getEStructuralFeature(property.name()) == null
-			&& ODataServlet.hasBoundOperation(entityType, property.name())) {
+			&& OperationDispatcher.hasBoundOperation(entityType, property.name())) {
 		servlet.operations.boundAction(path, property.name(), request, response);
 		return;
 	}

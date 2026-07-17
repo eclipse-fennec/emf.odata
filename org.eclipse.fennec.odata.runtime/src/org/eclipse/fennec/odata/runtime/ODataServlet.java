@@ -166,7 +166,7 @@ public class ODataServlet extends HttpServlet {
 
 	final ODataResourceParser resourceParser = new ODataResourceParser();
 
-	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
+	final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
 	private final List<MediaService> mediaServices = new CopyOnWriteArrayList<>();
@@ -175,7 +175,7 @@ public class ODataServlet extends HttpServlet {
 	private final CachingODataQueryParser parser = new CachingODataQueryParser();
 	private final OclEvaluator expandFilterEvaluator = new OclEvaluator();
 	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
-	private final Map<EPackage, ODataPackageProfile> profiles =
+	final Map<EPackage, ODataPackageProfile> profiles =
 			Collections.synchronizedMap(new java.util.WeakHashMap<>());
 	private final EntityShaper shaper = new EntityShaper();
 
@@ -1238,7 +1238,7 @@ public class ODataServlet extends HttpServlet {
 		// name that is neither a set nor a singleton but an unbound operation
 		if (rawPath.indexOf('/') < 0 && rawPath.indexOf('(') < 0
 				&& resolveEntityType(rawPath) == null && resolveSingleton(rawPath) == null
-				&& resolveUnoperations.boundFunction(rawPath) != null) {
+				&& operations.resolveUnboundFunction(rawPath) != null) {
 			operations.functionImport(rawPath + "()", request, response);
 			return;
 		}
@@ -1758,8 +1758,8 @@ public class ODataServlet extends HttpServlet {
 						// 4.01 13.2.1/9.3+9.5: a parameterless bound function invoked WITHOUT
 						// parentheses, unqualified (default namespace)
 						if (last && property.key() == null
-								&& hasBoundOperation(object.eClass(), property.name())) {
-							invokeBoundFunction(object, object.eClass(), property.name(), "",
+								&& OperationDispatcher.hasBoundOperation(object.eClass(), property.name())) {
+							operations.invokeBoundFunction(object, object.eClass(), property.name(), "",
 									request, response);
 							return;
 						}
@@ -1792,8 +1792,8 @@ public class ODataServlet extends HttpServlet {
 						String local = cast.qualifiedName()
 								.substring(cast.qualifiedName().lastIndexOf('.') + 1);
 						if (last && cast.key() == null && current instanceof EObject object
-								&& hasBoundOperation(object.eClass(), local)) {
-							invokeBoundFunction(object, object.eClass(), local, "", request, response);
+								&& OperationDispatcher.hasBoundOperation(object.eClass(), local)) {
+							operations.invokeBoundFunction(object, object.eClass(), local, "", request, response);
 							return;
 						}
 						error(response, HttpServletResponse.SC_NOT_FOUND, "unknown type '"
