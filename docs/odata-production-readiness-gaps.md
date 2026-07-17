@@ -46,7 +46,8 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 ## TODO / offene Entscheidungen (sinnlose Default-Kombinationen — mit User klären)
 
-- **T2.7 God-Object-Refactor** (ODataServlet ~4900 Z.): als eigenes Follow-up NACH dem Merge (Pre-Merge-Refactor ist selbst ein Risiko; Helfer sind bereits extrahiert).
+- [x] **T2.7 God-Object-Refactor** — ✅ 2026-07-17 doch VOR dem Merge gezogen
+  (User-Entscheid), Details in der Tier-2-Liste.
 - [x] **WriteService Nicht-Containment-Referenzen** — ✅ 2026-07-17: BEIDE Backends binden
   Payload-Member per Key an EXISTIERENDE Entitäten (JPA: `em.find` im offenen EM; In-Memory:
   Store-Auflösung VOR dem Klassen-Lock); unbekanntes Ziel → 400 (nie silent Deep Insert),
@@ -126,7 +127,18 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - [x] **T2.4 [Exception] Client `ODataBatch` Jackson-Wrapping** — ✅ readTree + parseInt → ODataClientException. — `JacksonException` → `ODataClientException`. Test.
 - [x] **T2.5 [Security] Servlet 406** — ✅ `notAcceptable`, Test `contentNegotiation406`. — nicht json/xml-kompatibler Accept → 406. Test.
 - [x] **T2.6 [Concurrency] `ODataClient.maxResponseBytes`** — ✅ volatile. — `volatile` oder aus config. Test/Review.
-- [~] **T2.7 [SOLID] `ODataServlet` God-Object** — Batch-/Async-/Write-Dispatcher extrahieren.
+- [x] **T2.7 [SOLID] `ODataServlet` God-Object** — ✅ 2026-07-17 (vorgezogen VOR den
+  main-Merge, User-Entscheid; Branch `refactor/servlet-decomposition`, 4 mechanische
+  Schritte je mit grünem Build): `BatchHttpRequest`/`BatchHttpResponse` (geteilte
+  synthetische Wrapper), `BatchDispatcher` ($batch beide Wire-Formen, Atomicity-Groups),
+  `AsyncDispatcher` (respond-async: Executor, Monitor-LRU, In-Flight-Cap,
+  accept/monitor/cancel/shutdown; Re-Entry über neue package-private
+  `dispatchDirectly`-Brücke statt `super.service`), `WriteDispatcher` (POST/PATCH/PUT/
+  DELETE-Dispatch, Payload-Decode inkl. `@odata.bind`, Delta-Collection-Update,
+  created/updated-Responses). Geteilte Helfer (ETags/Preconditions, Routing, Media,
+  Actions, `entityJson`) bleiben am Servlet, Zugriff package-private. Servlet
+  4969→3222 Zeilen; Verhalten unverändert (voller `build testOSGi` grün, 85/0
+  Servlet-Tests, itests 0 failed).
 - [x] **T2.8 [Concurrency/Leak] `CachingODataQueryParser.invalidate` verdrahten** — Provider-Unregister-Hook oder Klassen-Zahl-Cap.
 - [x] **T2.9 [Coverage] Floor anheben + `persistence.api` gaten; `$apply`-Ausschluss prüfen** —
   ✅ 2026-07-17: Messlauf (Floor temporär 0.99 → Ist-Werte aus den Violations, exakt die
@@ -187,3 +199,6 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
   persistence.api-Gate; Konstanten-Pass) und **U3/U4 vom User bestätigt** (BSI-Baseline +
   Limit-Defaults → Manual 04). U1/U2 zurückgestellt (keine Zugangsdaten bzw. später).
   **Verbleibend im Härtungslauf: NUR T2.7** (God-Object, bewusst post-merge).
+- 2026-07-17 (3): **T2.7 erledigt** (vorgezogen, s. Tier-2-Eintrag) — **der Härtungslauf
+  ist damit KOMPLETT**; nächster Schritt ist U2 (Release auf `main`), sobald der User
+  so weit ist.
