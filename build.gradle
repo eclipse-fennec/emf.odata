@@ -62,23 +62,30 @@ subprojects {
     }
 
     // Coverage floor: a catastrophic-regression tripwire (e.g. a bundle's tests deleted) wired
-    // into `check`. Conservative baseline of 30% instructions on the hand-written code of the
-    // library bundles that carry plain-JUnit tests — generated code and test-only/OSGi-covered
-    // bundles are out of scope. Ratchet upward as coverage is deliberately raised.
+    // into `check`, on the hand-written code of the library bundles that carry plain-JUnit
+    // tests — generated code and test-only/OSGi-covered bundles are out of scope. Per-bundle
+    // floors from the 2026-07-17 measurement run (T2.9), each ~10 points below the measured
+    // ratio: enough headroom for honest refactoring, trips on a lost test class. Measured then:
+    // csdl .90, jpa .86, runtime .84, inmemory .83, client .79, codec.json .77,
+    // vocabularies .64, query .56, persistence.api .47. Ratchet upward as coverage rises.
     def coverageFloorBundles = [
-            'org.eclipse.fennec.odata.query',
-            'org.eclipse.fennec.odata.runtime',
-            'org.eclipse.fennec.odata.persistence.jpa',
-            'org.eclipse.fennec.odata.persistence.inmemory',
-            'org.eclipse.fennec.odata.csdl',
-            'org.eclipse.fennec.odata.codec.json',
-            'org.eclipse.fennec.odata.client',
-            'org.eclipse.fennec.odata.vocabularies',
+            'org.eclipse.fennec.odata.query'               : 0.45,
+            'org.eclipse.fennec.odata.runtime'             : 0.75,
+            'org.eclipse.fennec.odata.persistence.api'     : 0.40,
+            'org.eclipse.fennec.odata.persistence.jpa'     : 0.75,
+            'org.eclipse.fennec.odata.persistence.inmemory': 0.75,
+            'org.eclipse.fennec.odata.csdl'                : 0.80,
+            'org.eclipse.fennec.odata.codec.json'          : 0.65,
+            'org.eclipse.fennec.odata.client'              : 0.70,
+            'org.eclipse.fennec.odata.vocabularies'        : 0.55,
     ]
     afterEvaluate {
-        if (project.name in coverageFloorBundles) {
+        def floor = coverageFloorBundles[project.name]
+        if (floor != null) {
             tasks.named('jacocoTestCoverageVerification') {
-                // exclude generated code (ANTLR parser, EMF src-gen models/profiles)
+                // exclude generated code (ANTLR parser, EMF src-gen models/profiles;
+                // query/apply is the src-gen $apply model — verified all-generated, no
+                // hand-written classes hide behind the exclusion)
                 def generated = ['**/antlr/**', '**/profile/**', 'org/open/oasis/**',
                                  'org/eclipse/fennec/odata/query/apply/**']
                 classDirectories.setFrom(files(classDirectories.files.collect {
@@ -89,7 +96,7 @@ subprojects {
                         limit {
                             counter = 'INSTRUCTION'
                             value = 'COVEREDRATIO'
-                            minimum = 0.30
+                            minimum = floor
                         }
                     }
                 }

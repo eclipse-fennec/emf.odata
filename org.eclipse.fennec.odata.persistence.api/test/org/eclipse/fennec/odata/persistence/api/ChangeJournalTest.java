@@ -10,7 +10,7 @@
  * Contributors:
  *   Data In Motion Consulting - initial implementation
  */
-package org.eclipse.fennec.odata.persistence.inmemory;
+package org.eclipse.fennec.odata.persistence.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -20,8 +20,6 @@ import java.util.Map;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EcoreFactory;
-import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
-import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
