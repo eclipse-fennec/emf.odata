@@ -170,9 +170,9 @@ public class ODataServlet extends HttpServlet {
 	final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
 	private final List<MediaService> mediaServices = new CopyOnWriteArrayList<>();
-	private final List<DeltaService> deltaServices = new CopyOnWriteArrayList<>();
+	final List<DeltaService> deltaServices = new CopyOnWriteArrayList<>();
 	final List<ODataOperationHandler> operationHandlers = new CopyOnWriteArrayList<>();
-	private final CachingODataQueryParser parser = new CachingODataQueryParser();
+	final CachingODataQueryParser parser = new CachingODataQueryParser();
 	private final OclEvaluator expandFilterEvaluator = new OclEvaluator();
 	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
 	final Map<EPackage, ODataPackageProfile> profiles =
@@ -185,6 +185,7 @@ public class ODataServlet extends HttpServlet {
 	final AsyncDispatcher asyncDispatcher = new AsyncDispatcher(this);
 	private final WriteDispatcher writeDispatcher = new WriteDispatcher(this);
 	final OperationDispatcher operations = new OperationDispatcher(this);
+	private final DeltaDispatcher deltas = new DeltaDispatcher(this);
 
 	/**
 	 * CORS origin(s) served to browser clients (e.g. the XOData explorer): {@code "*"} or a
@@ -306,7 +307,7 @@ public class ODataServlet extends HttpServlet {
 	 * MUST NOT carry top/skip and SHOULD NOT carry count; ordering does not apply to deltas).
 	 * Everything else present on a delta request → 400, the client MUST NOT append options.
 	 */
-	private static final Set<String> DELTA_LINK_OPTIONS = Set.of(
+	static final Set<String> DELTA_LINK_OPTIONS = Set.of(
 			"$filter", "$search", "$select", "$compute", "$format", "$expand");
 
 	/** The {@code odata.metadata=} format parameter of an Accept header or {@code $format}. */
@@ -398,7 +399,7 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/** Collection-envelope head: an opening brace plus the context property — context-free under metadata=none. */
-	private static StringBuilder envelopeHead(String contextUrl) {
+	static StringBuilder envelopeHead(String contextUrl) {
 		StringBuilder head = new StringBuilder("{");
 		if (!omitContext()) {
 			head.append("\"@odata.context\":\"").append(contextUrl).append('"');
@@ -407,7 +408,7 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/** Separates the next top-level envelope property unless it is the first one. */
-	private static StringBuilder envelopeProperty(StringBuilder envelope) {
+	static StringBuilder envelopeProperty(StringBuilder envelope) {
 		if (envelope.length() > 1) {
 			envelope.append(',');
 		}
@@ -908,7 +909,7 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		if (option(request, "$deltatoken") != null) { // following a delta link ([OData-Protocol] 11.3.2)
-			deltaResponse(setName, castName, castType, target, request, response);
+			deltas.deltaResponse(setName, castName, castType, target, request, response);
 			return;
 		}
 		// a cast makes the DERIVED type the context: its properties are addressable in options
@@ -947,8 +948,8 @@ public class ODataServlet extends HttpServlet {
 		// backend AND a 4.01 client — 4.0 REQUIRES the flattened delta payload we do not emit.
 		// The token is taken BEFORE the query runs — a write racing the read is re-reported in
 		// the first delta rather than lost.
-		DeltaService candidate = trackChangesRequested(request)
-				? deltaService(target.entityType(), target.queryService()) : null;
+		DeltaService candidate = DeltaDispatcher.trackChangesRequested(request)
+				? deltas.deltaService(target.entityType(), target.queryService()) : null;
 		DeltaService deltaService = candidate != null && (expand.isEmpty()
 				|| (candidate.supportsExpandTracking() && !"4.0".equals(negotiateVersion(request))))
 				? candidate : null;
@@ -986,7 +987,7 @@ public class ODataServlet extends HttpServlet {
 		} else if (deltaToken != null) { // the delta link replaces the next link on the LAST page
 			response.setHeader("Preference-Applied", "odata.track-changes");
 			json.append(",\"@odata.deltaLink\":\"")
-					.append(ODataJson.sanitize(deltaLink(request, deltaToken))).append('"');
+					.append(ODataJson.sanitize(deltas.deltaLink(request, deltaToken))).append('"');
 		}
 		json.append('}');
 		response.setContentType(contentTypeJson());
@@ -1004,162 +1005,6 @@ public class ODataServlet extends HttpServlet {
 			}
 		}
 		return link.toString();
-	}
-
-	// --- change tracking ([OData-Protocol] 11.3, [OData-JSON] delta payloads) ---
-
-	/** Whether the client sent {@code Prefer: odata.track-changes} (prefix optional, 4.01). */
-	private static boolean trackChangesRequested(HttpServletRequest request) {
-		String prefer = request.getHeader("Prefer");
-		if (prefer == null) {
-			return false;
-		}
-		for (String preference : prefer.split(",")) {
-			String name = preference.trim().split("=", 2)[0].trim().toLowerCase(Locale.ROOT);
-			if ("odata.track-changes".equals(name) || "track-changes".equals(name)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/**
-	 * The delta backend for the type — preferring the one that IS the serving query backend
-	 * (the JPA service implements both), so tokens and data always come from the same journal.
-	 */
-	private DeltaService deltaService(EClass entityType, QueryService queryService) {
-		return deltaServices.stream()
-				.filter(s -> s == queryService).filter(s -> s.supports(entityType)).findFirst()
-				.orElseGet(() -> deltaServices.stream()
-						.filter(s -> s.supports(entityType)).findFirst().orElse(null));
-	}
-
-	/**
-	 * The delta link: the defining query's {@linkplain #DELTA_LINK_OPTIONS carry-over options}
-	 * (plus its {@code @}-parameter aliases) re-encoded around the fresh {@code $deltatoken} —
-	 * self-describing, so the server stays stateless per client.
-	 */
-	private String deltaLink(HttpServletRequest request, String token) {
-		return definingUrl(request) + (definingUrl(request).indexOf('?') < 0 ? '?' : '&')
-				+ "$deltatoken=" + java.net.URLEncoder.encode(token, StandardCharsets.UTF_8);
-	}
-
-	/** The defining query's URL without the token — the refetch target for {@code 410 Gone}. */
-	private String definingUrl(HttpServletRequest request) {
-		StringBuilder link = new StringBuilder(request.getRequestURI());
-		char separator = '?';
-		for (String option : DELTA_LINK_OPTIONS) {
-			String value = option(request, option);
-			if (value != null) {
-				link.append(separator).append(option).append('=')
-						.append(java.net.URLEncoder.encode(value, StandardCharsets.UTF_8));
-				separator = '&';
-			}
-		}
-		for (Map.Entry<String, String> alias : parameterAliases(request).entrySet()) {
-			link.append(separator)
-					.append(java.net.URLEncoder.encode(alias.getKey(), StandardCharsets.UTF_8))
-					.append('=').append(java.net.URLEncoder.encode(alias.getValue(), StandardCharsets.UTF_8));
-			separator = '&';
-		}
-		return link.toString();
-	}
-
-	/**
-	 * Answers a delta link ({@code GET Set?$deltatoken=…}): everything that changed since the
-	 * token, as a delta payload — upserts with their current state, removals as deleted-entity
-	 * objects in the negotiated version's form, and a fresh delta link for the next round.
-	 * An aged-out token answers {@code 410 Gone} with the refetch URL in {@code Location}.
-	 */
-	private void deltaResponse(String setName, String castName, EClass castType, Target target,
-			HttpServletRequest request, HttpServletResponse response) throws IOException {
-		for (String name : request.getParameterMap().keySet()) {
-			String normalized = normalizeOption(name);
-			if (normalized.startsWith("$") && !"$deltatoken".equals(normalized)
-					&& !DELTA_LINK_OPTIONS.contains(normalized)) {
-				error(response, HttpServletResponse.SC_BAD_REQUEST,
-						"query options must not be appended to a delta link");
-				return;
-			}
-		}
-		DeltaService deltaService = deltaService(target.entityType(), target.queryService());
-		if (deltaService == null) {
-			error(response, 501, "change tracking is not supported for this entity set");
-			return;
-		}
-		EClass context = castType != null ? castType : target.entityType();
-		Map<String, ExpandItem> expand = expandOption(request, context);
-		if (!expand.isEmpty()) {
-			if ("4.0".equals(negotiateVersion(request))) {
-				// 4.0 deltas MUST flatten expanded changes into link objects ([OData-JSON]) —
-				// we emit the 4.01 form (full expanded representations) only
-				error(response, 501, "4.0 flattened delta payloads are not implemented");
-				return;
-			}
-			if (!deltaService.supportsExpandTracking()) {
-				error(response, 501, "expanded change tracking is not supported by this backend");
-				return;
-			}
-		}
-		Map<String, String> aliases = parameterAliases(request);
-		SelectTree select = selectOption(request, context);
-		EntityQuery definingQuery = new EntityQuery(target.entityType(), castType,
-				parseChecked(filterWithSearch(request, context),
-						filter -> aliases.isEmpty() ? parser.parseFilter(filter, context)
-								: parser.parseFilter(filter, context, aliases)),
-				List.of(), 0, -1, false, expand.keySet());
-
-		DeltaService.DeltaResult delta;
-		try {
-			// Prefer: maxpagesize pages the delta response server-driven (11.3.2): a truncated
-			// window's follow-up link is a NEXT link; the final page carries the delta link
-			int span = maxPageSizePreference(request);
-			delta = span > 0
-					? deltaService.changesSince(definingQuery, option(request, "$deltatoken"), span)
-					: deltaService.changesSince(definingQuery, option(request, "$deltatoken"));
-		} catch (DeltaGoneException e) {
-			// the client refetches the full set: the defining query without the token (11.3.2)
-			response.setHeader("Location", definingUrl(request));
-			error(response, 410, "the delta token is no longer valid");
-			return;
-		}
-
-		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata#" + setName
-				+ (castName != null ? "/" + castName : "") + "/$delta");
-		envelopeProperty(json).append("\"value\":[");
-		boolean first = true;
-		for (EObject entity : delta.changed()) {
-			if (!first) {
-				json.append(',');
-			}
-			first = false;
-			// upserts ride the regular expand pipeline: an expanding defining query serializes
-			// the FULL current representation of the expanded navigations ([OData-JSON] — the
-			// spec-legal alternative to nested delta representations)
-			json.append(entityJson(entity, context, select, expand));
-		}
-		boolean v40 = "4.0".equals(negotiateVersion(request));
-		for (DeltaService.Removal removal : delta.removals()) {
-			if (!first) {
-				json.append(',');
-			}
-			first = false;
-			String id = setName + "(" + keyLiteral(removal.keyValues()) + ")";
-			if (v40) { // 4.0 deleted-entity object: context fragment + plain id property
-				json.append("{\"@odata.context\":\"#").append(setName).append("/$deletedEntity\",")
-						.append("\"reason\":\"").append(removal.reason()).append("\",")
-						.append("\"id\":\"").append(ODataJson.sanitize(id)).append("\"}");
-			} else { // 4.01 form: @removed control information
-				json.append("{\"@removed\":{\"reason\":\"").append(removal.reason()).append("\"},")
-						.append("\"@id\":\"").append(ODataJson.sanitize(id)).append("\"}");
-			}
-		}
-		json.append(']');
-		json.append(delta.truncated() ? ",\"@odata.nextLink\":\"" : ",\"@odata.deltaLink\":\"")
-				.append(ODataJson.sanitize(deltaLink(request, delta.nextToken()))).append('"');
-		json.append('}');
-		response.setContentType(contentTypeJson());
-		response.getWriter().write(json.toString());
 	}
 
 	/**
@@ -1198,7 +1043,7 @@ public class ODataServlet extends HttpServlet {
 		return entityType.getName();
 	}
 
-	private static String keyLiteral(Map<String, Object> keyValues) {
+	static String keyLiteral(Map<String, Object> keyValues) {
 		StringBuilder literal = new StringBuilder();
 		boolean named = keyValues.size() > 1;
 		for (Map.Entry<String, Object> entry : keyValues.entrySet()) {
@@ -1374,7 +1219,7 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		if (option(request, "$deltatoken") != null) {
-			deltaCount(target, castType, request, response); // /$count on a delta link (11.3.2 MAY)
+			deltas.deltaCount(target, castType, request, response); // /$count on a delta link (11.3.2 MAY)
 			return;
 		}
 		EClass context = castType != null ? castType : target.entityType();
@@ -1385,36 +1230,6 @@ public class ODataServlet extends HttpServlet {
 				List.of(), 0, 0, true));
 		response.setContentType("text/plain;charset=UTF-8");
 		response.getWriter().write(String.valueOf(result.totalCount()));
-	}
-
-	/**
-	 * {@code GET Set/$count?$deltatoken=…} ([OData-Protocol] 11.3.2): the number of changes the
-	 * delta link would return — added, changed and deleted entities.
-	 */
-	private void deltaCount(Target target, EClass castType, HttpServletRequest request,
-			HttpServletResponse response) throws IOException {
-		DeltaService deltaService = deltaService(target.entityType(), target.queryService());
-		if (deltaService == null) {
-			error(response, 501, "change tracking is not supported for this entity set");
-			return;
-		}
-		EClass context = castType != null ? castType : target.entityType();
-		Map<String, String> aliases = parameterAliases(request);
-		EntityQuery definingQuery = new EntityQuery(target.entityType(), castType,
-				parseChecked(filterWithSearch(request, context),
-						filter -> aliases.isEmpty() ? parser.parseFilter(filter, context)
-								: parser.parseFilter(filter, context, aliases)),
-				List.of(), 0, -1, false);
-		DeltaService.DeltaResult delta;
-		try {
-			delta = deltaService.changesSince(definingQuery, option(request, "$deltatoken"));
-		} catch (DeltaGoneException e) {
-			response.setHeader("Location", definingUrl(request));
-			error(response, 410, "the delta token is no longer valid");
-			return;
-		}
-		response.setContentType("text/plain;charset=UTF-8");
-		response.getWriter().write(String.valueOf(delta.changed().size() + delta.removals().size()));
 	}
 
 	/**
@@ -2203,7 +2018,7 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/** Canonical form of a query-option name: lower-case with a {@code $} prefix. */
-	private static String normalizeOption(String name) {
+	static String normalizeOption(String name) {
 		String normalized = name.toLowerCase(Locale.ROOT);
 		return normalized.startsWith("$") ? normalized : "$" + normalized;
 	}
@@ -2213,7 +2028,7 @@ public class ODataServlet extends HttpServlet {
 	 * Values are expression texts and get parsed on use — so they pass the SAME pre-parse
 	 * limits as {@code $filter} itself (hostile-input guard).
 	 */
-	private Map<String, String> parameterAliases(HttpServletRequest request) {
+	Map<String, String> parameterAliases(HttpServletRequest request) {
 		Map<String, String> aliases = new HashMap<>();
 		for (Map.Entry<String, String[]> parameter : request.getParameterMap().entrySet()) {
 			if (parameter.getKey().startsWith("@") && parameter.getValue().length > 0) {
@@ -2238,7 +2053,7 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/** The {@code Prefer: (odata.)maxpagesize} value, or {@code -1} when absent/malformed. */
-	private static int maxPageSizePreference(HttpServletRequest request) {
+	static int maxPageSizePreference(HttpServletRequest request) {
 		String prefer = request.getHeader("Prefer");
 		if (prefer == null) {
 			return -1;
@@ -2266,7 +2081,7 @@ public class ODataServlet extends HttpServlet {
 	 * becomes {@code contains(prop,'term')} OR-ed over the type's string properties, AND-ed with any
 	 * {@code $filter}. It thus rides the existing typed-IR pushdown — no backend change, both backends.
 	 */
-	private String filterWithSearch(HttpServletRequest request, EClass context) {
+	String filterWithSearch(HttpServletRequest request, EClass context) {
 		String search = option(request, "$search");
 		String filter = option(request, "$filter");
 		if (search == null || search.isBlank()) {
@@ -2406,7 +2221,7 @@ public class ODataServlet extends HttpServlet {
 		return "{" + (inner.isEmpty() ? members.substring(1) : inner + members) + "}";
 	}
 
-	private <T> T parseChecked(String expression, Function<String, T> parse) {
+	<T> T parseChecked(String expression, Function<String, T> parse) {
 		if (expression == null || expression.isBlank()) {
 			return null;
 		}
@@ -2454,7 +2269,7 @@ public class ODataServlet extends HttpServlet {
 
 	// --- $select / $expand / formats ---
 
-	private SelectTree selectOption(HttpServletRequest request, EClass entityType) {
+	SelectTree selectOption(HttpServletRequest request, EClass entityType) {
 		return selectOption(request, entityType, Set.of());
 	}
 
@@ -2498,7 +2313,7 @@ public class ODataServlet extends HttpServlet {
 	 * @param cast    {@code nav/Ns.Type} (5.1.3.2): only related instances of the derived type
 	 *                are expanded; null without a cast
 	 */
-	private record ExpandItem(CollectionOptions options, boolean refOnly, EClass cast, int levels) {
+	record ExpandItem(CollectionOptions options, boolean refOnly, EClass cast, int levels) {
 	}
 
 	/**
@@ -2536,7 +2351,7 @@ public class ODataServlet extends HttpServlet {
 	 * (optionally with a nested {@code $filter} against the derived type); other nested
 	 * options answer 501.
 	 */
-	private Map<String, ExpandItem> expandOption(HttpServletRequest request, EClass entityType) {
+	Map<String, ExpandItem> expandOption(HttpServletRequest request, EClass entityType) {
 		String expand = option(request, "$expand");
 		Map<String, ExpandItem> items = new LinkedHashMap<>();
 		if (expand == null || expand.isBlank()) {
