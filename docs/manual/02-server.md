@@ -104,6 +104,7 @@ DELETE /odata/Product('p1')/category/$ref    # clear / remove
 
 - **Deep insert** of containment children rides along in the POST body.
 - **`@odata.bind`**: a `"nav@odata.bind": "Category('c1')"` member links to an existing entity; it is extracted and validated before the codec sees the body, then applied as a reference operation after the write (entity level only).
+- **Nested non-containment members** (`"category": {"id": "c1"}`) reference an EXISTING entity by key: the backend binds the store row; an unknown target is a `400` — never a silent deep insert across a non-containment navigation. An omitted navigation keeps its binding under `PATCH` and `PUT` alike (PUT replace covers structural properties only, Protocol §11.4.3).
 - **ETags / If-Match**: weak ETags (SHA-256 over the serialized state) on single-entity GET; updates/deletes of existing entities require `If-Match` → `428`/`412`.
 - **`Prefer: return=minimal`** answers a create with `204` (headers only) and an update with `204`; **`return=representation`** returns the full entity (`201`/`200`). The honoured choice is echoed in `Preference-Applied`.
 - **Composite keys**: entity-level `PATCH`/`PUT`/`DELETE` accept compound predicates (`(k1=v1,k2=v2)`, all key properties named); below-entity composite writes answer 501. Key literals whose form contradicts the key type (quoted vs. numeric) are rejected with 400.

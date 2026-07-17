@@ -66,11 +66,11 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  * area), which is why the PersistenceUnit cannot be a static Configurator resource the way the
  * servlet limits are — the model must be turned into a mapping first, here, in code.
  *
- * <p>Only entities with a key are seeded through the OData {@code WriteService}: {@code Category}
- * and {@code Product} carry an {@code id}. {@code Review} has no key and is a containment child;
- * the write path requires a key per created entity, so reviews are left out of the seed (the JPA
- * mapping still gives {@code Review} a synthetic primary key for storage). This mirrors the
- * webshop test model, which gives {@code Review} an explicit {@code id}.
+ * <p>The seed runs entirely through the OData {@code WriteService}: categories first, then
+ * products whose {@code category} member is a key-only stub — the write path binds each
+ * non-containment reference to the EXISTING category row by its key. Reviews carry their own
+ * {@code id} (the write path requires a key per created entity) and ride along as containment
+ * children of Cheese.
  */
 @Component(immediate = true)
 public class ShopJpaBackendComponent {
@@ -190,18 +190,29 @@ public class ShopJpaBackendComponent {
 	}
 
 	private void seed(WriteService write, EClass categoryClass, EClass productClass, EClass reviewClass) {
-		// Categories are standalone entities; Product.category is a NON-containment reference the
-		// JPA WriteService does not bind yet (documented follow-up), so products are seeded flat.
+		// Categories first: Product.category is a NON-containment reference — the write path
+		// binds each payload member to the EXISTING category row by its key.
 		write.create(categoryClass, category(categoryClass, "c1", "Dairy"));
 		write.create(categoryClass, category(categoryClass, "c2", "Bakery"));
-		write.create(productClass, product(productClass, "p1", "Milk", "1.20", 3, true));
-		EObject cheese = product(productClass, "p2", "Cheese", "4.50", 5, true);
+		write.create(productClass, categorized(
+				product(productClass, "p1", "Milk", "1.20", 3, true), productClass, categoryClass, "c1"));
+		EObject cheese = categorized(
+				product(productClass, "p2", "Cheese", "4.50", 5, true), productClass, categoryClass, "c1");
 		// reviews is a CONTAINMENT reference — it rides along and cascades to the REVIEW table
 		cheese.eSet(productClass.getEStructuralFeature("reviews"), List.of(
 				review(reviewClass, "r1", 5, "great with wine"),
 				review(reviewClass, "r2", 4, "a bit pricey")));
 		write.create(productClass, cheese);
-		write.create(productClass, product(productClass, "p3", "Bread", "2.80", 4, false));
+		write.create(productClass, categorized(
+				product(productClass, "p3", "Bread", "2.80", 4, false), productClass, categoryClass, "c2"));
+	}
+
+	/** Sets a key-only category stub — the write path resolves it to the persisted row. */
+	private EObject categorized(EObject product, EClass productClass, EClass categoryClass,
+			String categoryId) {
+		product.eSet(productClass.getEStructuralFeature("category"),
+				create(categoryClass, Map.of("id", categoryId)));
+		return product;
 	}
 
 	private EObject review(EClass reviewClass, String id, int stars, String comment) {

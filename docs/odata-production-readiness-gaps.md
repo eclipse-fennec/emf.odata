@@ -47,13 +47,16 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 ## TODO / offene Entscheidungen (sinnlose Default-Kombinationen — mit User klären)
 
 - **T2.7 God-Object-Refactor** (ODataServlet ~4900 Z.): als eigenes Follow-up NACH dem Merge (Pre-Merge-Refactor ist selbst ein Risiko; Helfer sind bereits extrahiert).
-- **JPA-WriteService Nicht-Containment-Referenzen**: `copyFeatures` überspringt sie derzeit
-  („non-containment bindings are a follow-up"). Folge: über den Write-Pfad angelegte Entitäten
-  verlieren ihre Nicht-Containment-Links (z.B. `Product.category`). Follow-up = Referenzen per
-  Key auflösen (`em.getReference`) und binden.
-- **T2.2 CSDL-Annotation-Typinferenz**: braucht Term-Typ-Modellierung (round-trip-stabil) — gemeinsam entscheiden.
+- [x] **WriteService Nicht-Containment-Referenzen** — ✅ 2026-07-17: BEIDE Backends binden
+  Payload-Member per Key an EXISTIERENDE Entitäten (JPA: `em.find` im offenen EM; In-Memory:
+  Store-Auflösung VOR dem Klassen-Lock); unbekanntes Ziel → 400 (nie silent Deep Insert),
+  ausgelassene Navigation bleibt bei PATCH UND PUT erhalten (11.4.3: replace ist
+  structural-only — In-Memory-`apply` entsprechend korrigiert). Tests: JPA (2), In-Memory (1),
+  Differential-Write-Parität (1); Beispiel-Seed bindet Kategorien jetzt mit.
 - **T2.9 Coverage-Floor** bewusst nicht blind angehoben; wenn gewünscht, mit Messlauf einen sicheren Wert wählen.
-- **T3.1/T3.4** Rest-FQN + Konstanten-Export: mechanischer Sammel-Pass (IDE „Organize Imports").
+- **T3.10** Magic Numbers → Konstanten/Config + `{@value}`-Javadoc: mechanischer Sammel-Pass.
+  *(Bereinigt 2026-07-17: T2.2/T3.1/T3.4 standen hier noch als offen — sind in den
+  Tier-Listen längst ✅.)*
 
 ---
 
@@ -109,9 +112,9 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
     Descriptor nicht baubar (`EntityMapper`-Synthese-PK → `DescriptorException` „no non-read-only
     mapping for primary key REVIEW.PK_REVIEW"); Embeddable-Mapping wird von `EntityMapper` nicht
     generisch unterstützt (empirisch geprüft).
-  - **Bekannte Grenze (dokumentiert)**: `Product.category` (Nicht-Containment) bindet der JPA-
-    `WriteService` noch nicht (`copyFeatures` überspringt Nicht-Containment-Refs) → Demo seedet
-    Produkte flach; `Product.reviews` (Containment) reitet mit.
+  - ~~Bekannte Grenze~~ 2026-07-17 GESCHLOSSEN: der `WriteService` bindet Nicht-Containment-Refs
+    per Key (s. TODO-Abschnitt) — der Demo-Seed bindet `Product.category` jetzt mit;
+    `Product.reviews` (Containment) reitet weiterhin mit.
 
 ## Tier 2 — Mittel
 
@@ -165,3 +168,8 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - 2026-07-16: **Tier 1 Sicherheits-/DoS-Kern KOMPLETT** (T1.1 CSDL-XML-Härtung, T1.2 async
   In-Flight-Cap, T1.3 $apply-Page-Cap) mit Tests committet. **Offen T1.4** (lauffähiges
   JPA-Beispiel — nur launch-verifizierbar, s. o.). Nächster: Tier 2 + Tier 3.
+- 2026-07-17: **Nicht-Containment-Write-Bindung geschlossen** (beide Backends, s. TODO-Abschnitt)
+  — Gegenstück zum Read-Pfad-Fix vom selben Tag (`$expand`-Proxy-Auflösung via
+  JPAResourceFactory-ResourceSet, emf.persistence-jpa#17). Demo-Seed bindet Kategorien;
+  Manual 02-server dokumentiert die Nested-Member-Semantik. Verbleibend: T2.7 (post-merge),
+  T2.9, T3.10.

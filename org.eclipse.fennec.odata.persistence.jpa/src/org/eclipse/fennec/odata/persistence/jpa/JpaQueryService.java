@@ -415,7 +415,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 						"an entity with this key already exists in " + entityType.getName());
 			}
 			EObject entity = newInstance(factory, entityType);
-			copyFeatures(entityType, payload, entity, factory, true);
+			copyFeatures(entityType, payload, entity, factory, em, true);
 			entity.eSet(keyAttribute(entityType), key); // copyFeatures leaves the key alone
 			em.persist(entity);
 			tx.commit();
@@ -435,7 +435,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 			EObject existing = (EObject) em.find(javaType, key);
 			if (existing == null) { // OData upsert (13.1.1/29) — the URL key wins
 				EObject entity = newInstance(factory, entityType);
-				copyFeatures(entityType, payload, entity, factory, true);
+				copyFeatures(entityType, payload, entity, factory, em, true);
 				entity.eSet(id, key);
 				em.persist(entity);
 				tx.commit();
@@ -443,7 +443,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 						ChangeJournal.keyValuesOf(entity), false);
 				return new WriteResult(entity, true);
 			}
-			copyFeatures(entityType, payload, existing, factory, replace);
+			copyFeatures(entityType, payload, existing, factory, em, replace);
 			existing.eSet(id, key); // the key is immutable
 			tx.commit();
 			journal.record(entityType, String.valueOf(key),
@@ -479,7 +479,7 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 		try (Tx tx = new Tx(factory)) {
 			EntityManager em = tx.em();
 			EObject owner = requiredManaged(em, factory, entityType, rawKey);
-			EObject instance = rebuild(child, factory);
+			EObject instance = rebuild(child, factory, em);
 			em.persist(instance);
 			attach(owner, reference, instance);
 			tx.commit();
@@ -864,19 +864,26 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 
 	/**
 	 * Applies the payload onto the target entity: attributes directly, containment children
-	 * as freshly built store instances (recursive); non-containment navigations are IGNORED
-	 * in v1 ({@code @odata.bind} is a follow-up). PATCH copies only set features, PUT
-	 * ({@code replace}) additionally resets everything missing to the defaults.
+	 * as freshly built store instances (recursive), non-containment navigations as bindings
+	 * to EXISTING entities — each payload member is resolved by its key ({@code em.find})
+	 * and the MANAGED instance is set, never the detached payload stub; a missing target
+	 * refuses the write (400), it is never a silent deep insert. PATCH copies only set
+	 * features; PUT ({@code replace}) additionally resets missing STRUCTURAL features to
+	 * their defaults — an omitted navigation keeps its binding under both verbs, because
+	 * PUT replace semantics cover structural properties only ([OData-Protocol] 11.4.3).
 	 */
 	private void copyFeatures(EClass entityType, EObject payload, EObject target,
-			EntityManagerFactory factory, boolean replace) {
+			EntityManagerFactory factory, EntityManager em, boolean replace) {
 		EAttribute id = keyAttribute(entityType);
 		for (EStructuralFeature feature : entityType.getEAllStructuralFeatures()) {
 			if (feature == id) {
 				continue;
 			}
 			if (feature instanceof EReference reference && !reference.isContainment()) {
-				continue; // non-containment bindings are a follow-up
+				if (payload.eIsSet(reference)) {
+					bindReference(payload, target, reference, factory, em);
+				}
+				continue; // omitted → the binding stays, PATCH and PUT alike
 			}
 			if (!payload.eIsSet(feature)) {
 				if (replace && target.eIsSet(feature)) {
@@ -889,11 +896,11 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 				if (reference.isMany()) {
 					List<EObject> children = new ArrayList<>();
 					for (Object member : (List<?>) value) {
-						children.add(rebuild((EObject) member, factory));
+						children.add(rebuild((EObject) member, factory, em));
 					}
 					target.eSet(reference, children);
 				} else {
-					target.eSet(reference, value == null ? null : rebuild((EObject) value, factory));
+					target.eSet(reference, value == null ? null : rebuild((EObject) value, factory, em));
 				}
 			} else {
 				target.eSet(feature, payload.eGet(feature));
@@ -901,10 +908,41 @@ public class JpaQueryService implements QueryService, WriteService, DeltaService
 		}
 	}
 
+	/** Sets the non-containment navigation to the resolved managed target(s). */
+	private void bindReference(EObject payload, EObject target, EReference reference,
+			EntityManagerFactory factory, EntityManager em) {
+		Object value = payload.eGet(reference);
+		if (reference.isMany()) {
+			List<EObject> members = new ArrayList<>();
+			for (Object member : (List<?>) value) {
+				members.add(requiredTarget(reference, (EObject) member, factory, em));
+			}
+			target.eSet(reference, members);
+		} else {
+			target.eSet(reference, value == null ? null
+					: requiredTarget(reference, (EObject) value, factory, em));
+		}
+	}
+
+	/** The MANAGED entity a payload reference member points at, resolved by its key. */
+	private EObject requiredTarget(EReference reference, EObject member,
+			EntityManagerFactory factory, EntityManager em) {
+		EClass targetType = member.eClass(); // may be a derived type of the reference target
+		Object key = member.eGet(keyAttribute(targetType));
+		if (key == null) {
+			throw new IllegalArgumentException("the payload value of '" + reference.getName()
+					+ "' must carry the key of an existing " + targetType.getName());
+		}
+		if (!(em.find(entityType(factory, targetType).getJavaType(), key) instanceof EObject entity)) {
+			throw new IllegalArgumentException("the reference target does not exist");
+		}
+		return entity;
+	}
+
 	/** A payload child as a store instance of ITS OWN class (recursive, incl. derived types). */
-	private EObject rebuild(EObject payload, EntityManagerFactory factory) {
+	private EObject rebuild(EObject payload, EntityManagerFactory factory, EntityManager em) {
 		EObject instance = newInstance(factory, payload.eClass());
-		copyFeatures(payload.eClass(), payload, instance, factory, true);
+		copyFeatures(payload.eClass(), payload, instance, factory, em, true);
 		EAttribute id = payload.eClass().getEAllAttributes().stream()
 				.filter(EAttribute::isID).findFirst().orElse(null);
 		if (id != null && payload.eIsSet(id)) {

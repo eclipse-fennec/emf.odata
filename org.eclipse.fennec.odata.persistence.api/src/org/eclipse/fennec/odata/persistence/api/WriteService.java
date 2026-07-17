@@ -24,10 +24,13 @@ import org.eclipse.emf.ecore.EObject;
  * the payload") — the difference between PATCH (merge) and PUT (replace) is the caller's
  * {@code replace} flag, the key always comes from the URL.
  *
- * <p>v1 scope: attributes and containment children; non-containment bindings
- * ({@code @odata.bind}) are a follow-up. Conflicts (existing key on create) raise
- * {@link WriteConflictException} → 409 at the protocol layer; unknown keys on delete return
- * {@code false} → 404.
+ * <p>Scope: attributes, containment children (deep insert) and non-containment bindings — a
+ * non-containment payload member references an EXISTING entity by its key and is bound to the
+ * store instance; an unknown target refuses the write (→ 400), it is never a silent deep
+ * insert. An omitted navigation keeps its binding under PATCH and PUT alike — PUT replace
+ * semantics cover structural properties only ([OData-Protocol] 11.4.3). Conflicts (existing
+ * key on create) raise {@link WriteConflictException} → 409 at the protocol layer; unknown
+ * keys on delete return {@code false} → 404.
  */
 public interface WriteService {
 

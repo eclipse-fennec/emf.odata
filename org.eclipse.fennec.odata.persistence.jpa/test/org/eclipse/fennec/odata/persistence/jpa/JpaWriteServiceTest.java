@@ -208,6 +208,57 @@ class JpaWriteServiceTest extends JpaWebshopTestBase {
 	}
 
 	@Test
+	@DisplayName("non-containment bindings: payload members resolve to EXISTING entities by key")
+	void nonContainmentBindings() {
+		// create with a reference stub (key only) — the shape a decoded payload member has
+		EObject payload = plain("Product", "id", "nc1", "name", "Yoghurt",
+				"price", new BigDecimal("0.80"));
+		payload.eSet(productClass.getEStructuralFeature("category"), plain("Category", "id", "c1"));
+		service.create(productClass, payload);
+		assertEquals(List.of("Yoghurt"),
+				names(query("category/name eq 'Dairy' and id eq 'nc1'", null, 0, -1, false)),
+				"the binding points at the EXISTING Dairy row, not at the payload stub");
+
+		// PATCH rebinds to another existing target
+		EObject rebind = plain("Product");
+		rebind.eSet(productClass.getEStructuralFeature("category"), plain("Category", "id", "c2"));
+		service.update(productClass, "'nc1'", rebind, false);
+		assertEquals(List.of("Yoghurt"),
+				names(query("category/name eq 'Bakery' and id eq 'nc1'", null, 0, -1, false)));
+
+		// PUT without the navigation keeps the binding (11.4.3: replace is structural-only)
+		service.update(productClass, "'nc1'", plain("Product", "name", "Greek Yoghurt"), true);
+		assertEquals(List.of("Greek Yoghurt"),
+				names(query("category/name eq 'Bakery' and id eq 'nc1'", null, 0, -1, false)),
+				"PUT must NOT clear an omitted navigation");
+
+		// inherited navigation through a derived-type write
+		EObject sale = plain("DiscountedProduct", "id", "nc2", "name", "SaleYoghurt", "discount", 10);
+		sale.eSet(productClass.getEStructuralFeature("category"), plain("Category", "id", "c1"));
+		service.create(discountedClass, sale);
+		assertEquals(List.of("SaleYoghurt"),
+				names(query("category/name eq 'Dairy' and id eq 'nc2'", null, 0, -1, false)));
+	}
+
+	@Test
+	@DisplayName("non-containment bindings: unknown or keyless targets refuse the whole write")
+	void nonContainmentBindingErrors() {
+		EObject unknown = plain("Product", "id", "nc8", "name", "Ghost");
+		unknown.eSet(productClass.getEStructuralFeature("category"),
+				plain("Category", "id", "nosuch"));
+		assertThrows(IllegalArgumentException.class, () -> service.create(productClass, unknown),
+				"an unknown reference target is a 400, never a silent deep insert");
+		assertEquals(List.of(), names(query("id eq 'nc8'", null, 0, -1, false)),
+				"the failed create left nothing behind");
+
+		EObject keyless = plain("Product", "id", "nc9", "name", "Anon");
+		keyless.eSet(productClass.getEStructuralFeature("category"),
+				plain("Category", "name", "NoKey"));
+		assertThrows(IllegalArgumentException.class, () -> service.create(productClass, keyless),
+				"a reference member must carry its key");
+	}
+
+	@Test
 	@DisplayName("ambient transaction: begin()/rollback() undoes a whole group of writes atomically")
 	void ambientTransactionRollback() {
 		assertTrue(service.transactional());

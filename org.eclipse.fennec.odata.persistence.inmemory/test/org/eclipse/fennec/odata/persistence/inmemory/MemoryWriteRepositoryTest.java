@@ -150,6 +150,44 @@ class MemoryWriteRepositoryTest {
 	}
 
 	@Test
+	@DisplayName("non-containment payload members resolve to STORE entities by key")
+	void nonContainmentBindings() {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		dairy.eSet(categoryClass.getEStructuralFeature("name"), "Dairy");
+		repository.create(categoryClass, dairy);
+
+		// create with a key-only stub: the store instance is bound, not the stub
+		EObject payload = product("m1", "Milk", "1.20");
+		EObject stub = pkg.getEFactoryInstance().create(categoryClass);
+		stub.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		payload.eSet(productClass.getEStructuralFeature("category"), stub);
+		repository.create(productClass, payload);
+		EObject bound = (EObject) read().get(0).eGet(productClass.getEStructuralFeature("category"));
+		assertEquals("Dairy", bound.eGet(categoryClass.getEStructuralFeature("name")),
+				"the resolved STORE category carries its full state, not just the stub key");
+
+		// PUT without the navigation keeps the binding (11.4.3: replace is structural-only)
+		EObject replace = pkg.getEFactoryInstance().create(productClass);
+		replace.eSet(productClass.getEStructuralFeature("name"), "Whole Milk");
+		repository.update(productClass, "'m1'", replace, true);
+		EObject kept = (EObject) read().get(0).eGet(productClass.getEStructuralFeature("category"));
+		assertEquals("c1", kept.eGet(categoryClass.getEStructuralFeature("id")),
+				"PUT must NOT clear an omitted navigation");
+
+		// unknown target refuses the write, nothing is stored
+		EObject ghost = product("m2", "Ghost", "1.00");
+		EObject nosuch = pkg.getEFactoryInstance().create(categoryClass);
+		nosuch.eSet(categoryClass.getEStructuralFeature("id"), "nosuch");
+		ghost.eSet(productClass.getEStructuralFeature("category"), nosuch);
+		assertThrows(IllegalArgumentException.class,
+				() -> repository.create(productClass, ghost),
+				"an unknown reference target is refused, never a silent deep insert");
+		assertEquals(1, read().size(), "the failed create left nothing behind");
+	}
+
+	@Test
 	@DisplayName("concurrent createRelated on one owner keeps every add (no lost updates / CME)")
 	void concurrentReferenceMutations() throws Exception {
 		repository.create(productClass, product("m1", "Milk", "1.20"));

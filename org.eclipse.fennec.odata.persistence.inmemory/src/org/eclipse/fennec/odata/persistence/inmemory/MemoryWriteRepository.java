@@ -251,6 +251,7 @@ public class MemoryWriteRepository
 	@Override
 	public EObject create(EClass entityType, EObject entity) {
 		String key = keyOf(entityType, entity);
+		resolveReferences(entityType, entity); // takes other class-store locks — BEFORE ours
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
 			if (entities.containsKey(key)) {
@@ -269,6 +270,7 @@ public class MemoryWriteRepository
 		String key = unquote(rawKey);
 		EAttribute id = requiredKeyAttribute(entityType);
 		payload.eSet(id, EcoreUtil.createFromString(id.getEAttributeType(), key)); // URL key wins
+		resolveReferences(entityType, payload); // takes other class-store locks — BEFORE ours
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
 			captureEntity(entityType, key); // capture prior state (absent → upsert, else the pre-PATCH state)
@@ -313,6 +315,8 @@ public class MemoryWriteRepository
 		EReference reference = requiredReference(entityType, navigation);
 		if (!reference.isContainment()) {
 			create(child.eClass(), child); // related entities live in their own set too (own lock)
+		} else {
+			resolveReferences(child.eClass(), child); // the child's own bindings (own locks)
 		}
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
@@ -413,19 +417,74 @@ public class MemoryWriteRepository
 		return id == null ? null : String.valueOf(entity.eGet(id));
 	}
 
-	/** PATCH: only the payload's set features; PUT additionally resets everything else. */
+	/**
+	 * PATCH: only the payload's set features; PUT additionally resets missing STRUCTURAL
+	 * features. An omitted non-containment navigation keeps its binding under both verbs —
+	 * PUT replace semantics cover structural properties only ([OData-Protocol] 11.4.3).
+	 * Reference members were already resolved to store instances ({@link #resolveReferences}).
+	 */
 	private static void apply(EClass entityType, EObject payload, EObject target, boolean replace,
 			EAttribute id) {
 		for (EStructuralFeature feature : entityType.getEAllStructuralFeatures()) {
 			if (feature == id) {
 				continue; // the key is immutable
 			}
+			boolean navigation = feature instanceof EReference reference && !reference.isContainment();
 			if (payload.eIsSet(feature)) {
 				target.eSet(feature, payload.eGet(feature));
-			} else if (replace && target.eIsSet(feature)) {
+			} else if (replace && target.eIsSet(feature) && !navigation) {
 				target.eUnset(feature);
 			}
 		}
+	}
+
+	/**
+	 * Resolves every non-containment payload member to its STORE instance (by key) and rejects
+	 * unknown targets — a payload member is a reference to an EXISTING entity, never a silent
+	 * deep insert; storing the detached payload stub would corrupt the store with partial rows.
+	 * Containment children ride along as payload objects, but their own bindings resolve too
+	 * (recursive). Looks up OTHER class stores (own locks) — call BEFORE taking a class lock.
+	 */
+	private void resolveReferences(EClass entityType, EObject entity) {
+		for (EReference reference : entityType.getEAllReferences()) {
+			if (!entity.eIsSet(reference)) {
+				continue;
+			}
+			if (reference.isContainment()) {
+				if (reference.isMany()) {
+					for (Object member : (List<?>) entity.eGet(reference)) {
+						if (member instanceof EObject child) {
+							resolveReferences(child.eClass(), child);
+						}
+					}
+				} else if (entity.eGet(reference) instanceof EObject child) {
+					resolveReferences(child.eClass(), child);
+				}
+				continue;
+			}
+			if (reference.isMany()) {
+				@SuppressWarnings("unchecked")
+				List<EObject> members = (List<EObject>) entity.eGet(reference);
+				members.replaceAll(member -> requiredTarget(reference, member));
+			} else if (entity.eGet(reference) instanceof EObject member) {
+				entity.eSet(reference, requiredTarget(reference, member));
+			}
+		}
+	}
+
+	/** The STORE entity a payload reference member points at, resolved by its key. */
+	private EObject requiredTarget(EReference reference, EObject member) {
+		EAttribute id = keyAttribute(member.eClass());
+		Object key = id == null ? null : member.eGet(id);
+		if (key == null) {
+			throw new IllegalArgumentException("the payload value of '" + reference.getName()
+					+ "' must carry the key of an existing " + member.eClass().getName());
+		}
+		EObject target = findByKey(reference.getEReferenceType(), String.valueOf(key));
+		if (target == null) {
+			throw new IllegalArgumentException("the reference target does not exist");
+		}
+		return target;
 	}
 
 	@Override
@@ -433,6 +492,7 @@ public class MemoryWriteRepository
 			EObject payload, boolean replace) {
 		String key = keyOf(entityType, namedKeys);
 		EAttribute id = requiredKeyAttribute(entityType);
+		resolveReferences(entityType, payload); // takes other class-store locks — BEFORE ours
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
 			captureEntity(entityType, key); // prior state for rollback (absent → upsert, else pre-PATCH)

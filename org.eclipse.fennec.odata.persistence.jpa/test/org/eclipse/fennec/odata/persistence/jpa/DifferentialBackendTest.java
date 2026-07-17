@@ -26,6 +26,7 @@ import java.util.TreeMap;
 import java.util.stream.Stream;
 
 import org.eclipse.emf.ecore.EAttribute;
+import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EEnum;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
@@ -63,6 +64,7 @@ import org.junit.jupiter.api.TestFactory;
 class DifferentialBackendTest extends JpaWebshopTestBase {
 
 	private QueryService inMemory;
+	private MemoryWriteRepository repository;
 	private EAttribute id;
 
 	/** The differential dataset — replaces the base webshop seed (no derived type). */
@@ -95,14 +97,14 @@ class DifferentialBackendTest extends JpaWebshopTestBase {
 	@BeforeEach
 	void seedInMemoryBackend() {
 		id = (EAttribute) productClass.getEStructuralFeature("id");
-		MemoryWriteRepository repository = new MemoryWriteRepository();
+		repository = new MemoryWriteRepository();
 		// addEPackage / addRepository are package-private DS bind methods — wire them reflectively
 		// from this (foreign-package) test rather than widening production visibility
 		bind(repository, "addEPackage", EPackage.class, pkg);
 		for (EObject entity : buildSeedData()) { // a FRESH graph, independent of the JPA-persisted one
-			if (productClass.isSuperTypeOf(entity.eClass())) {
-				repository.create(entity.eClass(), entity); // referenced categories ride along as live refs
-			}
+			// categories first (list order): the write path binds non-containment references
+			// to EXISTING store entities, exactly like the JPA side persists them
+			repository.create(entity.eClass(), entity);
 		}
 		InMemoryQueryService service = new InMemoryQueryService();
 		bind(service, "addRepository", EntityRepository.class, repository);
@@ -203,6 +205,27 @@ class DifferentialBackendTest extends JpaWebshopTestBase {
 			assertDecimalEquals(jpa.get(group).get("PerItem"), mem.get(group).get("PerItem"), 1e-6,
 					group + " PerItem (compute after groupby)");
 		}
+	}
+
+	@Test
+	@DisplayName("create with a non-containment reference stub lands identically in both backends")
+	void writeBindingParity() {
+		service.create(productClass, stubPayload());
+		repository.create(productClass, stubPayload());
+		assertParity("category/name eq 'Dairy' and id eq 'wp1'", null, false);
+	}
+
+	/** A PLAIN payload (codec shape) whose category member is a key-only stub. */
+	private EObject stubPayload() {
+		EClass categoryClass = (EClass) pkg.getEClassifier("Category");
+		EObject stub = pkg.getEFactoryInstance().create(categoryClass);
+		stub.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		EObject payload = pkg.getEFactoryInstance().create(productClass);
+		payload.eSet(productClass.getEStructuralFeature("id"), "wp1");
+		payload.eSet(productClass.getEStructuralFeature("name"), "Kefir");
+		payload.eSet(productClass.getEStructuralFeature("price"), new BigDecimal("1.10"));
+		payload.eSet(productClass.getEStructuralFeature("category"), stub);
+		return payload;
 	}
 
 	// --- helpers ---
