@@ -202,3 +202,12 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 - 2026-07-17 (3): **T2.7 erledigt** (vorgezogen, s. Tier-2-Eintrag) — **der Härtungslauf
   ist damit KOMPLETT**; nächster Schritt ist U2 (Release auf `main`), sobald der User
   so weit ist.
+- 2026-07-17 (4): **T2.7 zweite Welle** (User-Wunsch „noch kleiner, SoC"): zusätzlich
+  `OperationDispatcher` (Functions/Actions: bound/unbound, Imports, Parameter-Koersion,
+  Result-Shape), `DeltaDispatcher` (track-changes, Delta-Links, Delta-Response beide
+  Wire-Formen, Delta-$count) und `ResponseFormatter` ($select/$expand-Parsing inkl.
+  nested/$levels, Entity-JSON-Serialisierung, XML/XMI-Negotiation) extrahiert.
+  **Servlet 4969 → 2288 Zeilen (−54 %)**; verbleibender Kern = DS-Wiring, Routing,
+  Read-Pipeline (fetch/walk/casts) und geteilte URL-/ETag-Helfer. Bewusst NICHT weiter
+  zerlegt (abnehmender Ertrag): Read-Pipeline (~350 Z., vom Routing untrennbar),
+  ETag/Preconditions (~110), Media (~100). Voller `build testOSGi` grün.
