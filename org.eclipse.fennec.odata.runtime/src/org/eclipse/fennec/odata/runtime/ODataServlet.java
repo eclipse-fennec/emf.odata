@@ -206,6 +206,7 @@ public class ODataServlet extends HttpServlet {
 	private volatile MetadataService metadataService;
 	volatile RequestLimits limits = RequestLimits.DEFAULTS;
 	private final BatchDispatcher batchDispatcher = new BatchDispatcher(this);
+	private final AsyncDispatcher asyncDispatcher = new AsyncDispatcher(this);
 
 	/**
 	 * CORS origin(s) served to browser clients (e.g. the XOData explorer): {@code "*"} or a
@@ -222,9 +223,9 @@ public class ODataServlet extends HttpServlet {
 	 * Bounds concurrently executing respond-async requests. {@code null} = unbounded (the
 	 * {@code odata.max.async.inflight <= 0} foot-gun). Rebuilt on {@link #activate} before serving.
 	 */
-	private volatile Semaphore asyncInflight =
+	volatile Semaphore asyncInflight =
 			new Semaphore(DEFAULT_MAX_ASYNC_INFLIGHT);
-	private volatile int maxAsyncMonitors = DEFAULT_MAX_ASYNC_MONITORS;
+	volatile int maxAsyncMonitors = DEFAULT_MAX_ASYNC_MONITORS;
 
 	@Activate
 	void activate(Map<String, Object> configuration) {
@@ -241,13 +242,19 @@ public class ODataServlet extends HttpServlet {
 		return value == null ? fallback : Integer.parseInt(String.valueOf(value));
 	}
 
+	/**
+	 * Plain {@link HttpServlet} dispatch (doGet/doPost/…), BYPASSING this servlet's own
+	 * {@code service} override — the async worker re-enters here so respond-async cannot
+	 * recurse into itself.
+	 */
+	void dispatchDirectly(HttpServletRequest request, HttpServletResponse response)
+			throws ServletException, IOException {
+		super.service(request, response);
+	}
+
 	@Deactivate
 	void deactivate() {
-		asyncExecutor.shutdownNow();
-		synchronized (asyncResults) {
-			asyncResults.values().forEach(execution -> execution.cancel(true));
-			asyncResults.clear();
-		}
+		asyncDispatcher.shutdown();
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
@@ -334,7 +341,7 @@ public class ODataServlet extends HttpServlet {
 	 * response writers do not each need the request threaded through. Set in {@link #service} and
 	 * cleared afterwards; {@code null} outside a request means {@code minimal}.
 	 */
-	private static final ThreadLocal<String> METADATA_LEVEL = new ThreadLocal<>();
+	static final ThreadLocal<String> METADATA_LEVEL = new ThreadLocal<>();
 
 	/**
 	 * The requested response metadata level ([OData-JSON] 3.1): {@code full} or {@code none} when
@@ -380,7 +387,7 @@ public class ODataServlet extends HttpServlet {
 					Pattern.CASE_INSENSITIVE);
 
 	/** Whether the current response runs {@code IEEE754Compatible=true}; request-scoped like the metadata level. */
-	private static final ThreadLocal<Boolean> IEEE754 = new ThreadLocal<>();
+	static final ThreadLocal<Boolean> IEEE754 = new ThreadLocal<>();
 
 	/** {@code IEEE754Compatible=true} requested via {@code $format} or {@code Accept} ([OData-JSON] 8.1). */
 	private static boolean ieee754Requested(HttpServletRequest request) {
@@ -477,7 +484,7 @@ public class ODataServlet extends HttpServlet {
 			} else if ("/$metadata".equals(path)) {
 				metadataDocument(request, response);
 			} else if (path.startsWith("/$async/")) {
-				asyncMonitor(path.substring("/$async/".length()), request, response); // 11.6
+				asyncDispatcher.monitor(path.substring("/$async/".length()), request, response); // 11.6
 			} else {
 				resource(path.substring(1), request, response);
 			}
@@ -525,8 +532,8 @@ public class ODataServlet extends HttpServlet {
 				case "GET" -> {
 					// Prefer: respond-async ([OData-Protocol] 11.6, Advanced SHOULD 13.1.3/13):
 					// the request runs to completion, only DELIVERY moves to a status monitor
-					if (respondAsyncRequested(request) && !pathInfo.startsWith("/$async")) {
-						respondAsync(request, response);
+					if (AsyncDispatcher.requested(request) && !pathInfo.startsWith("/$async")) {
+						asyncDispatcher.accept(request, response);
 					} else {
 						super.service(request, response);
 					}
@@ -587,178 +594,6 @@ public class ODataServlet extends HttpServlet {
 		return false;
 	}
 
-	// --- asynchronous responses ([OData-Protocol] 11.6): Prefer: respond-async ---
-
-	/** A completed response parked behind its status monitor ({@code /$async/<id>}). */
-	private record AsyncResult(int status, Map<String, String> headers, byte[] body) {
-	}
-
-	/**
-	 * One virtual thread per async request (Java 21): the worker mostly waits on the backend, so
-	 * threads are cheap and no pool sizing is needed. Daemon by nature — a forgotten shutdown
-	 * never blocks the framework.
-	 */
-	private final ExecutorService asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
-
-	/** Running and parked async executions, bounded LRU — unclaimed monitors age out (cancelled). */
-	private final Map<String, Future<AsyncResult>> asyncResults =
-			Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
-				private static final long serialVersionUID = 1L;
-
-				@Override
-				protected boolean removeEldestEntry(Map.Entry<String, Future<AsyncResult>> eldest) {
-					// maxAsyncMonitors <= 0 means unbounded parking (never evict) — a foot-gun
-					if (maxAsyncMonitors > 0 && size() > maxAsyncMonitors) {
-						eldest.getValue().cancel(true); // releases the in-flight permit if still running
-						return true;
-					}
-					return false;
-				}
-			});
-
-	/** Whether the client sent {@code Prefer: respond-async} ([OData-Protocol] 8.2.8.8). */
-	private static boolean respondAsyncRequested(HttpServletRequest request) {
-		String prefer = request.getHeader("Prefer");
-		if (prefer == null) {
-			return false;
-		}
-		for (String preference : prefer.split(",")) {
-			if ("respond-async".equals(preference.trim().toLowerCase(Locale.ROOT))) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/**
-	 * Hands the GET to a virtual-thread worker and answers {@code 202 Accepted} immediately —
-	 * the status monitor reports 202 while the execution runs and delivers the result once done
-	 * ([OData-Protocol] 11.6). The worker gets a request SNAPSHOT: the container recycles the
-	 * original request/response objects when this method returns, so the background thread must
-	 * never touch them.
-	 */
-	private void respondAsync(HttpServletRequest request, HttpServletResponse response)
-			throws IOException {
-		// DoS guard: bound concurrently EXECUTING async requests so respond-async cannot open an
-		// unbounded number of backend sessions/threads. At the limit, refuse with 503 + Retry-After
-		// rather than accept work we cannot run ([OData-Protocol] 11.6 does not mandate acceptance).
-		Semaphore permits = asyncInflight;
-		boolean bounded = permits != null;
-		if (bounded && !permits.tryAcquire()) {
-			response.setHeader("Retry-After", "1");
-			error(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
-					"the server is at its concurrent asynchronous-request limit");
-			return;
-		}
-		BatchHttpRequest snapshot = BatchHttpRequest.asyncSnapshot(request);
-		BatchHttpResponse captured = new BatchHttpResponse(response);
-		String metadataLevel = METADATA_LEVEL.get();
-		Boolean ieee754 = IEEE754.get();
-		String id = UUID.randomUUID().toString();
-		asyncResults.put(id, asyncExecutor.submit(() -> {
-			try {
-				return executeAsync(snapshot, captured, metadataLevel, ieee754);
-			} finally {
-				if (bounded) {
-					permits.release(); // in-flight = executing; the permit frees when the run ends
-				}
-			}
-		}));
-		response.setStatus(HttpServletResponse.SC_ACCEPTED);
-		response.setHeader("Location", contextRoot(request) + "/$async/" + id);
-		response.setHeader("Preference-Applied", "respond-async");
-	}
-
-	/**
-	 * Runs one async GET on the worker thread. The request-scoped ThreadLocals travel from the
-	 * accepting container thread explicitly; failures are captured as a sanitized 500 result so
-	 * the monitor always has something to deliver.
-	 */
-	private AsyncResult executeAsync(BatchHttpRequest request, BatchHttpResponse captured,
-			String metadataLevel, Boolean ieee754) {
-		METADATA_LEVEL.set(metadataLevel);
-		IEEE754.set(ieee754);
-		try {
-			super.service(request, captured); // HttpServlet dispatch → doGet, bypasses respond-async
-			captured.flushBufferQuietly();
-			return new AsyncResult(captured.status(),
-					new LinkedHashMap<>(captured.headers()), captured.body());
-		} catch (Exception e) {
-			LOGGER.log(System.Logger.Level.ERROR,
-					() -> "unhandled failure serving async GET " + request.getRequestURI(), e);
-			return new AsyncResult(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
-					Map.of("content-type", "application/json;charset=UTF-8"),
-					ODataJson.error(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
-							"internal server error").getBytes(StandardCharsets.UTF_8));
-		} finally {
-			METADATA_LEVEL.remove();
-			IEEE754.remove();
-		}
-	}
-
-	/**
-	 * {@code GET /$async/<id>}: 202 + Location while the execution still runs; once done, the
-	 * result as an {@code application/http} message ([OData-Protocol] 11.6.1) — ONE-shot, the
-	 * monitor is gone after delivery. Unknown/expired/cancelled monitors answer 404.
-	 */
-	private void asyncMonitor(String id, HttpServletRequest request, HttpServletResponse response)
-			throws IOException {
-		Future<AsyncResult> execution = asyncResults.get(id);
-		if (execution == null) {
-			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
-			return;
-		}
-		if (!execution.isDone()) {
-			response.setStatus(HttpServletResponse.SC_ACCEPTED);
-			response.setHeader("Location", contextRoot(request) + "/$async/" + id);
-			return;
-		}
-		if (asyncResults.remove(id) == null) {
-			// a concurrent poll claimed the finished result first — one-shot stays one-shot
-			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
-			return;
-		}
-		AsyncResult result;
-		try {
-			result = execution.get();
-		} catch (CancellationException e) {
-			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
-			return;
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
-			return;
-		} catch (ExecutionException e) {
-			// executeAsync never throws — belt and braces for the unforeseen
-			LOGGER.log(System.Logger.Level.ERROR,
-					() -> "async execution failed for monitor " + id, e.getCause());
-			error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");
-			return;
-		}
-		response.setStatus(HttpServletResponse.SC_OK);
-		response.setContentType("application/http");
-		response.setHeader("AsyncResult", String.valueOf(result.status()));
-		StringBuilder message = new StringBuilder("HTTP/1.1 ").append(result.status())
-				.append(' ').append(reasonPhrase(result.status())).append("\r\n");
-		result.headers().forEach((name, value) ->
-				message.append(name).append(": ").append(value).append("\r\n"));
-		message.append("\r\n");
-		response.getOutputStream().write(message.toString().getBytes(StandardCharsets.UTF_8));
-		response.getOutputStream().write(result.body());
-	}
-
-	private static String reasonPhrase(int status) {
-		return switch (status) {
-			case 200 -> "OK";
-			case 204 -> "No Content";
-			case 400 -> "Bad Request";
-			case 404 -> "Not Found";
-			case 410 -> "Gone";
-			case 501 -> "Not Implemented";
-			default -> "";
-		};
-	}
-
 	// --- write path (OASIS "Updatable Service" v1: POST set, PATCH/PUT/DELETE entity) ---
 
 	private void write(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -786,10 +621,7 @@ public class ODataServlet extends HttpServlet {
 		if ("DELETE".equals(request.getMethod()) && rawPath.startsWith("/$async/")) {
 			// cancelling the monitor aborts a still-running execution and discards its result
 			// (11.6: DELETE the monitor) — cancel(true) interrupts the worker, best effort
-			Future<AsyncResult> cancelled =
-					asyncResults.remove(rawPath.substring("/$async/".length()));
-			if (cancelled != null) {
-				cancelled.cancel(true);
+			if (asyncDispatcher.cancel(rawPath.substring("/$async/".length()))) {
 				response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 			} else {
 				error(response, HttpServletResponse.SC_NOT_FOUND, "unknown status monitor");
@@ -4200,7 +4032,7 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/** The service root: the request URI without the resource path (not just its last segment). */
-	private static String contextRoot(HttpServletRequest request) {
+	static String contextRoot(HttpServletRequest request) {
 		String uri = request.getRequestURI();
 		String pathInfo = request.getPathInfo();
 		if (pathInfo != null && !pathInfo.isEmpty() && uri.endsWith(pathInfo)) {
