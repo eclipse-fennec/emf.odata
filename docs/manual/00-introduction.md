@@ -55,7 +55,9 @@ Requires **Java 21** (CI also builds on Java 25).
 
 Dependencies are resolved from Maven Central through bnd, not through Gradle. Development
 flows through the `snapshot` branch (published to Maven Central snapshots and to the docs
-site); releases are cut from the protected `main` branch.
+site); releases are cut from the protected `main` branch. Each snapshot deploy is
+timestamped on Maven Central, so a specific development build can be pinned by its
+timestamped version instead of the moving `-SNAPSHOT` alias.
 
 Continue with the [architecture](/guides/01-architecture), the [server](/guides/02-server)
 and [client](/guides/03-client) manuals, or jump to the
