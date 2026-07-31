@@ -27,4 +27,5 @@ Bundle-Description: JPA QueryService (E5): translates the OCL predicate IR into 
 	org.eclipse.persistence.core;version=latest,\
 	org.eclipse.fennec.persistence;version=latest,\
 	org.eclipse.fennec.persistence.orm;version=latest,\
-	org.eclipse.fennec.persistence.eclipselink;version=latest
+	org.eclipse.fennec.persistence.eclipselink;version=latest,\
+	org.eclipse.fennec.persistence.query;version=latest

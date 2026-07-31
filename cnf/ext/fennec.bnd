@@ -22,7 +22,7 @@
 	fennecEMF,\
 	fennecEMFMetadata,\
 	fennecM2X,\
-	fennecJPA,\
+	fennecPersistence,\
 	fennecEMFModels,\
 	fennecCodec
 
