@@ -39,7 +39,7 @@ fennec-odata-dev/                      ← Claude-Code-Arbeitsverzeichnis (Works
 ├── fennec-odata/                      ★═══════ HAUPT-REPO (Read-Write) ═══════★
 │   │                                    Bundle-Layout nach req-doc §5.2:
 │   ├── emf.odata.api/                   OData-Annotations, Public SPIs
-│   ├── emf.odata.metadata/              odata.ecore + ODataAspectProvider  ← hier, NICHT in fennec-metadata
+│   ├── emf.odata.metadata/              ODataMetadataHandler  ← hier, NICHT im Metadata-Framework
 │   ├── emf.odata.query/                 ANTLR4-Grammar, Query-Modell-Erweiterung
 │   ├── emf.odata.codec.csdl/            CSDL-Meta-Codec (direkter Konverter, β)
 │   ├── emf.odata.codec.json/            OData-JSON Daten-Codec-Profil
@@ -92,11 +92,17 @@ fennec-odata-dev/                      ← Claude-Code-Arbeitsverzeichnis (Works
 
 Das eigentliche Liefer-Repo, eigenes Git (Branch `snapshot` analog Fennec-Konvention). Bundle-Struktur exakt nach req-doc §5.2 (s. Baum oben).
 
-**Wichtig:** `emf.odata.metadata` (das `odata.ecore` + der `ODataAspectProvider`) ist ein **Bundle dieses Repos** – die OData-spezifische Metadata-Implementierung lebt hier, nicht im generischen `fennec-metadata`. Der `ODataAspectProvider` dockt zur Laufzeit über die SPI an den Metadata-Service an, ohne dort Code zu hinterlassen.
+**Wichtig:** `emf.odata.metadata` (der `ODataMetadataHandler`) ist ein **Bundle dieses Repos** – die OData-spezifische Metadata-Implementierung lebt hier, nicht im generischen Metadata-Framework. Der Handler dockt zur Laufzeit über die `MetadataHandler`-SPI an den Metadata-Service an, ohne dort Code zu hinterlassen.
 
-### 3.2 `fennec-metadata/` – generisches Framework (Read-Write, sparsam)
+### 3.2 Metadata-Framework – seit 2026-07 Teil von `emf.osgi`
 
-`eclipse-fennec/emf.model.metadata` als Quelle. Read-Write, **aber nur für Anpassungen am generischen Aspect-/Profile-Framework** (z. B. wenn eine SPI-Erweiterung oder ein Lifecycle-Hook fehlt). Kein OData-Wissen hier hineinziehen – das wäre eine Schichtverletzung. Im Normalfall lesen wir hier nur; Änderungen sind die Ausnahme.
+Das generische Framework lag ursprünglich im eigenen Repo `eclipse-fennec/emf.model.metadata`
+(Workspace-Ordner `fennec-metadata/`). Seit `emf.osgi` 1.1.0 lebt es dort: Modell und
+Service-API in `org.eclipse.fennec.emf.osgi.metadata`, Fingerprint/Artifact-Store in
+`org.eclipse.fennec.emf.osgi.api`. Damit ist es eine **rein binäre** Abhängigkeit wie die
+anderen Fennec-Repos (§3.3) – der Ordner `fennec-metadata/` und das Spender-Repo sind
+Altlast. Migrations-Mapping (Pakete, `Optional`-Rückgaben, `AspectProvider` →
+`MetadataHandler`, Profile → `AspectEntry`): `emf.osgi/docs/metadata-migration-from-model-metadata.md`.
 
 ### 3.3 Binär-referenzierte Fennec-Repos
 

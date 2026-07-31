@@ -34,6 +34,14 @@ import org.eclipse.fennec.odata.csdl.profile.ProfilePackage;
  */
 public class ProfileEPackageConfigurator implements EPackageConfigurator {
 	
+	/**
+	 * The fingerprint of this model version, computed from the <code>.ecore</code> at build
+	 * time. It identifies the model content, not the artifact - see the <code>emf.fingerprint</code>
+	 * service property.
+	 * @generated
+	 */
+	public static final String FINGERPRINT = "fp1:dbe35177d9defb8b8d5276082f71c382e705dced4c558eebd6bd9bf46106d3b7";
+
 	private ProfilePackage ePackage;
 
 	protected ProfileEPackageConfigurator(ProfilePackage ePackage){
@@ -71,6 +79,7 @@ public class ProfileEPackageConfigurator implements EPackageConfigurator {
 		properties.put(EMFNamespaces.EMF_MODEL_REGISTRATION, EMFNamespaces.MODEL_REGISTRATION_PROVIDED);
 		properties.put(EMFNamespaces.EMF_MODEL_FILE_EXT, "profile");
 		properties.put(EMFNamespaces.EMF_MODEL_VERSION, "1.0");
+		properties.put(EMFNamespaces.EMF_MODEL_FINGERPRINT, FINGERPRINT);
 		return properties;
 	}
 }

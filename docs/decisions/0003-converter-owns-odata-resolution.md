@@ -94,3 +94,21 @@ Profile-*Daten*-Repräsentation (Komposition statt Parallelklasse).
   Duplizierte Daten/Logik. Verworfen.
 - **Auflösung bleibt im AspectProvider (ADR-0002-Lesart).** Macht Konvertierung service-
   abhängig. Verworfen.
+
+## Nachtrag 2026-07-31 (Entscheidung unverändert, Mechanik anders)
+
+`emf.model.metadata` ist in `emf.osgi` 1.1.0 aufgegangen. Die Entscheidung — Auflösung
+vollständig im Converter, Metadata-Seite nur dünner Adapter — bleibt gültig; die SPI darunter
+sieht anders aus:
+
+- `AspectProvider` (Callback pro Element + `buildProfiles`) → `MetadataHandler` mit dem einen
+  Hook `onPackageRegistered(PackageMetadata)`.
+- Profile als Modelltypen sind ersatzlos weg. Stattdessen `AspectEntry { typeId, content:
+  EObject (containment) }`.
+- Damit entfällt der Wrapper-Typ aus „Akzeptierte Kosten": `content` trägt direkt das
+  standalone `csdl`-Profil, `odata.ecore` im Metadata-Bundle wurde aufgelöst. Das Bundle hat
+  jetzt kein eigenes Ecore mehr — die Komposition, die die Entscheidung wollte, ist damit sogar
+  billiger als geplant.
+- Per-EClass-Kreuzreferenzen für O(1)-Lookup gibt es nicht mehr (`content` ist Containment,
+  ein Klassen-Eintrag könnte die Klassenprofile des Paket-Profils nicht halten); Konsumenten
+  greifen über die Namensindizierung im Profil zu.

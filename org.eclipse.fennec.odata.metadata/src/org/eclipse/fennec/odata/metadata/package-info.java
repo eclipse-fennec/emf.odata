@@ -1,13 +1,12 @@
 /**
  * Eclipse Fennec OData – Metadata bundle (E1 Foundation).
  *
- * <p>Hosts the OData metadata aspects ({@code odata.ecore}) and the
- * {@code ODataAspectProvider}, which docks onto the Model Metadata Service via its
- * {@link org.eclipse.fennec.model.metadata.api.AspectProvider} SPI. The provider
- * registers with the {@link org.eclipse.fennec.model.metadata.api.MetadataWhiteboard}
- * and builds the per-EPackage OData profile on {@code registerPackage()}.
+ * <p>Hosts the {@code ODataMetadataHandler}, which docks onto the Model Metadata Service via its
+ * {@link org.eclipse.fennec.emf.osgi.metadata.MetadataHandler} SPI: registered with the
+ * {@link org.eclipse.fennec.emf.osgi.metadata.MetadataWhiteboard}, it resolves the per-EPackage
+ * OData profile on {@code registerPackage()} and attaches it as the {@code "odata"} aspect entry.
  *
- * <p>This package is the seed of E1; the concrete aspect model and provider follow
- * once {@code odata.ecore} is in place.
+ * <p>The bundle carries no Ecore of its own — the aspect content is the standalone profile model
+ * owned by the CSDL converter (ADR-0003).
  */
 package org.eclipse.fennec.odata.metadata;

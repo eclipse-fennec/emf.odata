@@ -17,7 +17,7 @@ java -jar org.eclipse.fennec.odata.example/generated/distributions/executable/ex
 A minimal wiring needs three things in the OSGi runtime:
 
 1. one or more **`EPackage` services** (your model),
-2. a **`MetadataService`** (from `codec.metadata`) plus the `ODataAspectProvider`,
+2. a **`MetadataService`** (from `emf.osgi.metadata`) plus the `ODataMetadataHandler`,
 3. a **`QueryService`** backend (in-memory or JPA) with an `EntityRepository`/data source.
 
 The servlet binds them via Declarative Services; the JPA backend advertises the service

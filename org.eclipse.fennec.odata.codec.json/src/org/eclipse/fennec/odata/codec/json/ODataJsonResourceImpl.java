@@ -18,6 +18,7 @@ import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.Collections;
 import java.util.WeakHashMap;
@@ -31,9 +32,9 @@ import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.codec.config.ConfigurationResolver;
 import org.eclipse.fennec.codec.constants.CodecOptions;
 import org.eclipse.fennec.codec.resource.CodecResource;
-import org.eclipse.fennec.model.metadata.PackageProfile;
-import org.eclipse.fennec.model.metadata.TypeStrategy;
-import org.eclipse.fennec.model.metadata.api.MetadataService;
+import org.eclipse.fennec.codec.metadata.model.codec.TypeStrategy;
+import org.eclipse.fennec.emf.osgi.metadata.MetadataService;
+import org.eclipse.fennec.emf.osgi.model.metadata.AspectEntry;
 import org.eclipse.fennec.odata.csdl.OdataResolver;
 import org.eclipse.fennec.odata.csdl.profile.ODataClassProfile;
 import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
@@ -53,7 +54,7 @@ import org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile;
  *       {@code Edm.DateTimeOffset}, {@code Edm.Binary}</li>
  * </ul>
  *
- * <p>The profile is taken from the {@link MetadataService} when the {@code ODataAspectProvider}
+ * <p>The profile is taken from the {@link MetadataService} when the {@code ODataMetadataHandler}
  * is installed (O(1), precomputed) and falls back to a locally cached {@link OdataResolver} run
  * otherwise, so the resource also works in plain-Java setups without the E1 whiteboard.
  *
@@ -67,9 +68,10 @@ import org.eclipse.fennec.odata.csdl.profile.ODataPropertyProfile;
 public class ODataJsonResourceImpl extends CodecResource {
 
 	/**
-	 * Aspect type id of the OData provider. Mirrors {@code ODataAspectProvider.ASPECT_TYPE_ID}
-	 * ("odata"), which lives in the metadata bundle's INTERNAL (non-exported) provider package —
-	 * duplicated here as a literal rather than exposing that internal API as export.
+	 * Aspect type id of the OData metadata handler. Mirrors
+	 * {@code ODataMetadataHandler.ASPECT_TYPE_ID} ("odata"), which lives in the metadata bundle's
+	 * INTERNAL (non-exported) provider package — duplicated here as a literal rather than
+	 * exposing that internal API as export.
 	 */
 	private static final String ODATA_ASPECT_TYPE_ID = "odata";
 	/** CSDL collection-type prefix; mirrors {@code EdmTypes.COLLECTION_OPEN} (package-private in csdl). */
@@ -235,11 +237,15 @@ public class ODataJsonResourceImpl extends CodecResource {
 
 	/** E1 profile via MetadataService when present, else a locally cached resolver run. */
 	private ODataPackageProfile odataProfile(EPackage pkg) {
-		PackageProfile profile = odataMetadataService == null ? null
-				: odataMetadataService.getPackageProfile(pkg, ODATA_ASPECT_TYPE_ID);
-		if (profile instanceof org.eclipse.fennec.odata.metadata.odata.ODataPackageProfile composed
-				&& composed.getOdataProfile() != null) {
-			return composed.getOdataProfile();
+		if (odataMetadataService != null) {
+			Optional<ODataPackageProfile> attached = odataMetadataService
+					.getPackageAspect(pkg, ODATA_ASPECT_TYPE_ID)
+					.map(AspectEntry::getContent)
+					.filter(ODataPackageProfile.class::isInstance)
+					.map(ODataPackageProfile.class::cast);
+			if (attached.isPresent()) {
+				return attached.get();
+			}
 		}
 		return RESOLVED.computeIfAbsent(pkg, p -> new OdataResolver().resolve(p));
 	}
