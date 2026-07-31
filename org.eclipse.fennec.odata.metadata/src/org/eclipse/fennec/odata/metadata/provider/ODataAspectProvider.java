@@ -22,6 +22,8 @@ import org.eclipse.fennec.model.metadata.ClassAspect;
 import org.eclipse.fennec.model.metadata.ClassMetadata;
 import org.eclipse.fennec.model.metadata.FeatureAspect;
 import org.eclipse.fennec.model.metadata.FeatureMetadata;
+import org.eclipse.fennec.model.metadata.OperationAspect;
+import org.eclipse.fennec.model.metadata.OperationMetadata;
 import org.eclipse.fennec.model.metadata.PackageAspect;
 import org.eclipse.fennec.model.metadata.PackageMetadata;
 import org.eclipse.fennec.model.metadata.PackageProfile;
@@ -83,6 +85,14 @@ public class ODataAspectProvider implements AspectProvider {
 	public FeatureAspect buildReferenceAspect(ReferenceMetadata referenceMetadata) {
 		// TODO E1: navigation property (target, containment, partner) from
 		// referenceMetadata.getEReference().
+		return null;
+	}
+
+	@Override
+	public OperationAspect buildOperationAspect(OperationMetadata operationMetadata) {
+		// OData functions/actions are resolved via the CSDL profile path in buildProfiles(),
+		// not as per-element aspects — so, like the other build*Aspect hooks, this contributes
+		// nothing.
 		return null;
 	}
 
