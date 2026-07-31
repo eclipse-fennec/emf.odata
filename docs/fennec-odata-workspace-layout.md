@@ -14,14 +14,13 @@
 | Klasse | Ort | Bedeutung |
 |--------|-----|-----------|
 | **Haupt-Repo** | `fennec-odata/` (top-level) | **DAS Liefer-Repo.** Alle `emf.odata.*`-Bundles inkl. `emf.odata.metadata`. Read-Write. |
-| **Quell-Abhängigkeit (RW)** | `fennec-metadata/` (top-level) | `emf.model.metadata` als **Quelle**, falls am *generischen* Framework etwas anzupassen ist. Read-Write. **OData-spezifischer Code gehört hier NICHT rein** – der landet im Haupt-Repo. |
 | **Binär-Abhängigkeiten** | über Build-Repository (bnd/Maven) + Quelle read-only unter `reference/fennec/` | `emf.osgi`, `emf.codec`, `emf.persistence-jpa`, `emf.m2x`: im Build **nur binär** referenziert. Quelle nur zum Studieren. |
 | **Read-Only-Material** | `reference/`, `testdata/` | Fremde Implementierungen, Specs, Schemata, Test-Daten. Niemals editieren. |
 
 **Warum diese Trennung:**
 - `fennec-odata/` steht ganz oben und allein → unmissverständlich das Haupt-Repo.
 - Build-Abhängigkeiten kommen als **Binärartefakte** (bnd-/Maven-Repository), nicht aus den Quellordnern. Die read-only-Quellen unter `reference/fennec/` sind ausschließlich **Nachschlage-Material** und werden nicht gebaut.
-- Claude erkennt am Pfad sofort die Schreibzone: nur `fennec-odata/`, `fennec-metadata/` und `docs/`. Alles unter `reference/` und `testdata/` ist tabu.
+- Claude erkennt am Pfad sofort die Schreibzone: nur `fennec-odata/` und `docs/`. Alles unter `reference/` und `testdata/` ist tabu.
 - `reference/` und `testdata/` sind reproduzierbar (klonen/laden) → komplett per `.gitignore` aus dem Git heraushaltbar.
 
 ---
@@ -50,9 +49,6 @@ fennec-odata-dev/                      ← Claude-Code-Arbeitsverzeichnis (Works
 │   ├── emf.odata.persistence.jpa/       JPA-Impl
 │   ├── emf.odata.client/                Client-Komponente (HTTP, DSL, Cache)
 │   └── emf.odata.test/                  Konformitäts- + Akzeptanztests
-│
-├── fennec-metadata/                   ═══════ QUELL-ABHÄNGIGKEIT (Read-Write) ═══════
-│   └── (emf.model.metadata)             nur generisches Framework anpassen, falls nötig
 │
 ├── docs/                              ← eigene Doku (Read-Write; liegt IM Repo, außen Symlink)
 │   ├── odata-architecture.md            ← Architektur (konsolidierter Ist-Stand)
@@ -217,10 +213,6 @@ Klont die Quell-Repos und zieht die `$metadata`-Beispiele. Specs/PDFs lädst du 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-# ---- Read-Write Quell-Abhängigkeit: nur emf.model.metadata (volle Historie) ----
-git clone -b snapshot "https://github.com/eclipse-fennec/emf.model.metadata.git" \
-  "$ROOT/fennec-metadata" || echo "  -> fennec-metadata existiert schon, übersprungen"
-
 # ---- Read-Only: Quelle der binär-referenzierten Fennec-Repos (nur Studium) ----
 mkdir -p "$ROOT/reference/fennec"
 clone_fennec_ref () { # repo  zielname
@@ -265,7 +257,7 @@ curl -fsSL "https://services.odata.org/V2/Northwind/Northwind.svc/\$metadata" \
 echo "Fertig. fennec-odata/ separat anlegen. Specs/PDFs manuell in reference/specs + reference/schemas."
 ```
 
-> Repo-URLs folgen aus den `org/repo`-Namen im Anforderungsdokument. Scheitert ein Klon (Repo verschoben), kurz prüfen und im Skript korrigieren – die Struktur bleibt gleich. Ob `emf.model.metadata` ein eigenes Repo oder Teil eines anderen ist, im Zweifel verifizieren (req-doc §2.3 nennt „Eigenes Repo vorhanden").
+> Repo-URLs folgen aus den `org/repo`-Namen im Anforderungsdokument. Scheitert ein Klon (Repo verschoben), kurz prüfen und im Skript korrigieren – die Struktur bleibt gleich. Das Metadata-Framework ist seit `emf.osgi` 1.1.0 keine Quell-Abhängigkeit mehr (§3.2) und wird nicht geklont.
 
 ---
 
@@ -286,7 +278,6 @@ regelmäßig gegenüber dem Original).
 
 # Eigene Git-Repos – nicht ins Eltern-Repo verschachteln
 /fennec-odata/
-/fennec-metadata/
 
 # Build-Output
 **/target/
@@ -294,7 +285,7 @@ regelmäßig gegenüber dem Original).
 **/.bnd/
 ```
 
-> `fennec-odata/` und `fennec-metadata/` sind eigene Repos und werden ausgeblendet, um verschachtelte Git-Repos zu vermeiden. Falls du lieber Submodule willst, sag Bescheid – dann mache ich daraus eine `.gitmodules`-Variante.
+> `fennec-odata/` ist ein eigenes Repo und wird ausgeblendet, um verschachtelte Git-Repos zu vermeiden. Falls du lieber Submodule willst, sag Bescheid – dann mache ich daraus eine `.gitmodules`-Variante.
 
 ---
 
