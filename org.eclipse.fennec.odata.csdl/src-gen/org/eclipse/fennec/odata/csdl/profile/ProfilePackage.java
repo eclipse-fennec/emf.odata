@@ -42,7 +42,7 @@ import org.osgi.annotation.versioning.ProviderType;
  * @generated
  */
 @ProviderType
-@EPackage(uri = ProfilePackage.eNS_URI, genModel = "/model/odata-profile.genmodel", genModelSourceLocations = {"model/odata-profile.genmodel","org.eclipse.fennec.odata.csdl/model/odata-profile.genmodel"}, ecore = "/model/odata-profile.ecore", ecoreSourceLocations = "/model/odata-profile.ecore")
+@EPackage(uri = ProfilePackage.eNS_URI, fingerprint = "fp1:dbe35177d9defb8b8d5276082f71c382e705dced4c558eebd6bd9bf46106d3b7", genModel = "/model/odata-profile.genmodel", genModelSourceLocations = {"model/odata-profile.genmodel","org.eclipse.fennec.odata.csdl/model/odata-profile.genmodel"}, ecore = "/model/odata-profile.ecore", ecoreSourceLocations = "/model/odata-profile.ecore")
 public interface ProfilePackage extends org.eclipse.emf.ecore.EPackage {
 	/**
 	 * The package name.

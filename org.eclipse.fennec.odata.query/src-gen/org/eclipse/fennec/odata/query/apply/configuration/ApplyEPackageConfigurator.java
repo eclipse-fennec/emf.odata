@@ -34,6 +34,14 @@ import org.eclipse.fennec.odata.query.apply.ApplyPackage;
  */
 public class ApplyEPackageConfigurator implements EPackageConfigurator {
 	
+	/**
+	 * The fingerprint of this model version, computed from the <code>.ecore</code> at build
+	 * time. It identifies the model content, not the artifact - see the <code>emf.fingerprint</code>
+	 * service property.
+	 * @generated
+	 */
+	public static final String FINGERPRINT = "fp1:17176f94e6742539f41678e62a275fa64fd5ed6107cdd908cc4f3a65bb83245c";
+
 	private ApplyPackage ePackage;
 
 	protected ApplyEPackageConfigurator(ApplyPackage ePackage){
@@ -71,6 +79,7 @@ public class ApplyEPackageConfigurator implements EPackageConfigurator {
 		properties.put(EMFNamespaces.EMF_MODEL_REGISTRATION, EMFNamespaces.MODEL_REGISTRATION_PROVIDED);
 		properties.put(EMFNamespaces.EMF_MODEL_FILE_EXT, "apply");
 		properties.put(EMFNamespaces.EMF_MODEL_VERSION, "1.0");
+		properties.put(EMFNamespaces.EMF_MODEL_FINGERPRINT, FINGERPRINT);
 		return properties;
 	}
 }

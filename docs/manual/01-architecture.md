@@ -44,7 +44,7 @@ SPI. The client mirrors the server's codec and metadata wiring.
 
 | Bundle | Stage | Content |
 |---|---|---|
-| `odata.metadata` | E1 | `odata.ecore` aspects/profile, `ODataAspectProvider` (thin adapter, ADR-0003) |
+| `odata.metadata` | E1 | `ODataMetadataHandler` (thin adapter, ADR-0003): attaches the resolved CSDL profile as the `"odata"` `AspectEntry` of every registered `EPackage`. No Ecore of its own |
 | `odata.vocabularies` | E1 | OASIS Core/Capabilities/Validation/Measures as EPackages (CSDL read bootstrap) |
 | `odata.csdl` | E2 | `OdataResolver` (EPackage + `@OData.*` → profile), Ecore↔EDM converters, `$metadata`, XXE-hardened `CsdlXmlLoad` |
 | `odata.codec.json` | E3 | OData-JSON codec profile (`@odata.type`/`@odata.id`, `Edm.*` value formats) |

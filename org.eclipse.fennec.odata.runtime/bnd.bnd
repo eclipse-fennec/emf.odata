@@ -17,11 +17,11 @@ Bundle-Description: Server runtime skeleton (E6/E7, ADR-0001): catch-all ODataSe
 	org.eclipse.fennec.codec.api;version=latest,\
 	org.eclipse.fennec.codec;version=latest,\
 	org.eclipse.fennec.codec.metadata;version=latest,\
-	org.eclipse.fennec.model.metadata.api;version=latest,\
-	org.eclipse.fennec.model.metadata;version=latest,\
+	org.eclipse.fennec.emf.osgi.metadata;version=latest,\
 	org.odata.csdl.model;version=latest,\
 	org.eclipse.emf.ecore.xmi;version=latest,\
 	org.eclipse.fennec.emf.osgi.api;version=latest,\
+	org.eclipse.fennec.emf.osgi.component.minimal;version=latest,\
 	tools.jackson.core.jackson-core;version=latest,\
 	tools.jackson.core.jackson-databind;version=latest,\
 	com.fasterxml.jackson.core.jackson-annotations;version=latest

@@ -3,7 +3,7 @@ Bundle-Description: OData-JSON data codec profile (E3) — serializes/deserializ
 
 -library: enableEMF
 
-# codec framework + metadata service are external binaries (fennecCodec/fennecEMFMetadata
+# codec framework + metadata service are external binaries (fennecCodec/fennecEMF
 # libraries -> version=latest); the OData profile source (resolver + profile model) comes
 # from this workspace (version=project).
 -buildpath: \
@@ -11,11 +11,10 @@ Bundle-Description: OData-JSON data codec profile (E3) — serializes/deserializ
 	org.eclipse.fennec.codec.api;version=latest,\
 	org.eclipse.fennec.codec;version=latest,\
 	org.eclipse.fennec.codec.metadata;version=latest,\
-	org.eclipse.fennec.model.metadata.api;version=latest,\
-	org.eclipse.fennec.model.metadata;version=latest,\
-	org.eclipse.fennec.odata.metadata;version=project,\
+	org.eclipse.fennec.emf.osgi.metadata;version=latest,\
 	org.eclipse.fennec.odata.csdl;version=project,\
 	org.eclipse.fennec.emf.osgi.api;version=latest,\
+	org.eclipse.fennec.emf.osgi.component.minimal;version=latest,\
 	tools.jackson.core.jackson-core;version=latest,\
 	tools.jackson.core.jackson-databind;version=latest,\
 	com.fasterxml.jackson.core.jackson-annotations;version=latest

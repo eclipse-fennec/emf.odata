@@ -24,7 +24,7 @@ import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.fennec.codec.resource.CodecResource;
-import org.eclipse.fennec.model.metadata.api.MetadataService;
+import org.eclipse.fennec.emf.osgi.metadata.MetadataService;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 
 import tools.jackson.databind.JsonNode;

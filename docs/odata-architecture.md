@@ -57,7 +57,7 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
 
 | Bundle | Etappe | Inhalt |
 |---|---|---|
-| `odata.metadata` | E1 | `odata.ecore`-Aspekte/Profile, `ODataAspectProvider` (dünner Adapter, ADR-0003) |
+| `odata.metadata` | E1 | `ODataMetadataHandler` (dünner Adapter, ADR-0003): hängt das aufgelöste CSDL-Profil als `"odata"`-`AspectEntry` an jede registrierte `EPackage`. Kein eigenes Ecore |
 | `odata.vocabularies` | E1 | OASIS Core/Capabilities/Validation/Measures als EPackages (CSDL-Read-Bootstrap, abhängigkeits-geordnetes `loadAll()`) |
 | `odata.csdl` | E2 | `OdataResolver` (EPackage+`@OData.*`→Profil), Ecore↔EDM-Converter, `$metadata` XML+JSON, `CsdlXmlLoad` (XXE-gehärteter EINZIGER Ladepfad) |
 | `odata.codec.json` | E3 | OData-JSON-Codec-Profil (`@odata.type`/`@odata.id`, `Edm.*`-Werteformate, IEEE754, metadata-Level) |
@@ -77,8 +77,8 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
 
 Gehaltene ADRs in `decisions/`: **0002** CSDL über das OASIS-EDM/EDMX-EMF-Modell
 (`org.odata.csdl.model`, 761 ExtendedMetaData-Annotationen = fertiges XSD-Mapping) ·
-**0003** Konversionslogik vollständig im Converter, AspectProvider nur dünner
-Kompositions-Adapter · **0004** Type-Resolution standalone im Query-Bundle ·
+**0003** Konversionslogik vollständig im Converter, der Metadata-Handler nur
+dünner Kompositions-Adapter · **0004** Type-Resolution standalone im Query-Bundle ·
 **0006** JPA-Backend als Criteria-Eigenbau hier im Repo · **0007** Client-Schema-Registry
 als SPI (Fetch/Convert ↔ Persistenz/Lookup entkoppelt).
 

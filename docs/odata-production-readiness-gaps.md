@@ -155,7 +155,7 @@ Tier 0 + Tier 1 grün sind. Abgeschlossene Punkte werden hier abgehakt (`[x]`).
 
 ## Tier 3 — Niedrig / Politur
 
-- [x] **T3.1 [Style] FQN → Imports** — ✅ Runtime, Query, CSDL, Client bereinigt; nur kollisions-bedingte Fälle (ODataPackageProfile csdl.profile vs metadata.odata) bewusst qualifiziert belassen.
+- [x] **T3.1 [Style] FQN → Imports** — ✅ Runtime, Query, CSDL, Client bereinigt; die letzten kollisions-bedingten Fälle (ODataPackageProfile csdl.profile vs metadata.odata) sind mit der Auflösung von `odata.ecore` (emf.osgi-1.1.0-Migration) entfallen.
 
 - [x] **T3.2 [Robustheit] `OclEvaluator.dateTime()`** — TimeOfDay nach Edm-Typ statt Länge; substring-int-Range-Check.
 - [x] **T3.3 [DeadCode] `EcoreToEdmConverter.isEntity`** — KEIN toter Code (Test nutzt es), belassen.

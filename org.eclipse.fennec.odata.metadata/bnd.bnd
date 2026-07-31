@@ -1,25 +1,15 @@
 Bundle-Name: Fennec OData Metadata
-Bundle-Description: OData aspects (odata.ecore) and the ODataAspectProvider, layered on the Model Metadata Service (E1)
-
-src=${^src},src-gen
+Bundle-Description: The ODataMetadataHandler (E1): attaches the resolved OData profile to every registered EPackage as the "odata" aspect of the Model Metadata Service
 
 -library: \
 	enableEMF
-	
--generate:\
-	model/odata.genmodel;\
-		generate=fennecEMF;\
-		genmodel=model/odata.genmodel;\
-		output=src-gen
-# Add this attribute to find some logging information
-#		logfile=test.log;\
 
--includeresource.model: model=model
-
-# E1 Foundation: depends on the extracted Model Metadata Service API
-# (org.eclipse.fennec.model.metadata.api, consumed from Maven Central via the
-# fennecEMFMetadata bnd library — see cnf/ext/fennec.bnd / central.mvn).
+# E1 Foundation: the metadata model and service API live in emf.osgi (bundle
+# org.eclipse.fennec.emf.osgi.metadata), consumed from Maven Central via the fennecEMF
+# bnd library — see cnf/ext/fennec.bnd / central.mvn. This bundle owns NO Ecore of its
+# own: the aspect content is the standalone profile model of org.eclipse.fennec.odata.csdl
+# (ADR-0003).
 -buildpath: \
 	org.osgi.service.condition;version=latest,\
-	org.eclipse.fennec.model.metadata.api;version=latest,\
+	org.eclipse.fennec.emf.osgi.metadata;version=latest,\
 	org.eclipse.fennec.odata.csdl;version=project
