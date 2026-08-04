@@ -1,0 +1,13 @@
+Bundle-Name: Fennec OData Command Backend
+Bundle-Description: Backend-neutral WriteService over the Fennec Persistence CommandResource SPI — POST/PATCH/PUT/DELETE become Insert/Update/DeleteCommand with Expression-IR key selectors and ChangeSet templates, served identically by the JPA and Mongo backends; constructs the command engine cannot express are refused with honest 501s
+
+-buildpath: \
+	org.eclipse.fennec.odata.persistence.api;version=project,\
+	org.eclipse.fennec.command.model;version=latest,\
+	org.eclipse.fennec.expression.model;version=latest,\
+	org.eclipse.fennec.query.model;version=latest,\
+	org.eclipse.fennec.stream.model;version=latest,\
+	org.eclipse.fennec.persistence.query;version=latest,\
+	org.eclipse.fennec.emf.osgi.api;version=latest,\
+	org.eclipse.emf.ecore;version=latest,\
+	org.eclipse.emf.common;version=latest

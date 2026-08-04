@@ -177,6 +177,20 @@ backend-neutrales `odata.persistence` (JPA UND Mongo) statt Umbau von
 treat/isof über den Codec-Typ-Diskriminator). Die IR-Vorbedingung für emf.odata#11
 ist damit erfüllt; vor Start frische Persistence-Snapshots ziehen.
 
+**#13 v1 (2026-08-04): neues Bundle `odata.persistence`** — `CommandWriteService`
+implementiert den `WriteService` über die `CommandResource`-SPI (POST→`InsertCommand`,
+DELETE→`DeleteCommand` mit Key-Selector als Expression-IR, PATCH/PUT→`UpdateCommand`
+mit `ChangeSet`-Template: SET/UNSET einwertig, deterministisches REMOVE/ADD-Rewrite
+mehrwertig; Upsert per Requery). Ehrliche 501s: Referenz-Patching/-Binding (upstream
+refused), `createRelated`/`link`/`unlink`, Composite-Keys; `transactional()=false`
+(je Command eine Backend-TX, kein `$batch`-Join). Erkenntnis aus der SPI-Kartierung:
+**upstream existiert KEIN Change-Feed** (stream.ecore ist nur das Patch-Vokabular) —
+der `DeltaService` dieses Bundles kommt erst mit #11 (Journal im Adapter + Requery
+über den Read-Path), der Delta-Teil von #13 ist darauf verschoben. Offene Folgethemen:
+Mongo-`Resource.Factory` ist seit persistence-jpa#65 nicht mehr von außen
+konstruierbar (Issue upstream nötig), explizite JSON-Nulls brauchen unsettable
+Attribute im Modell, kein ETag-Enforcement in der v1-Engine.
+
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,
   ADR-0004; Nachfolger der alten VA1-Vorarbeit).
