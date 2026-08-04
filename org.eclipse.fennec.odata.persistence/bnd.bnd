@@ -11,3 +11,25 @@ Bundle-Description: Backend-neutral WriteService over the Fennec Persistence Com
 	org.eclipse.fennec.emf.osgi.api;version=latest,\
 	org.eclipse.emf.ecore;version=latest,\
 	org.eclipse.emf.common;version=latest
+
+# The Mongo tests drive the SAME CommandWriteService against a real MongoDB (skipped
+# without docker/podman or -Dmongo.uri) — wiring mirrors the upstream persistence TCK.
+-testpath: \
+	org.eclipse.fennec.persistence;version=latest,\
+	org.eclipse.fennec.persistence.mongo;version=latest,\
+	org.eclipse.fennec.persistence.pushstreams;version=latest,\
+	org.eclipse.fennec.codec.api;version=latest,\
+	org.eclipse.fennec.codec;version=latest,\
+	org.eclipse.fennec.codec.bson;version=latest,\
+	org.eclipse.fennec.codec.metadata;version=latest,\
+	org.eclipse.fennec.emf.osgi.metadata;version=latest,\
+	org.eclipse.fennec.emf.osgi.component.minimal;version=latest,\
+	org.mongodb.bson;version=latest,\
+	org.mongodb.driver-core;version=latest,\
+	org.mongodb.driver-sync;version=latest,\
+	tools.jackson.core.jackson-core;version=latest,\
+	tools.jackson.core.jackson-databind;version=latest,\
+	com.fasterxml.jackson.core.jackson-annotations;version=latest,\
+	org.osgi.util.pushstream;version=latest,\
+	org.osgi.util.promise;version=latest,\
+	org.osgi.util.function;version=latest
