@@ -45,7 +45,7 @@ import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoDatabase;
 
 /**
- * The SAME {@link CommandWriteService} against a real MongoDB: proof that the
+ * The SAME {@link CommandPersistenceService} against a real MongoDB: proof that the
  * command write path is backend-neutral. Wiring follows the upstream TCK — the
  * {@code MongoResourceFactory} (API since eclipse-fennec/emf.persistence-jpa#90)
  * is registered for the {@code mongodb} protocol on a plain ResourceSet, the
@@ -54,7 +54,7 @@ import com.mongodb.client.MongoDatabase;
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @DisplayName("Command write path against MongoDB")
-public class MongoCommandWriteServiceTest {
+public class MongoCommandPersistenceServiceTest {
 
 	private static final String NS_URI = "http://fennec.eclipse.org/test/mongocommandshop";
 
@@ -66,7 +66,7 @@ public class MongoCommandWriteServiceTest {
 	private EAttribute personName;
 	private EAttribute personAge;
 	private EReference personFriend;
-	private CommandWriteService service;
+	private CommandPersistenceService service;
 
 	@BeforeAll
 	void setUp() {
@@ -85,10 +85,10 @@ public class MongoCommandWriteServiceTest {
 					.put("mongodb", new MongoResourceFactory(database, metadata, null));
 			return resourceSet;
 		};
-		service = new CommandWriteService();
+		service = new CommandPersistenceService();
 		service.setResourceSetFactory(factory);
-		service.activate(Map.of(CommandWriteService.URI_PROPERTY, "mongodb://" + database.getName(),
-				CommandWriteService.PACKAGES_PROPERTY, NS_URI));
+		service.activate(Map.of(CommandPersistenceService.URI_PROPERTY, "mongodb://" + database.getName(),
+				CommandPersistenceService.PACKAGES_PROPERTY, NS_URI));
 	}
 
 	@AfterAll

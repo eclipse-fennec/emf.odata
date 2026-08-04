@@ -32,7 +32,7 @@ import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-public class CommandWriteServiceTest {
+public class CommandPersistenceServiceTest {
 
 	private static final String NS_URI = "http://fennec.eclipse.org/test/commandshop";
 
@@ -48,7 +48,7 @@ public class CommandWriteServiceTest {
 	private EReference personFriend;
 
 	private FakeCommandBackend backend;
-	private CommandWriteService service;
+	private CommandPersistenceService service;
 
 	@BeforeEach
 	void setUp() {
@@ -59,10 +59,10 @@ public class CommandWriteServiceTest {
 			resourceSet.getResourceFactoryRegistry().getProtocolToFactoryMap().put("fake", backend);
 			return resourceSet;
 		};
-		service = new CommandWriteService();
+		service = new CommandPersistenceService();
 		service.setResourceSetFactory(factory);
-		service.activate(Map.of(CommandWriteService.URI_PROPERTY, "fake://store",
-				CommandWriteService.PACKAGES_PROPERTY, NS_URI));
+		service.activate(Map.of(CommandPersistenceService.URI_PROPERTY, "fake://store",
+				CommandPersistenceService.PACKAGES_PROPERTY, NS_URI));
 	}
 
 	private void buildModel() {
@@ -282,13 +282,13 @@ public class CommandWriteServiceTest {
 		tagId.setID(true);
 		tagClass.getEStructuralFeatures().add(tagId);
 		stringPackage.getEClassifiers().add(tagClass);
-		CommandWriteService stringService = new CommandWriteService();
+		CommandPersistenceService stringService = new CommandPersistenceService();
 		stringService.setResourceSetFactory(() -> {
 			ResourceSetImpl resourceSet = new ResourceSetImpl();
 			resourceSet.getResourceFactoryRegistry().getProtocolToFactoryMap().put("fake", backend);
 			return resourceSet;
 		});
-		stringService.activate(Map.of(CommandWriteService.URI_PROPERTY, "fake://store"));
+		stringService.activate(Map.of(CommandPersistenceService.URI_PROPERTY, "fake://store"));
 
 		EObject tag = stringPackage.getEFactoryInstance().create(tagClass);
 		tag.eSet(tagId, "it's");
@@ -305,9 +305,9 @@ public class CommandWriteServiceTest {
 
 	@Test
 	void activationRequiresTheBackendUri() {
-		CommandWriteService unconfigured = new CommandWriteService();
+		CommandPersistenceService unconfigured = new CommandPersistenceService();
 		assertThatThrownBy(() -> unconfigured.activate(Map.of()))
 				.isInstanceOf(IllegalArgumentException.class)
-				.hasMessageContaining(CommandWriteService.URI_PROPERTY);
+				.hasMessageContaining(CommandPersistenceService.URI_PROPERTY);
 	}
 }

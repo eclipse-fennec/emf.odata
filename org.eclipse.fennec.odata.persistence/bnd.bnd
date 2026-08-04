@@ -3,8 +3,11 @@ Bundle-Description: Backend-neutral WriteService over the Fennec Persistence Com
 
 -buildpath: \
 	org.eclipse.fennec.odata.persistence.api;version=project,\
+	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.m2x.ocl.model;version=latest,\
 	org.eclipse.fennec.command.model;version=latest,\
 	org.eclipse.fennec.expression.model;version=latest,\
+	org.eclipse.fennec.expression.ocl;version=latest,\
 	org.eclipse.fennec.query.model;version=latest,\
 	org.eclipse.fennec.stream.model;version=latest,\
 	org.eclipse.fennec.persistence.query;version=latest,\
@@ -12,9 +15,10 @@ Bundle-Description: Backend-neutral WriteService over the Fennec Persistence Com
 	org.eclipse.emf.ecore;version=latest,\
 	org.eclipse.emf.common;version=latest
 
-# The Mongo tests drive the SAME CommandWriteService against a real MongoDB (skipped
+# The Mongo tests drive the SAME CommandPersistenceService against a real MongoDB (skipped
 # without docker/podman or -Dmongo.uri) — wiring mirrors the upstream persistence TCK.
 -testpath: \
+	org.antlr.antlr4-runtime;version=latest,\
 	org.eclipse.fennec.persistence;version=latest,\
 	org.eclipse.fennec.persistence.mongo;version=latest,\
 	org.eclipse.fennec.persistence.pushstreams;version=latest,\

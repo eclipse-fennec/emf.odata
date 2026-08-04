@@ -14,6 +14,8 @@ Test-Cases: ${classes;HIERARCHY_INDIRECTLY_ANNOTATED;org.junit.platform.commons.
 	org.eclipse.emf.ecore.xmi;version=latest,\
 	org.eclipse.fennec.odata.persistence.inmemory;version=project,\
 	org.eclipse.fennec.odata.persistence.api;version=project,\
+	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.m2x.ocl.model;version=latest,\
 	org.eclipse.fennec.odata.client;version=project,\
 	org.eclipse.fennec.persistence.orm;version=latest,\
 	jakarta.persistence-api;version=latest
