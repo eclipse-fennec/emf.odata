@@ -123,10 +123,61 @@ in Ausdrücken.
 - **406-Handling** prüfen (nicht-erfüllbare Accept-Header systematisch).
 - Systemweite **Concurrency-/Fuzz-Tests** (bisher gezielte Unit-/e2e-Absicherung).
 
-## 8. Cross-Repo / Upstream
+## 8. Cross-Repo / Persistence-Integration
 
-- **`QWhere` → `predicate: OclExpression`** im Persistence-Query-Modell
-  (ehem. E4-AP-9/Q11) — Cross-Repo-Abstimmung mit `emf.persistence-jpa`.
+**Richtungsentscheidung (User, 2026-08-03):** OData bleibt intern auf OCL; die
+Fennec-Expression-IR (`emf.persistence-jpa`, expression/query/command.ecore) ist das
+Grenzformat zum Storage — Übersetzung via `OclToExpr`/`ExprToOcl` (leben in der
+Persistence, wandern mit jeder IR-Evolution dort mit). Die im Redesign-Doc als R10
+skizzierte „Phase 2" (`ODataToExprBuilder`, OData emittiert IR direkt) ist **verworfen**,
+nicht vertagt. OData ist **Use-Case-Geber** für die IR: fehlende Konstrukte werden als
+**Issues in `emf.persistence-jpa`** eingekippt (keine Direktänderungen in fremden Repos);
+jede IR-Erweiterung zieht **Mongo mit** (neues `QueryFeature`-Literal + Übersetzung/
+Capability-Deklaration in JPA UND Mongo + Bridge + TCK). Zielbild: `odata.persistence.jpa`
+entfällt zugunsten eines backend-neutralen **`odata.persistence`** über die
+`QueryProcessor`/`QueryableResource`/`CommandResource`-SPI (Backend-Auswahl per
+`persistence.query.backend`); Unified-Persistence-Konzept im Blick behalten
+(#13-Write-Path → `CommandResource`; die Patch-Apply-Engine `ChangeTemplates` läuft dort
+bereits für Attribut-Deltas auf beiden Backends, Referenz-Patching wird refused).
+
+**Gap-Inventur (2026-08-03, Vorbedingung für #11)** — eigener JPA-Pushdown heute vs.
+IR v2 (`expression.ecore`/`query.ecore`); ohne Schließung wäre #11 eine
+Pushdown-Regression:
+
+| Lücke | OData-JPA-Pushdown heute | IR v2 |
+|---|---|---|
+| Arithmetik `add/sub/mul/div/mod`, unäres Minus | ✅ | fehlt (bewusst v1-absent) |
+| `concat`/`indexof`/`substring` | ✅ (OData-0-basiert ↔ JPQL-1-basiert gelöst) | nur TO_LOWER/TO_UPPER/TRIM/LENGTH |
+| `round`/`floor`/`ceiling` | ✅ | fehlt |
+| `year`…`second` (EXTRACT; EclipseLink `JpaCriteriaBuilder`) | ✅ | fehlt |
+| Cast als Pfad-Segment (`treat()`, self-only) / `isof` | ✅ / ❌ | fehlt (kein Cast-Segment in `PropertyPath`) |
+| `coll/$count` (SIZE) + gefiltertes `$count` (korrelierte COUNT-Subquery, vergleichbar) | ✅ | fehlt |
+| `$apply` `compute` (vor/nach Grouping, terminal) | ✅ | Pipeline ohne Compute-Stage (D3 = „später") |
+| HAVING (`filter` nach `groupby`, Alias-auflösend) | ✅ | FilterStage existiert; JPA-Backend deklariert `PIPELINE` nicht |
+| Guid-Literal (UUID-Coercion) / Duration | ✅ / ⚠️ String | `Temporal`/`Enum` ja; Guid/Duration fehlen |
+| `$orderby` über Ausdrücke (nicht nur Pfade) | ✅ | `OrderBy.path` = nur `PropertyPath` |
+| `notEmpty` (IS NOT EMPTY) | ✅ | via `Exists` mit `true`-Prädikat abbildbar (klären) |
+
+Von OData bewusst NICHT gefordert (dort selbst 501/nicht geparst): `rollup`/`from`/
+Custom-Aggregates, `topcount`&Co., Geo, `case()`, `matchespattern`, `now`&Co. — keine
+IR-Issues nötig. `$search` faltet unser Parser in `contains`-OR-Ketten → von
+`StringMatch`+`Or` bereits abgedeckt.
+
+Issue-Paket in `emf.persistence-jpa` (angelegt 2026-08-03): **#76** Arithmetik,
+**#77** concat/indexOf/substring, **#78** round/floor/ceiling, **#79** year…second,
+**#80** treat/isof, **#81** CollectionCount (plain+gefiltert), **#82** ComputeStage +
+JPA-`PIPELINE` (revidiert D3), **#83** Guid/Duration-Literale, **#84** OrderBy über
+Ausdrücke (niedrige Prio). Minimalset für $filter-Parität: #76–#79+#81; $apply braucht
+zusätzlich #82. Neuzuschnitt von emf.odata#11 als Kommentar dort dokumentiert:
+backend-neutrales `odata.persistence` (JPA UND Mongo) statt Umbau von
+`odata.persistence.jpa`; Letzteres bleibt bis Feature-Parität.
+
+**Status 2026-08-04: #76–#84 sind KOMPLETT umgesetzt und geschlossen** (upstream
+2026-08-03/04, inkl. Mongo-Folgearbeiten #86 gefiltertes `$count`-Rendering und #88
+treat/isof über den Codec-Typ-Diskriminator). Die IR-Vorbedingung für emf.odata#11
+ist damit erfüllt; vor Start frische Persistence-Snapshots ziehen.
+
+**Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,
   ADR-0004; Nachfolger der alten VA1-Vorarbeit).
 - **`emf.persistence-jpa`-Fixes upstreamen**: Feature-Branch
