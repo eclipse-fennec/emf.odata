@@ -6,6 +6,7 @@
 	bnd.identity;id='org.eclipse.fennec.odata.persistence.inmemory',\
 	bnd.identity;id='org.eclipse.fennec.odata.persistence.jpa',\
 	bnd.identity;id='org.eclipse.fennec.odata.persistence',\
+	bnd.identity;id='org.eclipse.fennec.expression.ocl',\
 	bnd.identity;id='org.eclipse.fennec.odata.client',\
 	bnd.identity;id='org.eclipse.fennec.odata.schema.api',\
 	bnd.identity;id='org.eclipse.fennec.odata.operation.api',\

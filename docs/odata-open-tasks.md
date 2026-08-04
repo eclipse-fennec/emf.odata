@@ -190,6 +190,24 @@ der `DeltaService` dieses Bundles kommt erst mit #11 (Journal im Adapter + Reque
 explizite JSON-Nulls brauchen unsettable Attribute im Modell, kein ETag-Enforcement
 in der v1-Engine.
 
+**#11 Phase 1 (2026-08-05): `QueryService` über die Expression-IR** — die Komponente heißt
+jetzt `CommandPersistenceService` (eine Instanz, Query+Write; Delta dockt später an) und
+bedient Reads über `QueryableResource.query`: `$filter` via `OclToExpr`-Bridge (mit drei
+odata-seitigen Normalisierungen: `eq/ne null`→`IsNull`, `toLower/toUpper`-Dialekt-Rename
+auf AST-Kopie, String-Literal→`EnumLiteral` an enum-typisierten Pfaden), `$orderby` als
+Pfad oder `SORT_EXPRESSION`, Cast als `isof`-Prädikat + `castBase` auf abgeleiteten Pfaden,
+`$count` als separate countOnly-Query, Page-Cap (Default 1000, `max.page.size`), `$expand`
+Level 1 als IR-Fetch-Hint plus eager Proxy-Materialisierung über den `getEObject`-Vertrag
+(dedupliziert). Vorvalidierung über den `QueryProcessor` (`persistence.query.backend` per
+URI-Scheme) trennt 501 (Capability) von 400 (strukturell). **Abnahmekriterium erfüllt:**
+Differential-Suite `OclEvaluator` vs. IR/Memory-Engine über den edge-lastigen Korpus (38
+Fälle) grün. `$apply`/`singleton` bleiben SPI-Default-501s (Phase 2 = #12-Zuschnitt).
+Upstream-Findings als Issues: **#92** (Bridge-Dialekt toLower/toUpper), **#93**
+(String-Literal vs. EEnum-Koersion), **#94** (Memory-`Not` zweiwertig vs. SQL-3VL —
+im Korpus dokumentiert ausgenommen), **#95** (JPA-Expand nur Tiefe 1). Bekannte
+dokumentierte Divergenz: Null-Platzierung bei `$orderby` (memory nulls-last, H2/Mongo
+nulls-first).
+
 **Mongo-Zweig belegt (2026-08-04, nach persistence-jpa#90+#91):** derselbe
 `CommandWriteService` besteht den CRUD-Roundtrip gegen echtes MongoDB
 (`MongoCommandWriteServiceTest`, Gating nach TCK-Muster: `-Dmongo.uri`/`MONGO_URI`

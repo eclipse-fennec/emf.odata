@@ -24,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Hashtable;
+import java.util.List;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
@@ -37,6 +38,9 @@ import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.fennec.emf.osgi.configurator.EPackageConfigurator;
 import org.eclipse.fennec.emf.osgi.constants.EMFNamespaces;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
+import org.eclipse.fennec.odata.persistence.api.EntityQuery;
+import org.eclipse.fennec.odata.persistence.api.QueryResult;
+import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
@@ -212,6 +216,15 @@ public class CommandBackendIntegrationTest {
 		WriteResult upserted = writeService.update(itemClass, "'c2'", upsert, false);
 		assertTrue(upserted.created());
 		assertEquals("c2", upserted.entity().eGet(itemClass.getEStructuralFeature("id")));
+
+		// READ → the same component serves QueryService: pushdown through
+		// QueryableResource.query on the JPA unit, count before paging
+		QueryResult read = writeService instanceof QueryService queryService
+				? queryService.execute(new EntityQuery(itemClass, null, null, List.of(), 0, -1, true))
+				: null;
+		assertNotNull(read, "the command component must serve reads too");
+		assertEquals(2, read.entities().size());
+		assertEquals(2, read.totalCount());
 
 		// reference operations are honest 501s
 		assertThrows(UnsupportedOperationException.class,
