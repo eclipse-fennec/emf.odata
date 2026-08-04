@@ -187,9 +187,17 @@ refused), `createRelated`/`link`/`unlink`, Composite-Keys; `transactional()=fals
 **upstream existiert KEIN Change-Feed** (stream.ecore ist nur das Patch-Vokabular) —
 der `DeltaService` dieses Bundles kommt erst mit #11 (Journal im Adapter + Requery
 über den Read-Path), der Delta-Teil von #13 ist darauf verschoben. Offene Folgethemen:
-Mongo-`Resource.Factory` ist seit persistence-jpa#65 nicht mehr von außen
-konstruierbar (Issue upstream nötig), explizite JSON-Nulls brauchen unsettable
-Attribute im Modell, kein ETag-Enforcement in der v1-Engine.
+explizite JSON-Nulls brauchen unsettable Attribute im Modell, kein ETag-Enforcement
+in der v1-Engine.
+
+**Mongo-Zweig belegt (2026-08-04, nach persistence-jpa#90+#91):** derselbe
+`CommandWriteService` besteht den CRUD-Roundtrip gegen echtes MongoDB
+(`MongoCommandWriteServiceTest`, Gating nach TCK-Muster: `-Dmongo.uri`/`MONGO_URI`
+oder Docker/Podman-Wegwerf-Container, sonst Skip). OSGi-Verdrahtung läuft über die
+neue `MongoResourceFactoryComponent` (Whiteboard, `protocol=mongodb`) — odata-seitig
+nur Factory-Config `backend.uri=mongodb://<db>`. Der EclipseLink-Bug bei
+ID-Gleichheits-Queries ist upstream gefixt (#91); der `getEObject`-Key-Lookup
+bleibt trotzdem, er ist der billigere Pfad.
 
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,
