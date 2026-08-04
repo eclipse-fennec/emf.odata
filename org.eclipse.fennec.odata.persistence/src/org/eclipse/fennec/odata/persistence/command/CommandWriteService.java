@@ -19,7 +19,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Stream;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EAttribute;
@@ -45,8 +44,6 @@ import org.eclipse.fennec.model.stream.StreamFactory;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.persistence.query.api.CommandResource;
-import org.eclipse.fennec.persistence.query.api.QueryResult;
-import org.eclipse.fennec.persistence.query.api.QueryableResource;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.ConfigurationPolicy;
@@ -274,21 +271,16 @@ public class CommandWriteService implements WriteService {
 		return QueryBuilder.from(entityType).where(Expressions.path(id).eq(key)).build();
 	}
 
+	/**
+	 * Keyed lookup via the EMF fragment contract: both backends resolve a plain-id
+	 * fragment to a primary-key find ({@code em.find} respectively {@code _id} query).
+	 * Deliberately not {@code QueryableResource.query} — EclipseLink turns an
+	 * ID-equality JPQL into a {@code ReadObjectQuery}, on which the read path's
+	 * scrollable-cursor hint is invalid (upstream issue).
+	 */
 	private EObject fetchOne(EClass entityType, EAttribute id, Object key) {
 		Resource resource = resource(entityType);
-		Query query = keySelector(entityType, id, key);
-		try (QueryResult result = queryable(resource).query(query)) {
-			try (Stream<EObject> objects = result.objects()) {
-				return objects.findFirst().orElse(null);
-			}
-		} catch (IOException e) {
-			throw refused(entityType, e);
-		} catch (RuntimeException e) {
-			throw e;
-		} catch (Exception e) {
-			throw new IllegalStateException(
-					"closing the backend result for " + entityType.getName() + " failed", e);
-		}
+		return resource.getEObject(EcoreUtil.convertToString(id.getEAttributeType(), key));
 	}
 
 	private long execute(EClass entityType, Command command) {
@@ -307,13 +299,6 @@ public class CommandWriteService implements WriteService {
 			throw new IllegalStateException("no resource factory serves " + baseUri);
 		}
 		return resource;
-	}
-
-	private static QueryableResource queryable(Resource resource) {
-		if (resource instanceof QueryableResource queryable) {
-			return queryable;
-		}
-		throw new IllegalStateException("the backend resource does not support queries");
 	}
 
 	private static CommandResource commands(Resource resource) {
