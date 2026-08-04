@@ -76,6 +76,14 @@ final class FakeCommandBackend implements Resource.Factory {
 		}
 
 		@Override
+		public EObject getEObject(String uriFragment) {
+			// plain-id fragment → keyed lookup, like the JPA and Mongo resources
+			return store.values().stream()
+					.filter(object -> uriFragment.equals(EcoreUtil.getID(object)))
+					.findFirst().orElse(null);
+		}
+
+		@Override
 		public QueryResult query(Query query) throws IOException {
 			try {
 				return MemoryQueries.execute(query, List.copyOf(store.values()), null);

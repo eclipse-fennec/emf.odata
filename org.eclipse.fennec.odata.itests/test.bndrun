@@ -5,10 +5,12 @@
 	bnd.identity;id='org.eclipse.fennec.odata.runtime',\
 	bnd.identity;id='org.eclipse.fennec.odata.persistence.inmemory',\
 	bnd.identity;id='org.eclipse.fennec.odata.persistence.jpa',\
+	bnd.identity;id='org.eclipse.fennec.odata.persistence',\
 	bnd.identity;id='org.eclipse.fennec.odata.client',\
 	bnd.identity;id='org.eclipse.fennec.odata.schema.api',\
 	bnd.identity;id='org.eclipse.fennec.odata.operation.api',\
 	bnd.identity;id='org.eclipse.fennec.persistence.eclipselink',\
+	bnd.identity;id='org.eclipse.persistence.jpa.jpql',\
 	bnd.identity;id='org.eclipse.daanse.jdbc.datasource.h2',\
 	bnd.identity;id='com.h2database',\
 	bnd.identity;id='org.eclipse.fennec.odata.metadata',\
