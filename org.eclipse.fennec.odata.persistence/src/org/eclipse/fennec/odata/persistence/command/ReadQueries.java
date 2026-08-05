@@ -15,24 +15,19 @@ package org.eclipse.fennec.odata.persistence.command;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
-import org.eclipse.emf.ecore.EEnum;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.expression.ocl.OclToExpr;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
-import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.model.expression.Comparison;
 import org.eclipse.fennec.model.expression.ComparisonOperator;
-import org.eclipse.fennec.model.expression.EnumLiteral;
 import org.eclipse.fennec.model.expression.Expression;
 import org.eclipse.fennec.model.expression.ExpressionFactory;
 import org.eclipse.fennec.model.expression.IsNull;
 import org.eclipse.fennec.model.expression.NullLiteral;
 import org.eclipse.fennec.model.expression.PropertyPath;
-import org.eclipse.fennec.model.expression.StringLiteral;
 import org.eclipse.fennec.model.query.builder.Expressions;
 import org.eclipse.fennec.model.query.builder.QueryBuilder;
 import org.eclipse.fennec.odata.query.OrderBySegment;
@@ -46,7 +41,8 @@ import org.eclipse.fennec.persistence.query.QueryException;
  * (an IR {@code Comparison} against the null literal collapses to {@code false} on
  * every backend, SQL-style), and property paths that address derived-type features
  * after a URL cast get the cast type as {@code PropertyPath.castBase} so the
- * backends emit {@code TREAT}/discriminator logic. OCL constructs outside the
+ * backends emit {@code TREAT}/discriminator logic. Dialect renaming and enum-literal
+ * coercion moved upstream (persistence-jpa#92/#93). OCL constructs outside the
  * bridge's subset surface as {@link UnsupportedOperationException} — the servlet
  * maps that to an honest 501.
  */
@@ -112,90 +108,15 @@ final class ReadQueries {
 	private static Expression bridge(OclExpression ocl, EClass entityType, EClass castType) {
 		Expression bridged;
 		try {
-			bridged = OclToExpr.toExpr(normalized(ocl));
+			// the bridge accepts the evaluator dialect (toLower/toUpper, persistence-jpa#92)
+			// and the engines coerce string literals against enum-typed features (#93)
+			bridged = OclToExpr.toExpr(ocl);
 		} catch (QueryException e) {
 			throw new UnsupportedOperationException(e.getMessage(), e);
 		}
 		bridged = rewriteNullComparisons(bridged);
-		rewriteEnumComparisons(bridged);
 		applyCastBase(bridged, entityType, castType);
 		return bridged;
-	}
-
-	/**
-	 * The OData parser speaks the evaluator dialect ({@code toLower}/{@code toUpper});
-	 * the bridge expects canonical OCL. Renaming needs a copy — parsed ASTs come from
-	 * a shared cache and are read-only.
-	 */
-	private static OclExpression normalized(OclExpression ocl) {
-		boolean[] rename = { needsRename(ocl) };
-		if (!rename[0]) {
-			ocl.eAllContents().forEachRemaining(candidate -> rename[0] |= needsRename(candidate));
-		}
-		if (!rename[0]) {
-			return ocl;
-		}
-		OclExpression copy = EcoreUtil.copy(ocl);
-		renameOperation(copy);
-		copy.eAllContents().forEachRemaining(ReadQueries::renameOperation);
-		return copy;
-	}
-
-	private static boolean needsRename(Object candidate) {
-		return candidate instanceof OperationCallExp call
-				&& ("toLower".equals(call.getName()) || "toUpper".equals(call.getName()));
-	}
-
-	private static void renameOperation(Object candidate) {
-		if (candidate instanceof OperationCallExp call) {
-			if ("toLower".equals(call.getName())) {
-				call.setName("toLowerCase");
-			} else if ("toUpper".equals(call.getName())) {
-				call.setName("toUpperCase");
-			}
-		}
-	}
-
-	/**
-	 * OData transports enum values as quoted strings, so the parser yields string
-	 * literals; the IR engines compare them strictly against {@code Enumerator}s and
-	 * never match. Coerce string literals compared against enum-typed paths into
-	 * {@link EnumLiteral}s (which the engines resolve against the target feature).
-	 */
-	private static void rewriteEnumComparisons(Expression root) {
-		List<Comparison> comparisons = new ArrayList<>();
-		if (root instanceof Comparison comparison) {
-			comparisons.add(comparison);
-		}
-		root.eAllContents().forEachRemaining(candidate -> {
-			if (candidate instanceof Comparison comparison) {
-				comparisons.add(comparison);
-			}
-		});
-		for (Comparison comparison : comparisons) {
-			EEnum leftEnum = enumType(comparison.getLeft());
-			EEnum rightEnum = enumType(comparison.getRight());
-			if (leftEnum != null && comparison.getRight() instanceof StringLiteral literal) {
-				EcoreUtil.replace(literal, enumLiteral(literal.getValue()));
-			} else if (rightEnum != null && comparison.getLeft() instanceof StringLiteral literal) {
-				EcoreUtil.replace(literal, enumLiteral(literal.getValue()));
-			}
-		}
-	}
-
-	private static EEnum enumType(Expression expression) {
-		if (expression instanceof PropertyPath path && !path.getSegments().isEmpty()
-				&& path.getSegments().get(path.getSegments().size() - 1) instanceof EAttribute attribute
-				&& attribute.getEAttributeType() instanceof EEnum enumType) {
-			return enumType;
-		}
-		return null;
-	}
-
-	private static EnumLiteral enumLiteral(String literalName) {
-		EnumLiteral literal = ExpressionFactory.eINSTANCE.createEnumLiteral();
-		literal.setLiteralName(literalName);
-		return literal;
 	}
 
 	/**

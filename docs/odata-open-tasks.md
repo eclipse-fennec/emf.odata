@@ -236,6 +236,18 @@ dokumentierte Service-Layer-Eigenschaft, wie beim JPA-Backend. Belegt durch
 komplett zu, #11 behält $apply/Phase-2-Rest (=#12) und das
 `odata.persistence.jpa`-Retirement.
 
+**Workaround-Cleanup (2026-08-05, nach Publikation von persistence-jpa#92–#95):**
+Die drei odata-seitigen Normalisierungen aus #11 Phase 1 sind auf zwei geschrumpft —
+der `toLower/toUpper`-Rename (#92: Bridge akzeptiert den Dialekt) und der
+String-Literal→`EnumLiteral`-Rewrite (#93: `ExpressionValues` koerziert zentral für
+alle drei Engines) sind ENTFERNT; es bleiben `eq/ne null`→`IsNull` und `castBase`
+(beides OData-Semantik, kein Workaround). `$expand` pusht jetzt die VOLLE
+Mehrsegment-Kette als Fetch-Hint (#95: nested JOIN FETCH + Batch-Hints; die
+Proxy-Materialisierung bleibt als backend-neutrales Sicherheitsnetz). Die Memory-Engine
+ist seit #94 Kleene-3VL wie der Evaluator — die `not(nullable)`-Ausnahmen im
+Differential-Korpus sind REAKTIVIERT (+3 Fälle, jetzt 41); als dokumentierte Divergenz
+bleibt nur die `$orderby`-Null-Platzierung.
+
 **#14 FERTIG (2026-08-05): `OclEvaluator` in neutrales Bundle extrahiert** — neues
 Bundle `odata.ocl.evaluator` (Imports: nur java/EMF/m2x-OCL-Modell — kein ANTLR, kein
 OData), Paket `org.eclipse.fennec.odata.ocl.evaluator`. Auswertungsfehler tragen jetzt
