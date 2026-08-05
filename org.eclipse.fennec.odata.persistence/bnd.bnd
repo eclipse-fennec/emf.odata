@@ -17,7 +17,9 @@ Bundle-Description: Backend-neutral WriteService over the Fennec Persistence Com
 
 # The Mongo tests drive the SAME CommandPersistenceService against a real MongoDB (skipped
 # without docker/podman or -Dmongo.uri) — wiring mirrors the upstream persistence TCK.
+# The differential suite compares the IR engines against the neutral OCL reference evaluator.
 -testpath: \
+	org.eclipse.fennec.odata.ocl.evaluator;version=project,\
 	org.antlr.antlr4-runtime;version=latest,\
 	org.eclipse.fennec.persistence;version=latest,\
 	org.eclipse.fennec.persistence.mongo;version=latest,\

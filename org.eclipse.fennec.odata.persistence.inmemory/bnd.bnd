@@ -7,6 +7,7 @@ Bundle-Description: In-memory QueryService (req §3.5, mandatory reference backe
 	org.osgi.service.condition;version=latest,\
 	org.eclipse.fennec.m2x.ocl.model;version=latest,\
 	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.odata.ocl.evaluator;version=project,\
 	org.antlr.antlr4-runtime;version=latest,\
 	org.eclipse.fennec.odata.persistence.api;version=project,\
 	org.eclipse.emf.ecore.xmi;version=latest,\

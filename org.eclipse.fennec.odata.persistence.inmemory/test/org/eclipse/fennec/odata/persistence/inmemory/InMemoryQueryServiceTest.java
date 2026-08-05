@@ -39,7 +39,7 @@ import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
-import org.eclipse.fennec.odata.query.ODataQueryParseException;
+import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluationException;
 import org.eclipse.fennec.odata.query.ODataQueryParser;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 import org.junit.jupiter.api.AfterEach;
@@ -213,18 +213,18 @@ class InMemoryQueryServiceTest {
 	void destructiveEvaluation() {
 		// evaluation-time faults surface as the 400-mapped domain exception (not an internal 500):
 		// division by zero inside the predicate
-		assertThrows(ODataQueryParseException.class,
+		assertThrows(OclEvaluationException.class,
 				() -> query("price div 0 gt 1", null, 0, -1, false));
 		// type confusion: string function on a number
-		assertThrows(ODataQueryParseException.class,
+		assertThrows(OclEvaluationException.class,
 				() -> query("contains(price, '1')", null, 0, -1, false));
 		// a malformed date must be a 400 whether it fails at parse or at evaluation (never a 500)
-		assertThrows(ODataQueryParseException.class,
+		assertThrows(OclEvaluationException.class,
 				() -> query("released ge 2024-13-99", null, 0, -1, false));
 		// hand-built AST with an unknown operation name (nothing may 'default' to a value)
 		OperationCallExp unknown = OclFactory.eINSTANCE.createOperationCallExp();
 		unknown.setName("dropTable");
-		assertThrows(ODataQueryParseException.class, () -> service.execute(
+		assertThrows(OclEvaluationException.class, () -> service.execute(
 				new EntityQuery(productClass, unknown, List.of(), 0, -1, false)));
 		// invalid paging is rejected at the API boundary
 		assertThrows(IllegalArgumentException.class,
@@ -353,7 +353,7 @@ class InMemoryQueryServiceTest {
 		assertEquals(List.of("Cheese"), names(query("-rating lt -4", null, 0, -1, false)));
 
 		// flag combinations parse but are NOT evaluable on single-literal EMF enums → honest error
-		assertThrows(ODataQueryParseException.class,
+		assertThrows(OclEvaluationException.class,
 				() -> query("color has webshop.Color'Red,Green'", null, 0, -1, false));
 	}
 

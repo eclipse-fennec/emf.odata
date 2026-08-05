@@ -10,7 +10,7 @@
  * Contributors:
  *   Data In Motion Consulting - initial implementation
  */
-package org.eclipse.fennec.odata.query;
+package org.eclipse.fennec.odata.ocl.evaluator;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
@@ -72,7 +72,7 @@ public class OclEvaluator {
 	 * Evaluates a boolean predicate against the given context (an EObject or a $apply row map).
 	 * Null-valued relational comparisons yield {@code false} (three-valued logic collapsed), and
 	 * evaluation-time type errors from a query that is invalid for the actual data are surfaced as
-	 * {@link ODataQueryParseException} (→ 400), never as an internal fault (→ 500).
+	 * {@link OclEvaluationException} (a client error), never as an internal fault.
 	 */
 	public boolean matches(OclExpression predicate, Object self) {
 		try {
@@ -96,18 +96,18 @@ public class OclEvaluator {
 	}
 
 	/**
-	 * Translates an evaluation fault into a client-facing 400: a type/format mismatch means the
+	 * Translates an evaluation fault into a client error: a type/format mismatch means the
 	 * query is invalid for the data (e.g. {@code contains} on a numeric property, an out-of-range
-	 * literal). Genuine internal faults are left untouched so they still surface as a 500.
+	 * literal). Genuine internal faults are left untouched so they still surface as such.
 	 */
 	private static RuntimeException asClientError(RuntimeException e) {
-		if (e instanceof ODataQueryParseException parse) {
-			return parse;
+		if (e instanceof OclEvaluationException client) {
+			return client;
 		}
 		if (e instanceof IllegalArgumentException || e instanceof ClassCastException
 				|| e instanceof ArithmeticException || e instanceof DateTimeException) {
-			return new ODataQueryParseException(
-					"the $filter/$orderby expression is not valid for the data: " + e.getMessage(), e);
+			return new OclEvaluationException(
+					"the expression is not valid for the data: " + e.getMessage(), e);
 		}
 		return e;
 	}

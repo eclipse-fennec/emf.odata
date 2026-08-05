@@ -66,6 +66,7 @@
 	org.eclipse.fennec.odata.example;version=snapshot,\
 	org.eclipse.fennec.odata.example.jpa;version=snapshot,\
 	org.eclipse.fennec.odata.metadata;version=snapshot,\
+	org.eclipse.fennec.odata.ocl.evaluator;version=snapshot,\
 	org.eclipse.fennec.odata.operation.api;version=snapshot,\
 	org.eclipse.fennec.odata.persistence.api;version=snapshot,\
 	org.eclipse.fennec.odata.persistence.jpa;version=snapshot,\

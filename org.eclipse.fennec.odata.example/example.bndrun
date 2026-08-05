@@ -60,5 +60,6 @@
 	org.apache.felix.cm.json;version='[2.0.6,2.0.7)',\
 	org.eclipse.fennec.emf.osgi.component.minimal;version='[1.1.0,1.1.1)',\
 	org.eclipse.fennec.emf.osgi.metadata;version='[1.1.0,1.1.1)',\
+	org.eclipse.fennec.odata.ocl.evaluator;version=snapshot,\
 	org.eclipse.fennec.odata.operation.api;version=snapshot,\
 	org.eclipse.parsson.jakarta.json;version='[1.1.7,1.1.8)'

@@ -53,7 +53,7 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
    Codec-Profil wie der Server serialisiert. JDK HttpClient (injizierbar), kein JAX-RS.
 ```
 
-## Bundles (16)
+## Bundles (17)
 
 | Bundle | Etappe | Inhalt |
 |---|---|---|
@@ -61,7 +61,8 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
 | `odata.vocabularies` | E1 | OASIS Core/Capabilities/Validation/Measures als EPackages (CSDL-Read-Bootstrap, abhängigkeits-geordnetes `loadAll()`) |
 | `odata.csdl` | E2 | `OdataResolver` (EPackage+`@OData.*`→Profil), Ecore↔EDM-Converter, `$metadata` XML+JSON, `CsdlXmlLoad` (XXE-gehärteter EINZIGER Ladepfad) |
 | `odata.codec.json` | E3 | OData-JSON-Codec-Profil (`@odata.type`/`@odata.id`, `Edm.*`-Werteformate, IEEE754, metadata-Level) |
-| `odata.query` | E4 | ANTLR4-Grammatik → OCL-IR, Resource-Path-Parser, `$apply`-Submodell, `OclTypeResolver` (ADR-0004), `OclEvaluator` (IR-Referenz-Semantik), LRU-Cache |
+| `odata.ocl.evaluator` | #14 | OData-neutraler `OclEvaluator` (IR-Referenz-Semantik über m2x-OCL-ASTs, Kleene-3VL) + `OclEvaluationException`; hängt NUR am OCL-Modell — kein ANTLR, kein OData; konsumierbar von der persistence-jpa-Differential-TCK und dem Ingest-Mapping (persistence-jpa#96 §6.1) |
+| `odata.query` | E4 | ANTLR4-Grammatik → OCL-IR, Resource-Path-Parser, `$apply`-Submodell, `OclTypeResolver` (ADR-0004), LRU-Cache; `ODataQueryParseException` erbt von der neutralen `OclEvaluationException` |
 | `odata.operation.api` | E4 | `ODataOperationHandler`-SPI (Functions/Actions) |
 | `odata.persistence.api` | E5 | `QueryService`/`ApplyQuery`/`WriteService`/`MediaService`/`DeltaService`-SPIs, `ChangeJournal`, `EntityRepository` |
 | `odata.persistence.inmemory` | E5 | Referenz-Backend, `ApplyExecutor`, `FileEntityRepository` (XMI-Dir), `MemoryWriteRepository` (Write+Media+Journal) |

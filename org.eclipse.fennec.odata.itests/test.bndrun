@@ -65,6 +65,7 @@
 	org.eclipse.fennec.odata.csdl;version=snapshot,\
 	org.eclipse.fennec.odata.itests;version=snapshot,\
 	org.eclipse.fennec.odata.metadata;version=snapshot,\
+	org.eclipse.fennec.odata.ocl.evaluator;version=snapshot,\
 	org.eclipse.fennec.odata.operation.api;version=snapshot,\
 	org.eclipse.fennec.odata.persistence.api;version=snapshot,\
 	org.eclipse.fennec.odata.persistence.inmemory;version=snapshot,\
