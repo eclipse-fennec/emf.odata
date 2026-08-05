@@ -38,10 +38,14 @@ import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.fennec.emf.osgi.configurator.EPackageConfigurator;
 import org.eclipse.fennec.emf.osgi.constants.EMFNamespaces;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
+import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
+import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
+import org.eclipse.fennec.odata.query.ODataQueryParser;
+import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
@@ -235,6 +239,47 @@ public class CommandBackendIntegrationTest {
 		assertTrue(writeService.delete(itemClass, "'c1'"));
 		assertTrue(writeService.delete(itemClass, "'c2'"));
 		assertFalse(writeService.delete(itemClass, "'c1'"));
+	}
+
+	@Test
+	@DisplayName("$apply round trip: groupby+aggregate execute as pipeline stages on the JPA unit")
+	void applyRoundTripOverTheCommandSpi(
+			@InjectService(cardinality = 0, filter = "(osgi.unit.name=" + UNIT_NAME + ")")
+			ServiceAware<EntityManagerFactory> factoryAware,
+			@InjectService(cardinality = 0, filter = "(fennec.odata.backend=command)")
+			ServiceAware<QueryService> queryAware) throws Exception {
+		assertNotNull(factoryAware.waitForService(20_000),
+				"the persistence unit must be up before commands can execute");
+		QueryService queryService = queryAware.waitForService(5_000);
+		WriteService writeService = (WriteService) queryService;
+
+		for (int i = 1; i <= 4; i++) {
+			EObject item = pkg.getEFactoryInstance().create(itemClass);
+			item.eSet(itemClass.getEStructuralFeature("id"), "a" + i);
+			item.eSet(itemClass.getEStructuralFeature("name"), i % 2 == 0 ? "even" : "odd");
+			item.eSet(itemClass.getEStructuralFeature("price"), new BigDecimal(i));
+			writeService.create(itemClass, item);
+		}
+		try {
+			ODataQueryParser parser = new ODataQueryParser();
+			ApplyPipeline pipeline = parser.parseApply(
+					"groupby((name),aggregate(price with sum as total,$count as n))", itemClass);
+			ApplyResult result = queryService.executeApply(new ApplyQuery(itemClass, pipeline,
+					parser.parseFilterAfterApply("total gt 0", itemClass, pipeline),
+					parser.parseOrderByAfterApply("total desc", itemClass, pipeline),
+					0, -1, true));
+			assertEquals(2, result.rows().size(), "two groups: " + result.rows());
+			assertEquals(2, result.totalCount());
+			assertEquals("even", result.rows().get(0).get("name"),
+					"even(2+4=6) sorts before odd(1+3=4): " + result.rows());
+			assertEquals(0, new BigDecimal("6").compareTo(
+					(BigDecimal) result.rows().get(0).get("total")));
+			assertEquals(2, ((Number) result.rows().get(0).get("n")).intValue());
+		} finally {
+			for (int i = 1; i <= 4; i++) {
+				writeService.delete(itemClass, "'a" + i + "'");
+			}
+		}
 	}
 
 	@Test

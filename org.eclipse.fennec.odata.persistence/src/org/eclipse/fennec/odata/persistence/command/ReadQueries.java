@@ -13,7 +13,10 @@
 package org.eclipse.fennec.odata.persistence.command;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EReference;
@@ -21,6 +24,8 @@ import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.expression.ocl.OclToExpr;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
+import org.eclipse.fennec.m2x.model.ocl.VariableExp;
+import org.eclipse.fennec.model.expression.AliasRef;
 import org.eclipse.fennec.model.expression.Comparison;
 import org.eclipse.fennec.model.expression.ComparisonOperator;
 import org.eclipse.fennec.model.expression.Expression;
@@ -28,6 +33,8 @@ import org.eclipse.fennec.model.expression.ExpressionFactory;
 import org.eclipse.fennec.model.expression.IsNull;
 import org.eclipse.fennec.model.expression.NullLiteral;
 import org.eclipse.fennec.model.expression.PropertyPath;
+import org.eclipse.fennec.model.expression.Variable;
+import org.eclipse.fennec.model.expression.VariableRef;
 import org.eclipse.fennec.model.query.builder.Expressions;
 import org.eclipse.fennec.model.query.builder.QueryBuilder;
 import org.eclipse.fennec.odata.query.OrderBySegment;
@@ -103,6 +110,64 @@ final class ReadQueries {
 			current = reference.getEReferenceType();
 		}
 		return chain;
+	}
+
+	/**
+	 * Bridges a ROW-LEVEL expression ([OASIS-Aggregation]: query options after
+	 * {@code $apply} and post-group pipeline predicates address the transformed set):
+	 * free OCL variables naming pipeline aliases bind through the bridge's scope
+	 * mechanism and come back as {@link AliasRef}s; everything else translates like a
+	 * regular predicate. No cast handling — rows have no entity type.
+	 */
+	static Expression rowExpression(OclExpression ocl, Set<String> aliases) {
+		Map<org.eclipse.fennec.m2x.model.ocl.Variable, Variable> scope = new LinkedHashMap<>();
+		bindAliasVariable(ocl, aliases, scope);
+		ocl.eAllContents().forEachRemaining(candidate -> bindAliasVariable(candidate, aliases, scope));
+		Expression bridged;
+		try {
+			bridged = OclToExpr.toExpr(ocl, scope);
+		} catch (QueryException e) {
+			throw new UnsupportedOperationException(e.getMessage(), e);
+		}
+		Map<Variable, String> aliasByVariable = new LinkedHashMap<>();
+		scope.forEach((oclVariable, variable) -> aliasByVariable.put(variable, variable.getName()));
+		bridged = rewriteAliasReferences(bridged, aliasByVariable);
+		return rewriteNullComparisons(bridged);
+	}
+
+	private static void bindAliasVariable(Object candidate, Set<String> aliases,
+			Map<org.eclipse.fennec.m2x.model.ocl.Variable, Variable> scope) {
+		if (candidate instanceof VariableExp variableExp
+				&& variableExp.getReferredVariable() instanceof org.eclipse.fennec.m2x.model.ocl.Variable referred
+				&& referred.getName() != null && aliases.contains(referred.getName())
+				&& !scope.containsKey(referred)) {
+			Variable variable = ExpressionFactory.eINSTANCE.createVariable();
+			variable.setName(referred.getName());
+			scope.put(referred, variable);
+		}
+	}
+
+	/** The bridge emits {@link VariableRef}s for scope-bound variables — rows need {@link AliasRef}s. */
+	private static Expression rewriteAliasReferences(Expression root, Map<Variable, String> aliases) {
+		if (root instanceof VariableRef ref && aliases.containsKey(ref.getVariable())) {
+			return aliasRef(aliases.get(ref.getVariable()));
+		}
+		List<VariableRef> hits = new ArrayList<>();
+		root.eAllContents().forEachRemaining(candidate -> {
+			if (candidate instanceof VariableRef ref && aliases.containsKey(ref.getVariable())) {
+				hits.add(ref);
+			}
+		});
+		for (VariableRef ref : hits) {
+			EcoreUtil.replace(ref, aliasRef(aliases.get(ref.getVariable())));
+		}
+		return root;
+	}
+
+	private static AliasRef aliasRef(String alias) {
+		AliasRef ref = ExpressionFactory.eINSTANCE.createAliasRef();
+		ref.setAlias(alias);
+		return ref;
 	}
 
 	private static Expression bridge(OclExpression ocl, EClass entityType, EClass castType) {

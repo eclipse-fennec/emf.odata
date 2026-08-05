@@ -31,10 +31,14 @@ import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.fennec.emf.osgi.ResourceSetFactory;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataServices;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataWhiteboard;
+import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
+import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.DeltaService.DeltaResult;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
+import org.eclipse.fennec.odata.query.ODataQueryParser;
+import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
 import org.eclipse.fennec.persistence.mongo.MongoResourceFactory;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -181,6 +185,36 @@ public class MongoCommandPersistenceServiceTest {
 		assertThat(service.delete(personClass, "'m1'")).isTrue();
 		assertThat(service.delete(personClass, "'m2'")).isTrue();
 		assertThat(service.delete(personClass, "'m1'")).isFalse();
+	}
+
+	@Test
+	@DisplayName("$apply round trip: groupby+aggregate as a native Mongo pipeline")
+	void applyRoundTripOnMongo() {
+		service.create(personClass, person("g1", "even", 10));
+		service.create(personClass, person("g2", "odd", 30));
+		service.create(personClass, person("g3", "even", 20));
+		try {
+			ODataQueryParser parser = new ODataQueryParser();
+			ApplyPipeline pipeline = parser.parseApply(
+					"groupby((name),aggregate(age with sum as total,$count as n))", personClass);
+			// row sort by the grouping PATH — sorting by an aggregate alias needs
+			// SORT_EXPRESSION, which Mongo does not declare (honest refusal, upstream gap)
+			ApplyResult result = service.executeApply(new ApplyQuery(personClass, pipeline,
+					parser.parseFilterAfterApply("total gt 5", personClass, pipeline),
+					parser.parseOrderByAfterApply("name asc", personClass, pipeline),
+					0, -1, true));
+			assertThat(result.rows()).as("two groups: " + result.rows()).hasSize(2);
+			assertThat(result.totalCount()).isEqualTo(2);
+			assertThat(result.rows().get(0).get("name")).as("name asc: even before odd")
+					.isEqualTo("even");
+			Map<String, Object> even = result.rows().get(0);
+			assertThat(((Number) even.get("total")).intValue()).isEqualTo(30);
+			assertThat(((Number) even.get("n")).intValue()).isEqualTo(2);
+		} finally {
+			service.delete(personClass, "'g1'");
+			service.delete(personClass, "'g2'");
+			service.delete(personClass, "'g3'");
+		}
 	}
 
 	@Test

@@ -263,6 +263,25 @@ Input-Änderung — nach Bundle-Zuschnitt `resolve.test --rerun` (Einzeltask, NI
 `--rerun-tasks`), sonst läuft testOSGi gegen den stalen Resolve scheinbar grün durch,
 ohne Tests auszuführen.
 
+**#12 FERTIG (2026-08-05): `$apply` auf den Pipeline-Stages des Command-Backends** —
+neuer Übersetzer `ApplyQueries` + `executeApply` im `CommandPersistenceService`.
+Mapping: führende `filter(...)` falten in WHERE (kein PIPELINE-Capability nötig),
+`groupby`/`aggregate` → GroupByStage (+Aggregates: sum/min/max/average→AVG/$count/
+countdistinct), `compute` nach Gruppierung → ComputeStage, Post-Apply-Optionen reiten
+den Envelope: `$filter` mit Alias-Referenzen wird über die Scope-Variante der
+`OclToExpr`-Bridge gebunden und zu `AliasRef`s umgeschrieben (HAVING), `$orderby` als
+Pfad (`OrderBy.path` auf Output-Keys) oder Ausdruck (`OrderBy.key`), `$skip`/`$top`/
+Page-Cap am Envelope, `$count` als zweiter ungepagter Lauf (Engines haben kein
+countOnly über Pipelines). Terminal-`groupby` ohne Aggregate = DISTINCT-Projektion;
+Filter-only-Pipelines bleiben OBJECTS (Attribut-Flattening nach Referenz-Kontrakt).
+Row-Shape wie das Referenz-Backend: Gruppierungspfade genestet, Aliasse flach
+(Engine-Row-Keys sind underscore-derived). Ehrliche 501s: `concat`, `bottom*/top*`,
+`rollup`, `from`, Custom-Aggregate, Entity-Space-`compute`, `groupby`-distinct
+mitten in der Pipeline. Nachweis: 8 Unit-Tests, $apply-Roundtrip im OSGi-Itest
+(H2/EclipseLink als GROUP BY+HAVING, 23 Itests) und gegen echtes MongoDB (native
+Pipeline). Upstream-Finding: **persistence-jpa#102** (Alias-Sort verlangt
+SORT_EXPRESSION → refused auf Mongo; Pfad-Sorts gehen überall).
+
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,
   ADR-0004; Nachfolger der alten VA1-Vorarbeit) — Kandidat: nimmt den neuen
