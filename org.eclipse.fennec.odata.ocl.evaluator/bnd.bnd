@@ -1,0 +1,7 @@
+Bundle-Name: Fennec OData OCL Evaluator
+Bundle-Description: OData-neutral in-memory reference evaluator for m2x Essential-OCL ASTs — normative evaluation semantics (Kleene 3VL, OData/SQL comparison behavior) against EObjects, depending only on the OCL model; no ANTLR, no OData machinery
+
+-library: enableEMF
+
+-buildpath: \
+	org.eclipse.fennec.m2x.ocl.model;version=latest

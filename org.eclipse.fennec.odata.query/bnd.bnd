@@ -34,4 +34,5 @@ javac.deprecation = false
 	org.osgi.service.condition;version=latest,\
 	org.antlr.antlr4-runtime;version=latest,\
 	org.eclipse.fennec.m2x.ocl.model;version=latest,\
+	org.eclipse.fennec.odata.ocl.evaluator;version=project,\
 	org.eclipse.fennec.emf.osgi.api;version=latest

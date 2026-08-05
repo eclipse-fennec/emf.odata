@@ -236,9 +236,25 @@ dokumentierte Service-Layer-Eigenschaft, wie beim JPA-Backend. Belegt durch
 komplett zu, #11 behält $apply/Phase-2-Rest (=#12) und das
 `odata.persistence.jpa`-Retirement.
 
+**#14 FERTIG (2026-08-05): `OclEvaluator` in neutrales Bundle extrahiert** — neues
+Bundle `odata.ocl.evaluator` (Imports: nur java/EMF/m2x-OCL-Modell — kein ANTLR, kein
+OData), Paket `org.eclipse.fennec.odata.ocl.evaluator`. Auswertungsfehler tragen jetzt
+die neutrale `OclEvaluationException` (kuratierte Client-Message); die
+`ODataQueryParseException` erbt davon, sodass die Protokollschicht Parse- UND
+Auswertungsfehler mit einem Handler auf 400 mappt (Servlet-GET-Pfad und WriteDispatcher
+fangen den Supertyp, die reinen Resource-Parse-Stellen weiter den Subtyp → 404-Semantik
+unverändert). `OclTypeResolver` bleibt bewusst im Query-Bundle (ADR-0004, nur vom Parser
+gebraucht). Damit ist die persistence-jpa-Differential-TCK entblockt (kein
+Cross-Repo-Zyklus mehr) und das Ingest-Mapping (persistence-jpa#96 §6.1) hat seinen
+Evaluator. Gotcha: `resolve.test`/`testOSGi` erkennen neue Workspace-Bundles nicht als
+Input-Änderung — nach Bundle-Zuschnitt `resolve.test --rerun` (Einzeltask, NICHT
+`--rerun-tasks`), sonst läuft testOSGi gegen den stalen Resolve scheinbar grün durch,
+ohne Tests auszuführen.
+
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,
-  ADR-0004; Nachfolger der alten VA1-Vorarbeit).
+  ADR-0004; Nachfolger der alten VA1-Vorarbeit) — Kandidat: nimmt den neuen
+  `odata.ocl.evaluator` als Spender mit, wenn m2x ein Evaluator-Zuhause bekommt.
 - **`emf.persistence-jpa`-Fixes upstreamen**: Feature-Branch
   `fix/metamodel-refresh-dynamic-types` (Metamodel-Sichtbarkeit dynamischer Typen,
   `EBigDecimal`-Scale-Verlust) liegt lokal, je Fix ein Test — PR-Weg klären (nie pushen

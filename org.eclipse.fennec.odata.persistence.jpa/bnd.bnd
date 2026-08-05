@@ -21,6 +21,7 @@ Bundle-Description: JPA QueryService (E5): translates the OCL predicate IR into 
 -testpath: \
 	com.h2database,\
 	org.eclipse.fennec.odata.persistence.inmemory;version=project,\
+	org.eclipse.fennec.odata.ocl.evaluator;version=project,\
 	org.eclipse.persistence.asm;version=latest,\
 	org.eclipse.persistence.jpa;version=latest,\
 	org.eclipse.persistence.jpa.jpql;version=latest,\

@@ -12,12 +12,16 @@
  */
 package org.eclipse.fennec.odata.query;
 
+import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluationException;
+
 /**
  * Raised when an OData {@code $filter}/{@code $orderby} expression is syntactically invalid,
  * uses an unknown function, or references a property that does not exist on the context type.
- * Maps to a {@code 400 Bad Request} at the protocol layer.
+ * Maps to a {@code 400 Bad Request} at the protocol layer. Subtype of the neutral
+ * {@link OclEvaluationException} so protocol layers catch parse- and evaluation-time
+ * client errors with one handler.
  */
-public class ODataQueryParseException extends RuntimeException {
+public class ODataQueryParseException extends OclEvaluationException {
 
 	private static final long serialVersionUID = 1L;
 

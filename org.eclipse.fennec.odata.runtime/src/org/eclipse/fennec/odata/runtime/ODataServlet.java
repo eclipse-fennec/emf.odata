@@ -82,7 +82,8 @@ import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.CachingODataQueryParser;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataResourceParser;
-import org.eclipse.fennec.odata.query.OclEvaluator;
+import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluationException;
+import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.query.ResourcePath;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
@@ -462,8 +463,8 @@ public class ODataServlet extends HttpServlet {
 			} else {
 				resource(path.substring(1), request, response);
 			}
-		} catch (ODataQueryParseException e) {
-			// the query/parse layer curates its client-facing messages (never internals)
+		} catch (OclEvaluationException e) {
+			// the query/parse/evaluation layer curates its client-facing messages (never internals)
 			error(response, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
 		} catch (IllegalArgumentException e) {
 			// a raw IAE reaching here (e.g. an EMF value-conversion fault) is NOT a curated message

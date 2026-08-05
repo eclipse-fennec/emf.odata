@@ -10,6 +10,7 @@ Bundle-Description: Server runtime skeleton (E6/E7, ADR-0001): catch-all ODataSe
 	org.eclipse.fennec.m2x.ocl.model;version=latest,\
 	org.antlr.antlr4-runtime;version=latest,\
 	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.odata.ocl.evaluator;version=project,\
 	org.eclipse.fennec.odata.persistence.api;version=project,\
 	org.eclipse.fennec.odata.operation.api;version=project,\
 	org.eclipse.fennec.odata.csdl;version=project,\

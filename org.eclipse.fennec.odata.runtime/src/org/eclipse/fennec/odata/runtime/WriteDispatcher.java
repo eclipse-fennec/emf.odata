@@ -37,6 +37,7 @@ import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
+import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluationException;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ResourcePath;
 
@@ -70,7 +71,7 @@ void execute(HttpServletRequest request, HttpServletResponse response) throws IO
 		dispatchWrite(request, response);
 	} catch (WriteConflictException e) {
 		servlet.error(response, HttpServletResponse.SC_CONFLICT, e.getMessage());
-	} catch (ODataQueryParseException | IllegalArgumentException e) {
+	} catch (OclEvaluationException | IllegalArgumentException e) {
 		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
 	} catch (UnsupportedOperationException e) {
 		servlet.error(response, 501, "the backend does not support this request");
