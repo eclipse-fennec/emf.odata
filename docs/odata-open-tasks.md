@@ -282,6 +282,17 @@ mitten in der Pipeline. Nachweis: 8 Unit-Tests, $apply-Roundtrip im OSGi-Itest
 Pipeline). Upstream-Finding: **persistence-jpa#102** (Alias-Sort verlangt
 SORT_EXPRESSION → refused auf Mongo; Pfad-Sorts gehen überall).
 
+**Retirement `odata.persistence.jpa` (Rest von #11, Stand 2026-08-05):** Query+Write+
+Delta+$apply-Parität ist erreicht; blockiert durch drei Upstream-Lücken, als Issues
+angelegt und auf emf.odata#11 kommentiert: **persistence-jpa#107** Referenz-Patching/
+Non-Containment-Binding im ChangeSet-Vokabular (größte Lücke: link/unlink/createRelated,
+Referenz-Member in PATCH/PUT, @odata.bind), **#108** Cross-Command-Transaktionsklammer
+($batch-Atomicity-Groups; capability-deklariert, Mongo braucht Replica-Set), **#109**
+Composite-Id-Fragment-Vertrag für getEObject (eorm-Mapping existiert schon). Danach:
+Refusals im CommandPersistenceService auflösen, Beziehungs-Operationen auf
+Referenz-Entry-UpdateCommands mappen, named-keys-WriteService-Overloads implementieren,
+example-jpa + Itests umziehen, Bundle entfernen.
+
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,
   ADR-0004; Nachfolger der alten VA1-Vorarbeit) — Kandidat: nimmt den neuen
