@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.ListIterator;
@@ -50,6 +52,8 @@ import org.eclipse.fennec.model.stream.ChangeEntry;
 import org.eclipse.fennec.model.stream.ChangeSet;
 import org.eclipse.fennec.model.stream.DeltaKind;
 import org.eclipse.fennec.model.stream.StreamFactory;
+import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
+import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
@@ -85,6 +89,12 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  * cross-command transaction to join, so this backend does not offer
  * {@code $batch} atomicity ({@link #transactional()} stays {@code false}).
  *
+ * <p>Change tracking ({@link DeltaService}, [OData-Protocol] 11.3) rides a service-layer
+ * {@link ChangeJournal}: every write that went through THIS service is journaled once its
+ * command succeeded, and {@code changesSince} re-queries the touched keys through the read
+ * path ({@code key IN (touched)} folded into the defining predicate — membership stays
+ * pushed down). Writes applied behind the service's back are invisible to the journal.
+ *
  * <p>Configuration (factory configurations supported): {@value #URI_PROPERTY} is the
  * backend base URI (required); {@value #PACKAGES_PROPERTY} optionally restricts the
  * served EPackages by nsURI — without it every single-key EClass is claimed, which is
@@ -92,7 +102,7 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  */
 @Component(configurationPid = CommandPersistenceService.PID, configurationPolicy = ConfigurationPolicy.REQUIRE, //
 		property = "fennec.odata.backend=command")
-public class CommandPersistenceService implements QueryService, WriteService {
+public class CommandPersistenceService implements QueryService, WriteService, DeltaService {
 
 	public static final String PID = "org.eclipse.fennec.odata.persistence.command";
 	public static final String URI_PROPERTY = "backend.uri";
@@ -101,6 +111,12 @@ public class CommandPersistenceService implements QueryService, WriteService {
 
 	private static final int DEFAULT_MAX_PAGE_SIZE = 1000;
 
+	/**
+	 * Change journal for the {@link DeltaService}: one entry per succeeded command. Commands
+	 * commit individually ({@link #transactional()} is false), so entries publish immediately —
+	 * the journal's transaction buffer is never used here.
+	 */
+	private final ChangeJournal journal = new ChangeJournal(10_000);
 	private final Map<String, QueryProcessor> queryProcessors = new ConcurrentHashMap<>();
 	private ResourceSetFactory resourceSetFactory;
 	private URI baseUri;
@@ -197,20 +213,32 @@ public class CommandPersistenceService implements QueryService, WriteService {
 	}
 
 	private List<EObject> executePage(EntityQuery query, EClass entityType) {
-		QueryBuilder builder = QueryBuilder.from(entityType);
 		Expression predicate = ReadQueries.predicate(query.filter(), entityType, query.castType());
+		return fetchMatching(query, entityType, predicate, true);
+	}
+
+	/**
+	 * Runs one backend query for the given predicate; {@code paged} applies the query's
+	 * ordering and paging (a delta re-query must stay complete — its bound is the journal
+	 * window, not a page cap).
+	 */
+	private List<EObject> fetchMatching(EntityQuery query, EClass entityType, Expression predicate,
+			boolean paged) {
+		QueryBuilder builder = QueryBuilder.from(entityType);
 		if (predicate != null) {
 			builder.where(predicate);
 		}
-		ReadQueries.applyOrderBy(builder, query.orderBy(), entityType, query.castType());
-		if (query.skip() > 0) {
-			builder.skip(query.skip());
-		}
-		if (query.top() > 0) {
-			builder.top(query.top());
-		} else if (maxPageSize > 0) {
-			// server-driven paging safety net for unbounded reads (top == -1)
-			builder.top(maxPageSize);
+		if (paged) {
+			ReadQueries.applyOrderBy(builder, query.orderBy(), entityType, query.castType());
+			if (query.skip() > 0) {
+				builder.skip(query.skip());
+			}
+			if (query.top() > 0) {
+				builder.top(query.top());
+			} else if (maxPageSize > 0) {
+				// server-driven paging safety net for unbounded reads (top == -1)
+				builder.top(maxPageSize);
+			}
 		}
 		EClass context = query.castType() != null ? query.castType() : entityType;
 		List<List<EReference>> chains = new ArrayList<>();
@@ -379,7 +407,9 @@ public class CommandPersistenceService implements QueryService, WriteService {
 		}
 		insert(entityType, entity);
 		EObject stored = fetchOne(entityType, id, key);
-		return stored != null ? stored : entity;
+		EObject created = stored != null ? stored : entity;
+		journal.record(entityType, String.valueOf(key), ChangeJournal.keyValuesOf(created), false);
+		return created;
 	}
 
 	@Override
@@ -393,14 +423,20 @@ public class CommandPersistenceService implements QueryService, WriteService {
 			refuseNonContainmentReferences(payload);
 			insert(entityType, payload);
 			EObject stored = fetchOne(entityType, id, key);
-			return new WriteResult(stored != null ? stored : payload, true);
+			EObject upserted = stored != null ? stored : payload;
+			journal.record(entityType, String.valueOf(key),
+					ChangeJournal.keyValuesOf(upserted), false);
+			return new WriteResult(upserted, true);
 		}
 		ChangeSet template = template(entityType, id, payload, current, replace);
 		if (!template.getEntries().isEmpty()) {
 			UpdateCommand command = CommandFactory.eINSTANCE.createUpdateCommand();
 			command.setSelector(keySelector(entityType, id, key));
 			command.setTemplate(template);
-			execute(entityType, command);
+			if (execute(entityType, command) > 0) {
+				journal.record(entityType, String.valueOf(key),
+						ChangeJournal.keyValuesOf(current), false);
+			}
 		}
 		EObject stored = fetchOne(entityType, id, key);
 		return new WriteResult(stored != null ? stored : current, false);
@@ -412,13 +448,151 @@ public class CommandPersistenceService implements QueryService, WriteService {
 		Object key = decodeKey(id, rawKey);
 		DeleteCommand command = CommandFactory.eINSTANCE.createDeleteCommand();
 		command.setSelector(keySelector(entityType, id, key));
-		return execute(entityType, command) > 0;
+		boolean deleted = execute(entityType, command) > 0;
+		if (deleted) {
+			Map<String, Object> keyValues = new LinkedHashMap<>();
+			keyValues.put(id.getName(), key);
+			journal.record(entityType, String.valueOf(key), keyValues, true);
+		}
+		return deleted;
 	}
 
 	private void insert(EClass entityType, EObject entity) {
 		InsertCommand command = CommandFactory.eINSTANCE.createInsertCommand();
 		command.getObjects().add(entity);
 		execute(entityType, command);
+	}
+
+	// --- delta side (change tracking, [OData-Protocol] 11.3) ---
+
+	@Override
+	public String trackingToken(EClass entityType) {
+		return journal.token();
+	}
+
+	/**
+	 * Expanded tracking needs the owner lookup pushed down as {@code IN}/{@code EXISTS}
+	 * ({@link #ownersOfChangedMembers}). Without a bound {@link QueryProcessor} the
+	 * capability is unknown and the query itself refuses at runtime — same leniency as
+	 * {@link #validate}.
+	 */
+	@Override
+	public boolean supportsExpandTracking() {
+		QueryProcessor processor = processor();
+		return processor == null || (processor.capabilities().supports(QueryFeature.IN)
+				&& processor.capabilities().supports(QueryFeature.EXISTS));
+	}
+
+	@Override
+	public DeltaResult changesSince(EntityQuery query, String token) {
+		return changesSince(query, token, Long.MAX_VALUE);
+	}
+
+	/**
+	 * Changes since the token, out of the service-layer journal. Membership stays PUSHED
+	 * DOWN: the defining predicate is combined with a {@code key IN (touched keys)}
+	 * restriction and runs as ONE backend query — touched keys the query does not return
+	 * were deleted or left the membership.
+	 */
+	@Override
+	public DeltaResult changesSince(EntityQuery query, String token, long maxSpan) {
+		EClass entityType = query.entityType();
+		EAttribute id = requiredKeyAttribute(entityType);
+		ChangeJournal.Window window = journal.since(token, entityType, maxSpan);
+		List<Removal> removals = new ArrayList<>();
+		Map<String, ChangeJournal.Change> touched = new LinkedHashMap<>();
+		for (ChangeJournal.Change change : window.changes()) {
+			if (change.deleted()) {
+				removals.add(new Removal(change.keyValues(), REASON_DELETED));
+			} else {
+				touched.put(change.storeKey(), change);
+			}
+		}
+		if (!query.expand().isEmpty()) {
+			// expanded tracking (11.3.1): owners whose expanded navigation holds a changed
+			// member report too. The command engine refuses reference patching, so member
+			// CONTENT changes are the only membership-relevant source in this backend.
+			for (ChangeJournal.Change owner : ownersOfChangedMembers(query, token, maxSpan)) {
+				touched.putIfAbsent(owner.storeKey(), owner);
+			}
+		}
+		List<EObject> changed = List.of();
+		if (!touched.isEmpty()) {
+			Expression defining = ReadQueries.predicate(query.filter(), entityType, query.castType());
+			Expression restricted = keyIn(id, touched.keySet());
+			changed = fetchMatching(query, entityType,
+					defining == null ? restricted : Expressions.and(defining, restricted), false);
+			Set<String> matchedKeys = new HashSet<>();
+			for (EObject entity : changed) {
+				matchedKeys.add(String.valueOf(entity.eGet(id)));
+			}
+			touched.forEach((storeKey, change) -> {
+				if (!matchedKeys.contains(storeKey)) { // left the tracked membership (11.3.1)
+					removals.add(new Removal(change.keyValues(), REASON_CHANGED));
+				}
+			});
+		}
+		return new DeltaResult(changed, removals, window.nextToken(), window.more());
+	}
+
+	/** {@code key IN (touched)}, the store keys coerced back onto the key attribute's type. */
+	private static Expression keyIn(EAttribute id, Collection<String> storeKeys) {
+		Object[] keys = storeKeys.stream()
+				.map(storeKey -> EcoreUtil.createFromString(id.getEAttributeType(), storeKey))
+				.toArray();
+		return Expressions.path(id).in(keys);
+	}
+
+	/**
+	 * Owners whose EXPANDED navigation contains an entity changed inside the token window —
+	 * one pushed-down query per (first-segment) navigation: {@code EXISTS(nav, key IN
+	 * (changed member keys))}, respectively a plain multi-segment {@code nav.key IN (...)}
+	 * for single-valued navigations.
+	 */
+	private List<ChangeJournal.Change> ownersOfChangedMembers(EntityQuery query, String token,
+			long maxSpan) {
+		List<ChangeJournal.Change> owners = new ArrayList<>();
+		EClass entityType = query.entityType();
+		EAttribute ownerId = requiredKeyAttribute(entityType);
+		for (String path : query.expand()) {
+			int slash = path.indexOf('/');
+			String navigation = slash < 0 ? path : path.substring(0, slash);
+			if (!(entityType.getEStructuralFeature(navigation) instanceof EReference reference)
+					|| reference.isContainment()) {
+				continue; // containment children have no set-level journal entries
+			}
+			EClass targetType = reference.getEReferenceType();
+			EAttribute targetId = singleKeyAttribute(targetType);
+			if (targetId == null) {
+				continue; // members without a single key are never journaled
+			}
+			Object[] memberKeys = journal.since(token, targetType, maxSpan).changes().stream()
+					.filter(change -> !change.deleted())
+					.map(change -> EcoreUtil.createFromString(targetId.getEAttributeType(),
+							change.storeKey()))
+					.toArray();
+			if (memberKeys.length == 0) {
+				continue;
+			}
+			Expression membersChanged = reference.isMany()
+					? Expressions.any(Expressions.propertyPath(reference),
+							it -> it.path(targetId).in(memberKeys))
+					: Expressions.path(reference, targetId).in(memberKeys);
+			Query irQuery = QueryBuilder.from(entityType).where(membersChanged).build();
+			validate(irQuery, entityType);
+			Resource resource = resource(resourceSetFactory.createResourceSet(), entityType);
+			try (var result = queryable(resource).query(irQuery);
+					Stream<EObject> objects = result.objects()) {
+				for (EObject owner : objects.toList()) {
+					owners.add(new ChangeJournal.Change(0, owner.eClass(),
+							String.valueOf(owner.eGet(ownerId)),
+							ChangeJournal.keyValuesOf(owner), false));
+				}
+			} catch (IOException e) {
+				throw readRefused(entityType, e);
+			}
+		}
+		return owners;
 	}
 
 	/**

@@ -38,6 +38,7 @@ import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.fennec.emf.osgi.configurator.EPackageConfigurator;
 import org.eclipse.fennec.emf.osgi.constants.EMFNamespaces;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
+import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
@@ -234,6 +235,44 @@ public class CommandBackendIntegrationTest {
 		assertTrue(writeService.delete(itemClass, "'c1'"));
 		assertTrue(writeService.delete(itemClass, "'c2'"));
 		assertFalse(writeService.delete(itemClass, "'c1'"));
+	}
+
+	@Test
+	@DisplayName("delta round trip: the component serves DeltaService, the requery pushes key IN down")
+	void deltaRoundTripOverTheCommandSpi(
+			@InjectService(cardinality = 0, filter = "(osgi.unit.name=" + UNIT_NAME + ")")
+			ServiceAware<EntityManagerFactory> factoryAware,
+			@InjectService(cardinality = 0, filter = "(fennec.odata.backend=command)")
+			ServiceAware<DeltaService> deltaAware) throws Exception {
+		assertNotNull(factoryAware.waitForService(20_000),
+				"the persistence unit must be up before commands can execute");
+		DeltaService deltaService = deltaAware.waitForService(5_000);
+		assertNotNull(deltaService, "the command component must serve change tracking too");
+		assertTrue(deltaService.supports(itemClass));
+		WriteService writeService = (WriteService) deltaService;
+
+		String token = deltaService.trackingToken(itemClass);
+		EObject item = pkg.getEFactoryInstance().create(itemClass);
+		item.eSet(itemClass.getEStructuralFeature("id"), "d1");
+		item.eSet(itemClass.getEStructuralFeature("name"), "Tracked");
+		writeService.create(itemClass, item);
+		EObject patch = pkg.getEFactoryInstance().create(itemClass);
+		patch.eSet(itemClass.getEStructuralFeature("name"), "Tracked v2");
+		writeService.update(itemClass, "'d1'", patch, false);
+
+		DeltaService.DeltaResult delta = deltaService.changesSince(EntityQuery.all(itemClass), token);
+		assertEquals(1, delta.changed().size(), "create + update collapse into one upsert");
+		assertEquals("Tracked v2",
+				delta.changed().get(0).eGet(itemClass.getEStructuralFeature("name")));
+		assertTrue(delta.removals().isEmpty());
+
+		assertTrue(writeService.delete(itemClass, "'d1'"));
+		DeltaService.DeltaResult gone = deltaService.changesSince(EntityQuery.all(itemClass),
+				delta.nextToken());
+		assertTrue(gone.changed().isEmpty());
+		assertEquals(1, gone.removals().size());
+		assertEquals(DeltaService.REASON_DELETED, gone.removals().get(0).reason());
+		assertEquals("d1", gone.removals().get(0).keyValues().get("id"));
 	}
 
 	private Path writeMappingFile() throws Exception {
