@@ -24,7 +24,7 @@
 	bnd.identity;id='org.eclipse.fennec.odata.example',\
 	bnd.identity;id='org.eclipse.fennec.odata.example.jpa',\
 	bnd.identity;id='org.eclipse.fennec.odata.runtime',\
-	bnd.identity;id='org.eclipse.fennec.odata.persistence.jpa',\
+	bnd.identity;id='org.eclipse.fennec.odata.persistence',\
 	bnd.identity;id='org.eclipse.fennec.odata.metadata',\
 	bnd.identity;id='org.eclipse.fennec.emf.osgi.metadata',\
 	bnd.identity;id='org.eclipse.fennec.persistence.eclipselink',\
@@ -69,7 +69,7 @@
 	org.eclipse.fennec.odata.ocl.evaluator;version=snapshot,\
 	org.eclipse.fennec.odata.operation.api;version=snapshot,\
 	org.eclipse.fennec.odata.persistence.api;version=snapshot,\
-	org.eclipse.fennec.odata.persistence.jpa;version=snapshot,\
+	org.eclipse.fennec.odata.persistence;version=snapshot,\
 	org.eclipse.fennec.odata.query;version=snapshot,\
 	org.eclipse.fennec.odata.runtime;version=snapshot,\
 	org.eclipse.fennec.persistence;version='[0.1.0,0.1.1)',\
@@ -98,4 +98,5 @@
 	org.eclipse.fennec.expression.model;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.persistence.query;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.query.model;version='[0.1.0,0.1.1)',\
-	org.eclipse.fennec.stream.model;version='[0.1.0,0.1.1)'
+	org.eclipse.fennec.stream.model;version='[0.1.0,0.1.1)',\
+	org.eclipse.fennec.expression.ocl;version='[0.1.0,0.1.1)'

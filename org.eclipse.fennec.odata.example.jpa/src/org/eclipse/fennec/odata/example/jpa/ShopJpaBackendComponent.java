@@ -58,7 +58,7 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  *   <li>creates two ConfigurationAdmin factory configurations — an H2 {@code DataSource}
  *       ({@value #DATASOURCE_PID}) and a {@code PersistenceUnit} ({@value #PERSISTENCE_UNIT_PID})
  *       selecting the model by {@code (emf.name=webshop)} — which together materialize an
- *       {@code EntityManagerFactory} that the {@code JpaQueryService} picks up, and</li>
+ *       {@code EntityManagerFactory} the command backend executes against, and</li>
  *   <li>seeds a little demo data once the JPA backend is up.</li>
  * </ol>
  *
@@ -96,14 +96,15 @@ public class ShopJpaBackendComponent {
 	 * them.
 	 */
 	@Reference(policy = ReferencePolicy.DYNAMIC, cardinality = ReferenceCardinality.OPTIONAL,
-			target = "(fennec.odata.backend=jpa)")
+			target = "(fennec.odata.backend=command)")
 	private volatile QueryService jpaQuery;
 	@Reference(policy = ReferencePolicy.DYNAMIC, cardinality = ReferenceCardinality.OPTIONAL,
-			target = "(fennec.odata.backend=jpa)")
+			target = "(fennec.odata.backend=command)")
 	private volatile WriteService jpaWrite;
 
 	private Configuration dataSourceConfiguration;
 	private Configuration unitConfiguration;
+	private Configuration commandConfiguration;
 	private volatile boolean active;
 	private volatile Thread seedThread;
 
@@ -129,6 +130,13 @@ public class ShopJpaBackendComponent {
 		unitProperties.put("fennec.jpa.ext.eclipselink.ddl-generation", "create-or-extend-tables");
 		unitConfiguration.update(unitProperties);
 
+		commandConfiguration = configurationAdmin
+				.createFactoryConfiguration("org.eclipse.fennec.odata.persistence.command", "?");
+		Dictionary<String, Object> commandProperties = new Hashtable<>();
+		commandProperties.put("backend.uri", "jpa://" + UNIT_NAME);
+		commandProperties.put("emf.nsURIs", shop.getNsURI());
+		commandConfiguration.update(commandProperties);
+
 		seedThread = Thread.ofVirtual().name("webshop-jpa-seed").start(this::seedWhenReady);
 		LOGGER.log(INFO, "webshop JPA backend configured (unit={0}); seeding asynchronously", UNIT_NAME);
 	}
@@ -139,6 +147,9 @@ public class ShopJpaBackendComponent {
 		Thread thread = seedThread;
 		if (thread != null) {
 			thread.interrupt();
+		}
+		if (commandConfiguration != null) {
+			commandConfiguration.delete();
 		}
 		if (unitConfiguration != null) {
 			unitConfiguration.delete();

@@ -48,22 +48,14 @@ Alle Level 4.0+4.01 Minimal–Advanced sind beansprucht; das hier ist der Rest d
 
 ## 3. Backend-Pushdown (ehrliche 501er, nach Praxisnutzen priorisieren)
 
-**JPA** (`OclToCriteriaTranslator`/`JpaApplyExecutor` — Übersetzungslücken werfen UOE → 501,
-nie still falsch). Verbleibend:
-- `date()`/`time()` (die ISO-String-Formen; `year`…`second` sind gepusht). Grund für die
-  Zurückhaltung: die In-Memory-Referenz liefert ISO-STRINGS, ein SQL-DATE/TIME-Cast müsste
-  bit-genau dieselbe Darstellung erzeugen — Divergenzrisiko, niedriger Praxisnutzen.
-- **Mehrfach-`groupby`** (mehr als eine Grouping-Stufe) — braucht verschachtelte Subqueries.
-- **`rollup`-Grouping-Sets, `aggregate … from`, Custom-Aggregates/-Methoden** — die Jakarta
-  Criteria API hat kein portables `GROUPING SETS`/`ROLLUP`; genuin nicht portabel abbildbar,
-  bleibt bewusst 501.
-
-*(Geschlossen 2026-07-15: gefilterter/gesuchter `$count` in Ausdrücken → korrelierte
-COUNT-Subquery; Casts in Ausdrucks-Pfaden `Ns.Sub/prop` → `treat()`; `compute` NACH `groupby`.
-GOTCHA dabei — EclipseLink: `greaterThanOrEqualTo`/`lessThan` u. a. casten auf `ExpressionImpl`
-und lehnen eine `SubQueryImpl` ab; die numerischen `ge/gt/lt/le`-Overloads casten auf
-`InternalSelection`, das die Subquery implementiert. `treat()` in einem OR liefert korrekt
-`null` (3VL), statt die ganze Query auf den Subtyp einzuschränken — per OR-Probe verifiziert.)*
+**JPA/Mongo laufen über den Command-Backend** (`odata.persistence`, seit dem Retirement
+des handgebauten `odata.persistence.jpa` 2026-08-05 der EINZIGE Datenbankpfad): Pushdown-
+Lücken sind jetzt Upstream-Themen der IR/Backends (Issues in emf.persistence-jpa nach dem
+#76–#84-Muster), nicht mehr odata-seitige Übersetzer-Baustellen. Odata-seitig verbleibt:
+- **Mehrfach-`groupby`** (mehr als eine Grouping-Stufe) und `date()`/`time()`-ISO-Formen —
+  beide auch in der IR noch nicht ausgedrückt; bei Bedarf upstream einkippen.
+- **`rollup`-Grouping-Sets, `aggregate … from`, Custom-Aggregates** — genuin nicht portabel,
+  bleibt bewusst 501 (auch im `ApplyQueries`-Übersetzer refused).
 
 **$apply-Struktur-Transformationen** (beidseitig parse→501; vor dem Bau Praxisnutzen prüfen —
 braucht RecHier-Modelle bzw. Operations-Dispatch): `search`, `nest`/`addnested`,
@@ -282,16 +274,20 @@ mitten in der Pipeline. Nachweis: 8 Unit-Tests, $apply-Roundtrip im OSGi-Itest
 Pipeline). Upstream-Finding: **persistence-jpa#102** (Alias-Sort verlangt
 SORT_EXPRESSION → refused auf Mongo; Pfad-Sorts gehen überall).
 
-**Retirement `odata.persistence.jpa` (Rest von #11, Stand 2026-08-05):** Query+Write+
-Delta+$apply-Parität ist erreicht; blockiert durch drei Upstream-Lücken, als Issues
-angelegt und auf emf.odata#11 kommentiert: **persistence-jpa#107** Referenz-Patching/
-Non-Containment-Binding im ChangeSet-Vokabular (größte Lücke: link/unlink/createRelated,
-Referenz-Member in PATCH/PUT, @odata.bind), **#108** Cross-Command-Transaktionsklammer
-($batch-Atomicity-Groups; capability-deklariert, Mongo braucht Replica-Set), **#109**
-Composite-Id-Fragment-Vertrag für getEObject (eorm-Mapping existiert schon). Danach:
-Refusals im CommandPersistenceService auflösen, Beziehungs-Operationen auf
-Referenz-Entry-UpdateCommands mappen, named-keys-WriteService-Overloads implementieren,
-example-jpa + Itests umziehen, Bundle entfernen.
+**Retirement `odata.persistence.jpa` FERTIG (2026-08-05, nach persistence-jpa#107–#109):**
+Der CommandPersistenceService schließt die letzten Paritätslücken — Referenz-Patching als
+id-wertige ChangeSet-Entries (SET/UNSET einwertig, REMOVE-by-id/ADD mehrwertig; Insert
+bindet Non-Containment-Stubs per Key, dangling Targets = 400 über die QueryException-
+Cause-Erkennung), `link`/`unlink`/`createRelated` als Referenz-Entry-UpdateCommands
+(createRelated mit Kompensations-Delete bei Link-Fehlschlag), Composite-Keys über den
+`CompositeIds`-Fragment-Vertrag (named-keys-Overloads implementiert, Key-Selektoren als
+AND-über-Id-Gleichheiten, Delta-Requery als OR-über-AND), und `$batch`-Atomicity über die
+thread-gebundene Command-Klammer (`CommandResource.begin()`, transactional() einmalig
+geprobt — H2 ja, Mongo standalone ehrlich nein; das ChangeJournal puffert Delta-Einträge
+bis zum Commit). Das Bundle `odata.persistence.jpa` ist ENTFERNT, `example-jpa` und die
+Itests laufen auf dem Command-Backend (JpaWiringIntegrationTest ersatzlos gestrichen —
+CommandBackendIntegrationTest deckt die Kette), Coverage-Floor-Eintrag raus. 20 Itests
+und alle Bundle-Tests grün gegen die frischen Snapshots.
 
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,

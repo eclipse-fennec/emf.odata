@@ -62,12 +62,15 @@ import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
+import org.eclipse.fennec.persistence.helper.CompositeIds;
 import org.eclipse.fennec.persistence.query.QueryConstants;
+import org.eclipse.fennec.persistence.query.QueryException;
 import org.eclipse.fennec.persistence.query.api.CommandResource;
 import org.eclipse.fennec.persistence.query.api.QueryFeature;
 import org.eclipse.fennec.persistence.query.api.QueryProcessor;
 import org.eclipse.fennec.persistence.query.api.QueryResultRow;
 import org.eclipse.fennec.persistence.query.api.QueryableResource;
+import org.eclipse.fennec.persistence.query.support.CommandTransaction;
 import org.eclipse.fennec.persistence.query.support.QueryValidator;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -85,13 +88,11 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  * {@code DeleteCommand} whose selector is the key predicate as Expression IR, and
  * PATCH/PUT an {@code UpdateCommand} carrying a {@code ChangeSet} template
  * (SET/UNSET for single-valued attributes, a deterministic REMOVE/ADD sequence for
- * many-valued ones). The upstream patch-apply engine cannot express reference
- * changes — payloads carrying navigation members are refused with
- * {@link UnsupportedOperationException}, which the servlet maps to an honest 501.
- *
- * <p>Each command executes in its own backend transaction; there is no
- * cross-command transaction to join, so this backend does not offer
- * {@code $batch} atomicity ({@link #transactional()} stays {@code false}).
+ * many-valued ones; non-containment references as id-valued entries, persistence-jpa#107).
+ * Relationship operations map onto reference-entry {@code UpdateCommand}s, composite
+ * keys ride the {@code CompositeIds} fragment contract (#109), and {@code $batch}
+ * atomicity groups run in the backend's cross-command transaction bracket where the
+ * deployment supports one (#108, probed once).
  *
  * <p>Change tracking ({@link DeltaService}, [OData-Protocol] 11.3) rides a service-layer
  * {@link ChangeJournal}: every write that went through THIS service is journaled once its
@@ -101,7 +102,7 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  *
  * <p>Configuration (factory configurations supported): {@value #URI_PROPERTY} is the
  * backend base URI (required); {@value #PACKAGES_PROPERTY} optionally restricts the
- * served EPackages by nsURI — without it every single-key EClass is claimed, which is
+ * served EPackages by nsURI — without it every keyed EClass is claimed, which is
  * almost never what a runtime with more than one backend wants.
  */
 @Component(configurationPid = CommandPersistenceService.PID, configurationPolicy = ConfigurationPolicy.REQUIRE, //
@@ -116,9 +117,9 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	private static final int DEFAULT_MAX_PAGE_SIZE = 1000;
 
 	/**
-	 * Change journal for the {@link DeltaService}: one entry per succeeded command. Commands
-	 * commit individually ({@link #transactional()} is false), so entries publish immediately —
-	 * the journal's transaction buffer is never used here.
+	 * Change journal for the {@link DeltaService}: one entry per succeeded command. Entries
+	 * publish immediately outside a batch bracket; inside one they buffer and publish on
+	 * commit (the journal's transaction hooks mirror the backend bracket, #108).
 	 */
 	private final ChangeJournal journal = new ChangeJournal(10_000);
 	private final Map<String, QueryProcessor> queryProcessors = new ConcurrentHashMap<>();
@@ -188,7 +189,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 				|| !nsUris.contains(entityType.getEPackage().getNsURI()))) {
 			return false;
 		}
-		return singleKeyAttribute(entityType) != null;
+		return !CompositeIds.idAttributes(entityType).isEmpty();
 	}
 
 	@Override
@@ -448,65 +449,77 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 
 	@Override
 	public EObject create(EClass entityType, EObject entity) {
-		EAttribute id = requiredKeyAttribute(entityType);
-		if (!entity.eIsSet(id)) {
+		String fragment = CompositeIds.fragment(entity);
+		if (fragment == null) {
 			throw new IllegalArgumentException(
 					"the payload must carry the key of the new " + entityType.getName());
 		}
-		Object key = entity.eGet(id);
-		refuseNonContainmentReferences(entity);
-		if (fetchOne(entityType, id, key) != null) {
+		if (fetchOne(entityType, fragment) != null) {
 			throw new WriteConflictException(
 					"a " + entityType.getName() + " with this key already exists");
 		}
 		insert(entityType, entity);
-		EObject stored = fetchOne(entityType, id, key);
+		EObject stored = fetchOne(entityType, fragment);
 		EObject created = stored != null ? stored : entity;
-		journal.record(entityType, String.valueOf(key), ChangeJournal.keyValuesOf(created), false);
+		journal.record(entityType, fragment, ChangeJournal.keyValuesOf(created), false);
 		return created;
 	}
 
 	@Override
 	public WriteResult update(EClass entityType, String rawKey, EObject payload, boolean replace) {
-		EAttribute id = requiredKeyAttribute(entityType);
-		Object key = decodeKey(id, rawKey);
-		EObject current = fetchOne(entityType, id, key);
+		return updateByFragment(entityType, fragmentFromRaw(entityType, rawKey), payload, replace);
+	}
+
+	@Override
+	public WriteResult update(EClass entityType, Map<String, String> namedKeys, EObject payload,
+			boolean replace) {
+		return updateByFragment(entityType, fragmentFromNamed(entityType, namedKeys), payload, replace);
+	}
+
+	private WriteResult updateByFragment(EClass entityType, String fragment, EObject payload,
+			boolean replace) {
+		EObject current = fetchOne(entityType, fragment);
 		if (current == null) {
 			// upsert: the URL key wins over anything in the payload
-			payload.eSet(id, key);
-			refuseNonContainmentReferences(payload);
+			CompositeIds.setId(payload, fragment);
 			insert(entityType, payload);
-			EObject stored = fetchOne(entityType, id, key);
+			EObject stored = fetchOne(entityType, fragment);
 			EObject upserted = stored != null ? stored : payload;
-			journal.record(entityType, String.valueOf(key),
-					ChangeJournal.keyValuesOf(upserted), false);
+			journal.record(entityType, fragment, ChangeJournal.keyValuesOf(upserted), false);
 			return new WriteResult(upserted, true);
 		}
-		ChangeSet template = template(entityType, id, payload, current, replace);
+		ChangeSet template = template(entityType, payload, current, replace);
 		if (!template.getEntries().isEmpty()) {
 			UpdateCommand command = CommandFactory.eINSTANCE.createUpdateCommand();
-			command.setSelector(keySelector(entityType, id, key));
+			command.setSelector(keySelector(entityType, fragment));
 			command.setTemplate(template);
 			if (execute(entityType, command) > 0) {
-				journal.record(entityType, String.valueOf(key),
-						ChangeJournal.keyValuesOf(current), false);
+				journal.record(entityType, fragment, ChangeJournal.keyValuesOf(current), false);
 			}
 		}
-		EObject stored = fetchOne(entityType, id, key);
+		EObject stored = fetchOne(entityType, fragment);
 		return new WriteResult(stored != null ? stored : current, false);
 	}
 
 	@Override
 	public boolean delete(EClass entityType, String rawKey) {
-		EAttribute id = requiredKeyAttribute(entityType);
-		Object key = decodeKey(id, rawKey);
+		return deleteByFragment(entityType, fragmentFromRaw(entityType, rawKey));
+	}
+
+	@Override
+	public boolean delete(EClass entityType, Map<String, String> namedKeys) {
+		return deleteByFragment(entityType, fragmentFromNamed(entityType, namedKeys));
+	}
+
+	private boolean deleteByFragment(EClass entityType, String fragment) {
+		EObject current = fetchOne(entityType, fragment);
 		DeleteCommand command = CommandFactory.eINSTANCE.createDeleteCommand();
-		command.setSelector(keySelector(entityType, id, key));
+		command.setSelector(keySelector(entityType, fragment));
 		boolean deleted = execute(entityType, command) > 0;
 		if (deleted) {
-			Map<String, Object> keyValues = new LinkedHashMap<>();
-			keyValues.put(id.getName(), key);
-			journal.record(entityType, String.valueOf(key), keyValues, true);
+			Map<String, Object> keyValues = current != null ? ChangeJournal.keyValuesOf(current)
+					: Map.of();
+			journal.record(entityType, fragment, keyValues, true);
 		}
 		return deleted;
 	}
@@ -551,7 +564,6 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	@Override
 	public DeltaResult changesSince(EntityQuery query, String token, long maxSpan) {
 		EClass entityType = query.entityType();
-		EAttribute id = requiredKeyAttribute(entityType);
 		ChangeJournal.Window window = journal.since(token, entityType, maxSpan);
 		List<Removal> removals = new ArrayList<>();
 		Map<String, ChangeJournal.Change> touched = new LinkedHashMap<>();
@@ -564,8 +576,8 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		}
 		if (!query.expand().isEmpty()) {
 			// expanded tracking (11.3.1): owners whose expanded navigation holds a changed
-			// member report too. The command engine refuses reference patching, so member
-			// CONTENT changes are the only membership-relevant source in this backend.
+			// member report too; membership changes through link/unlink/createRelated and
+			// reference patches journal the owner directly (updateReference).
 			for (ChangeJournal.Change owner : ownersOfChangedMembers(query, token, maxSpan)) {
 				touched.putIfAbsent(owner.storeKey(), owner);
 			}
@@ -573,12 +585,12 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		List<EObject> changed = List.of();
 		if (!touched.isEmpty()) {
 			Expression defining = ReadQueries.predicate(query.filter(), entityType, query.castType());
-			Expression restricted = keyIn(id, touched.keySet());
+			Expression restricted = keysPredicate(entityType, touched.keySet());
 			changed = fetchMatching(query, entityType,
 					defining == null ? restricted : Expressions.and(defining, restricted), false);
 			Set<String> matchedKeys = new HashSet<>();
 			for (EObject entity : changed) {
-				matchedKeys.add(String.valueOf(entity.eGet(id)));
+				matchedKeys.add(CompositeIds.fragment(entity));
 			}
 			touched.forEach((storeKey, change) -> {
 				if (!matchedKeys.contains(storeKey)) { // left the tracked membership (11.3.1)
@@ -589,12 +601,21 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		return new DeltaResult(changed, removals, window.nextToken(), window.more());
 	}
 
-	/** {@code key IN (touched)}, the store keys coerced back onto the key attribute's type. */
-	private static Expression keyIn(EAttribute id, Collection<String> storeKeys) {
-		Object[] keys = storeKeys.stream()
-				.map(storeKey -> EcoreUtil.createFromString(id.getEAttributeType(), storeKey))
-				.toArray();
-		return Expressions.path(id).in(keys);
+	/**
+	 * {@code key IN (touched)} for single-id types, an OR of AND-of-id-equalities for
+	 * composite ones — the store keys are the keyed-access fragments.
+	 */
+	private static Expression keysPredicate(EClass entityType, Collection<String> fragments) {
+		List<EAttribute> ids = CompositeIds.idAttributes(entityType);
+		if (ids.size() == 1) {
+			EAttribute id = ids.get(0);
+			Object[] keys = fragments.stream()
+					.map(fragment -> decodeComponent(id, fragment)).toArray();
+			return Expressions.path(id).in(keys);
+		}
+		Expression[] selectors = fragments.stream()
+				.map(fragment -> keyPredicate(entityType, fragment)).toArray(Expression[]::new);
+		return selectors.length == 1 ? selectors[0] : Expressions.or(selectors);
 	}
 
 	/**
@@ -607,7 +628,6 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			long maxSpan) {
 		List<ChangeJournal.Change> owners = new ArrayList<>();
 		EClass entityType = query.entityType();
-		EAttribute ownerId = requiredKeyAttribute(entityType);
 		for (String path : query.expand()) {
 			int slash = path.indexOf('/');
 			String navigation = slash < 0 ? path : path.substring(0, slash);
@@ -616,22 +636,20 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 				continue; // containment children have no set-level journal entries
 			}
 			EClass targetType = reference.getEReferenceType();
-			EAttribute targetId = singleKeyAttribute(targetType);
-			if (targetId == null) {
-				continue; // members without a single key are never journaled
+			List<EAttribute> targetIds = CompositeIds.idAttributes(targetType);
+			if (targetIds.isEmpty()) {
+				continue; // members without keys are never journaled
 			}
-			Object[] memberKeys = journal.since(token, targetType, maxSpan).changes().stream()
-					.filter(change -> !change.deleted())
-					.map(change -> EcoreUtil.createFromString(targetId.getEAttributeType(),
-							change.storeKey()))
-					.toArray();
-			if (memberKeys.length == 0) {
+			List<String> memberFragments = journal.since(token, targetType, maxSpan).changes()
+					.stream().filter(change -> !change.deleted())
+					.map(ChangeJournal.Change::storeKey).toList();
+			if (memberFragments.isEmpty()) {
 				continue;
 			}
 			Expression membersChanged = reference.isMany()
 					? Expressions.any(Expressions.propertyPath(reference),
-							it -> it.path(targetId).in(memberKeys))
-					: Expressions.path(reference, targetId).in(memberKeys);
+							it -> memberPredicate(it, targetType, targetIds, memberFragments))
+					: navigationKeysPredicate(reference, targetType, targetIds, memberFragments);
 			Query irQuery = QueryBuilder.from(entityType).where(membersChanged).build();
 			validate(irQuery, entityType);
 			Resource resource = resource(resourceSetFactory.createResourceSet(), entityType);
@@ -639,7 +657,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 					Stream<EObject> objects = result.objects()) {
 				for (EObject owner : objects.toList()) {
 					owners.add(new ChangeJournal.Change(0, owner.eClass(),
-							String.valueOf(owner.eGet(ownerId)),
+							CompositeIds.fragment(owner),
 							ChangeJournal.keyValuesOf(owner), false));
 				}
 			} catch (IOException e) {
@@ -649,26 +667,219 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		return owners;
 	}
 
+	/** Member keys inside an EXISTS body: {@code it.key IN} single-id, OR-of-ANDs composite. */
+	private static Expression memberPredicate(Expressions.It it, EClass targetType,
+			List<EAttribute> targetIds, List<String> fragments) {
+		if (targetIds.size() == 1) {
+			EAttribute id = targetIds.get(0);
+			return it.path(id).in(fragments.stream()
+					.map(fragment -> decodeComponent(id, fragment)).toArray());
+		}
+		Expression[] selectors = fragments.stream().map(fragment -> {
+			List<String> components = CompositeIds.parse(targetType, fragment);
+			Expression[] equalities = new Expression[targetIds.size()];
+			for (int i = 0; i < targetIds.size(); i++) {
+				equalities[i] = it.path(targetIds.get(i))
+						.eq(decodeComponent(targetIds.get(i), components.get(i)));
+			}
+			return Expressions.and(equalities);
+		}).toArray(Expression[]::new);
+		return selectors.length == 1 ? selectors[0] : Expressions.or(selectors);
+	}
+
+	/** Member keys behind a single-valued navigation: multi-segment paths instead of EXISTS. */
+	private static Expression navigationKeysPredicate(EReference reference, EClass targetType,
+			List<EAttribute> targetIds, List<String> fragments) {
+		if (targetIds.size() == 1) {
+			EAttribute id = targetIds.get(0);
+			return Expressions.path(reference, id).in(fragments.stream()
+					.map(fragment -> decodeComponent(id, fragment)).toArray());
+		}
+		Expression[] selectors = fragments.stream().map(fragment -> {
+			List<String> components = CompositeIds.parse(targetType, fragment);
+			Expression[] equalities = new Expression[targetIds.size()];
+			for (int i = 0; i < targetIds.size(); i++) {
+				equalities[i] = Expressions.path(reference, targetIds.get(i))
+						.eq(decodeComponent(targetIds.get(i), components.get(i)));
+			}
+			return Expressions.and(equalities);
+		}).toArray(Expression[]::new);
+		return selectors.length == 1 ? selectors[0] : Expressions.or(selectors);
+	}
+
+	// --- relationship operations ([OData-Protocol] 13.1.1, persistence-jpa#107) ---
+
+	@Override
+	public void link(EClass entityType, String rawKey, String navigation, String targetRawKey) {
+		EReference reference = navigationReference(entityType, navigation);
+		String targetFragment = fragmentFromRaw(reference.getEReferenceType(), targetRawKey);
+		ChangeSet template = StreamFactory.eINSTANCE.createChangeSet();
+		if (reference.isMany()) {
+			ChangeEntry add = entry(DeltaKind.ADD, entityType, reference, targetFragment);
+			add.setIndex(-1);
+			template.getEntries().add(add);
+		} else {
+			template.getEntries().add(entry(DeltaKind.SET, entityType, reference, targetFragment));
+		}
+		updateReference(entityType, fragmentFromRaw(entityType, rawKey), template, true);
+	}
+
+	@Override
+	public boolean unlink(EClass entityType, String rawKey, String navigation, String targetRawKey) {
+		EReference reference = navigationReference(entityType, navigation);
+		ChangeSet template = StreamFactory.eINSTANCE.createChangeSet();
+		if (reference.isMany()) {
+			ChangeEntry remove = entry(DeltaKind.REMOVE, entityType, reference, null);
+			remove.setValueOld(fragmentFromRaw(reference.getEReferenceType(), targetRawKey));
+			template.getEntries().add(remove);
+		} else {
+			template.getEntries().add(entry(DeltaKind.SET, entityType, reference, null));
+		}
+		return updateReference(entityType, fragmentFromRaw(entityType, rawKey), template, false);
+	}
+
+	@Override
+	public EObject createRelated(EClass entityType, String rawKey, String navigation, EObject child) {
+		EReference reference = navigationReference(entityType, navigation);
+		EClass childType = child.eClass();
+		if (reference.isContainment()) {
+			throw new UnsupportedOperationException(
+					"containment children are created through their owner's write");
+		}
+		EObject created = create(childType, child);
+		try {
+			link(entityType, rawKey, navigation, "'"
+					+ Objects.requireNonNull(CompositeIds.fragment(created)).replace("'", "''") + "'");
+		} catch (RuntimeException e) {
+			delete(childType, "'" + CompositeIds.fragment(created).replace("'", "''") + "'");
+			throw e;
+		}
+		return created;
+	}
+
+	/** Executes a reference-entry template against the keyed owner; journals the owner. */
+	private boolean updateReference(EClass entityType, String fragment, ChangeSet template,
+			boolean failOnMiss) {
+		UpdateCommand command = CommandFactory.eINSTANCE.createUpdateCommand();
+		command.setSelector(keySelector(entityType, fragment));
+		command.setTemplate(template);
+		long updated;
+		try {
+			updated = execute(entityType, command);
+		} catch (IllegalArgumentException e) {
+			if (!failOnMiss && String.valueOf(e.getMessage()).contains("no member with id")) {
+				return false; // unlink of a member that was not linked
+			}
+			throw e;
+		}
+		if (updated > 0) {
+			EObject owner = fetchOne(entityType, fragment);
+			journal.record(entityType, fragment,
+					owner != null ? ChangeJournal.keyValuesOf(owner) : Map.of(), false);
+		} else if (failOnMiss) {
+			throw new IllegalArgumentException("no " + entityType.getName() + " with this key");
+		}
+		return updated > 0;
+	}
+
+	private static EReference navigationReference(EClass entityType, String navigation) {
+		if (entityType.getEStructuralFeature(navigation) instanceof EReference reference
+				&& !reference.isContainment() && !reference.isContainer()) {
+			return reference;
+		}
+		throw new IllegalArgumentException(
+				"'" + navigation + "' is no non-containment navigation of " + entityType.getName());
+	}
+
+	// --- $batch atomicity ([OData-Protocol] 11.7.4, persistence-jpa#108) ---
+
+	/** Thread-bound transaction bracket: created lazily on the first command inside it. */
+	private static final class Bracket {
+		private Resource resource;
+		private CommandTransaction transaction;
+	}
+
+	private final ThreadLocal<Bracket> bracket = new ThreadLocal<>();
+	private volatile Boolean transactionsSupported;
+
+	/** Probed once: backends/deployments without multi-command brackets refuse begin(). */
+	@Override
+	public boolean transactional() {
+		Boolean supported = transactionsSupported;
+		if (supported == null) {
+			try {
+				Resource probe = resourceSetFactory.createResourceSet()
+						.createResource(baseUri.appendSegment("tx-probe"));
+				if (probe instanceof CommandResource commandResource) {
+					commandResource.begin().close(); // close without commit = rollback
+					supported = true;
+				} else {
+					supported = false;
+				}
+			} catch (IOException | RuntimeException e) {
+				supported = false;
+			}
+			transactionsSupported = supported;
+		}
+		return supported;
+	}
+
+	@Override
+	public void begin() {
+		if (bracket.get() != null) {
+			throw new IllegalStateException("a batch bracket is already open on this thread");
+		}
+		bracket.set(new Bracket());
+		journal.begin(); // delta entries publish only when the backend commit held
+	}
+
+	@Override
+	public void commit() {
+		Bracket open = bracket.get();
+		bracket.remove();
+		if (open == null) {
+			return;
+		}
+		try {
+			if (open.transaction != null) {
+				open.transaction.commit();
+			}
+			journal.commit();
+		} catch (IOException e) {
+			journal.rollback();
+			throw new IllegalStateException("the backend could not commit the batch", e);
+		}
+	}
+
+	@Override
+	public void rollback() {
+		Bracket open = bracket.get();
+		bracket.remove();
+		journal.rollback();
+		if (open != null && open.transaction != null) {
+			open.transaction.rollback();
+		}
+	}
+
+	// --- templates, keys, plumbing ---
+
 	/**
 	 * Builds the patch template: SET for every transmitted single-valued attribute
 	 * (a transmitted {@code null} sets null), a full REMOVE-descending/ADD-append
 	 * rewrite for transmitted many-valued attributes, and — only under PUT — UNSET
-	 * respectively REMOVE-all for attributes the payload omitted. The key attribute
-	 * is never touched; transmitted references are refused because the upstream
-	 * engine cannot patch them.
+	 * respectively REMOVE-all for attributes the payload omitted. Transmitted
+	 * non-containment references become id-valued entries (persistence-jpa#107:
+	 * SET/UNSET single-valued, REMOVE-by-id/ADD many-valued); omitted references stay
+	 * untouched also under PUT (established backend semantics). Key attributes are
+	 * never touched; transmitted containment references stay refused (object
+	 * lifecycle, not patching).
 	 */
-	private ChangeSet template(EClass entityType, EAttribute id, EObject payload, EObject current,
+	private ChangeSet template(EClass entityType, EObject payload, EObject current,
 			boolean replace) {
-		for (EReference reference : entityType.getEAllReferences()) {
-			if (payload.eIsSet(reference)) {
-				throw new UnsupportedOperationException("the command backend cannot change the reference '"
-						+ reference.getName() + "' — reference patching is not supported yet");
-			}
-		}
 		ChangeSet template = StreamFactory.eINSTANCE.createChangeSet();
 		List<ChangeEntry> entries = template.getEntries();
 		for (EAttribute attribute : entityType.getEAllAttributes()) {
-			if (attribute == id || !attribute.isChangeable() || attribute.isDerived()
+			if (attribute.isID() || !attribute.isChangeable() || attribute.isDerived()
 					|| attribute.isTransient()) {
 				continue;
 			}
@@ -687,7 +898,46 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 				}
 			}
 		}
+		for (EReference reference : entityType.getEAllReferences()) {
+			if (!payload.eIsSet(reference) || !reference.isChangeable() || reference.isDerived()) {
+				continue;
+			}
+			if (reference.isContainment() || reference.isContainer()) {
+				throw new UnsupportedOperationException("the containment '" + reference.getName()
+						+ "' is object lifecycle — replace it through its own resource path");
+			}
+			if (reference.isMany()) {
+				@SuppressWarnings("unchecked")
+				List<EObject> members = (List<EObject>) payload.eGet(reference);
+				@SuppressWarnings("unchecked")
+				List<EObject> currentMembers = (List<EObject>) current.eGet(reference);
+				for (EObject member : currentMembers) {
+					ChangeEntry remove = entry(DeltaKind.REMOVE, entityType, reference, null);
+					remove.setValueOld(requiredFragment(reference, member));
+					entries.add(remove);
+				}
+				for (EObject member : members) {
+					ChangeEntry add = entry(DeltaKind.ADD, entityType, reference,
+							requiredFragment(reference, member));
+					add.setIndex(-1);
+					entries.add(add);
+				}
+			} else {
+				EObject target = (EObject) payload.eGet(reference);
+				entries.add(entry(DeltaKind.SET, entityType, reference,
+						target == null ? null : requiredFragment(reference, target)));
+			}
+		}
 		return template;
+	}
+
+	private static String requiredFragment(EReference reference, EObject target) {
+		String fragment = CompositeIds.fragment(target);
+		if (fragment == null) {
+			throw new IllegalArgumentException("the member of '" + reference.getName()
+					+ "' must carry its key for binding");
+		}
+		return fragment;
 	}
 
 	private void rewriteList(List<ChangeEntry> entries, EClass entityType, EAttribute attribute,
@@ -703,11 +953,11 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		}
 	}
 
-	private static ChangeEntry entry(DeltaKind kind, EClass entityType, EAttribute attribute,
+	private static ChangeEntry entry(DeltaKind kind, EClass entityType, EStructuralFeature feature,
 			String valueNew) {
 		ChangeEntry entry = StreamFactory.eINSTANCE.createChangeEntry();
 		entry.setKind(kind);
-		entry.setFeatureId(entityType.getFeatureID(attribute));
+		entry.setFeatureId(entityType.getFeatureID(feature));
 		entry.setValueNew(valueNew);
 		return entry;
 	}
@@ -716,48 +966,100 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		return value == null ? null : EcoreUtil.convertToString(attribute.getEAttributeType(), value);
 	}
 
-	private static void refuseNonContainmentReferences(EObject root) {
-		checkNonContainment(root);
-		root.eAllContents().forEachRemaining(CommandPersistenceService::checkNonContainment);
+	/** The keyed-access fragment as AND-of-id-equalities Expression IR selector. */
+	private static Query keySelector(EClass entityType, String fragment) {
+		return QueryBuilder.from(entityType).where(keyPredicate(entityType, fragment)).build();
 	}
 
-	private static void checkNonContainment(Object candidate) {
-		EObject object = (EObject) candidate;
-		for (EReference reference : object.eClass().getEAllReferences()) {
-			if (!reference.isContainment() && !reference.isContainer() && object.eIsSet(reference)) {
-				throw new UnsupportedOperationException("the command backend cannot bind the reference '"
-						+ reference.getName() + "' — non-containment members are not supported yet");
-			}
+	private static Expression keyPredicate(EClass entityType, String fragment) {
+		List<EAttribute> ids = CompositeIds.idAttributes(entityType);
+		if (ids.size() == 1) {
+			EAttribute id = ids.get(0);
+			return Expressions.path(id).eq(decodeComponent(id, fragment));
 		}
+		List<String> components = CompositeIds.parse(entityType, fragment);
+		Expression[] equalities = new Expression[ids.size()];
+		for (int i = 0; i < ids.size(); i++) {
+			equalities[i] = Expressions.path(ids.get(i)).eq(decodeComponent(ids.get(i),
+					components.get(i)));
+		}
+		return equalities.length == 1 ? equalities[0] : Expressions.and(equalities);
 	}
 
-	private static Query keySelector(EClass entityType, EAttribute id, Object key) {
-		return QueryBuilder.from(entityType).where(Expressions.path(id).eq(key)).build();
+	private static Object decodeComponent(EAttribute id, String value) {
+		Object decoded = EcoreUtil.createFromString(id.getEAttributeType(), value);
+		return Objects.requireNonNull(decoded, "the key literal could not be decoded");
+	}
+
+	/** URL key literal(s) → the CompositeIds fragment contract (persistence-jpa#109). */
+	private static String fragmentFromRaw(EClass entityType, String rawKey) {
+		List<EAttribute> ids = CompositeIds.idAttributes(entityType);
+		if (ids.isEmpty()) {
+			throw new IllegalArgumentException(entityType.getName() + " has no key attribute");
+		}
+		if (ids.size() == 1) {
+			String value = unquote(rawKey);
+			decodeComponent(ids.get(0), value); // validate early → 400, not backend noise
+			return value;
+		}
+		// composite single-literal keys are ambiguous — the servlet passes named keys
+		throw new IllegalArgumentException(entityType.getName()
+				+ " has a composite key — address it as (k1=v1,k2=v2)");
+	}
+
+	private static String fragmentFromNamed(EClass entityType, Map<String, String> namedKeys) {
+		List<EAttribute> ids = CompositeIds.idAttributes(entityType);
+		if (ids.size() == 1 && namedKeys.size() == 1) {
+			return unquote(namedKeys.values().iterator().next());
+		}
+		EObject probe = entityType.getEPackage().getEFactoryInstance().create(entityType);
+		for (EAttribute id : ids) {
+			String raw = namedKeys.get(id.getName());
+			if (raw == null) {
+				throw new IllegalArgumentException("the key of " + entityType.getName()
+						+ " misses the component '" + id.getName() + "'");
+			}
+			probe.eSet(id, decodeComponent(id, unquote(raw)));
+		}
+		return Objects.requireNonNull(CompositeIds.fragment(probe),
+				"the key literals could not be decoded");
 	}
 
 	/**
-	 * Keyed lookup via the EMF fragment contract: both backends resolve a plain-id
-	 * fragment to a primary-key find ({@code em.find} respectively {@code _id} query).
-	 * Deliberately not {@code QueryableResource.query} — EclipseLink turns an
-	 * ID-equality JPQL into a {@code ReadObjectQuery}, on which the read path's
-	 * scrollable-cursor hint is invalid (upstream issue).
+	 * Keyed lookup via the fragment contract (persistence-jpa#109): both backends
+	 * resolve it to a primary-key find. Deliberately not {@code QueryableResource.query}
+	 * — EclipseLink turns an ID-equality JPQL into a {@code ReadObjectQuery}, on which
+	 * the read path's scrollable-cursor hint is invalid. Inside a bracket the lookup
+	 * runs on the bracket's resource so it sees uncommitted batch writes.
 	 */
-	private EObject fetchOne(EClass entityType, EAttribute id, Object key) {
-		Resource resource = resource(entityType);
-		return resource.getEObject(EcoreUtil.convertToString(id.getEAttributeType(), key));
+	private EObject fetchOne(EClass entityType, String fragment) {
+		return resourceFor(entityType).getEObject(fragment);
 	}
 
 	private long execute(EClass entityType, Command command) {
-		Resource resource = resource(entityType);
 		try {
-			return commands(resource).execute(command);
+			return commands(resourceFor(entityType)).execute(command);
 		} catch (IOException e) {
 			throw refused(entityType, e);
 		}
 	}
 
-	private Resource resource(EClass entityType) {
-		return resource(resourceSetFactory.createResourceSet(), entityType);
+	/** Inside an open bracket every command and keyed read runs on the bracket's resource. */
+	private Resource resourceFor(EClass entityType) {
+		Bracket open = bracket.get();
+		if (open == null) {
+			return resource(resourceSetFactory.createResourceSet(), entityType);
+		}
+		if (open.resource == null) {
+			open.resource = resource(resourceSetFactory.createResourceSet(), entityType);
+			try {
+				open.transaction = commands(open.resource).begin();
+			} catch (IOException e) {
+				throw new UnsupportedOperationException(
+						"the backend does not support atomic batches", e);
+			}
+		}
+		return open.resource;
 	}
 
 	private Resource resource(ResourceSet resourceSet, EClass entityType) {
@@ -775,36 +1077,23 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		throw new IllegalStateException("the backend resource does not support commands");
 	}
 
-	private static IllegalStateException refused(EClass entityType, IOException cause) {
+	/**
+	 * Backend refusals keep their honesty classes: "rejected" = the request is invalid
+	 * for the data (dangling reference target, malformed template) → 400; "not
+	 * supported" → 501; everything else stays an internal fault.
+	 */
+	private static RuntimeException refused(EClass entityType, IOException cause) {
+		String message = String.valueOf(cause.getMessage());
+		if (message.contains("is not supported")) {
+			return new UnsupportedOperationException(message, cause);
+		}
+		// a QueryException cause is the upstream client-error shape (invalid template,
+		// dangling reference target) — "rejected" at validation, "failed" at apply time
+		if (cause.getCause() instanceof QueryException || message.contains("rejected")) {
+			return new IllegalArgumentException(message, cause);
+		}
 		return new IllegalStateException(
 				"the persistence backend refused the " + entityType.getName() + " command", cause);
-	}
-
-	private static EAttribute requiredKeyAttribute(EClass entityType) {
-		EAttribute id = singleKeyAttribute(entityType);
-		if (id == null) {
-			throw new IllegalArgumentException(
-					entityType.getName() + " has no single key attribute");
-		}
-		return id;
-	}
-
-	private static EAttribute singleKeyAttribute(EClass entityType) {
-		EAttribute key = null;
-		for (EAttribute attribute : entityType.getEAllAttributes()) {
-			if (attribute.isID()) {
-				if (key != null) {
-					return null; // composite keys are not supported yet
-				}
-				key = attribute;
-			}
-		}
-		return key;
-	}
-
-	private static Object decodeKey(EAttribute id, String rawKey) {
-		Object key = EcoreUtil.createFromString(id.getEAttributeType(), unquote(rawKey));
-		return Objects.requireNonNull(key, "the key literal could not be decoded");
 	}
 
 	private static String unquote(String raw) {

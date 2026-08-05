@@ -41,10 +41,10 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
         │ vocabularies│  │ EntityRepository · ODataOperationHandler│
         └─────────────┘  └───┬──────────────────────────┬─────────┘
                      ┌───────▼────────┐        ┌────────▼────────┐
-                     │ inmemory       │        │ JPA (Criteria-  │
-                     │ OclEvaluator = │        │ Pushdown, kein  │
-                     │ REFERENZ-      │◄─diff──│ In-Memory-      │
-                     │ Semantik       │  Tests │ Filtering)      │
+                     │ inmemory       │        │ command backend │
+                     │ OclEvaluator = │        │ (Expression-IR, │
+                     │ REFERENZ-      │◄─diff──│ JPA UND Mongo,  │
+                     │ Semantik       │  Tests │ kein In-Memory) │
                      └────────────────┘        └─────────────────┘
    Antworten: E3 codec.json (OData-JSON) | XMI ($format=xml) | CSDL-XML/-JSON ($metadata)
 
@@ -53,7 +53,7 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
    Codec-Profil wie der Server serialisiert. JDK HttpClient (injizierbar), kein JAX-RS.
 ```
 
-## Bundles (17)
+## Bundles (16)
 
 | Bundle | Etappe | Inhalt |
 |---|---|---|
@@ -66,8 +66,7 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
 | `odata.operation.api` | E4 | `ODataOperationHandler`-SPI (Functions/Actions) |
 | `odata.persistence.api` | E5 | `QueryService`/`ApplyQuery`/`WriteService`/`MediaService`/`DeltaService`-SPIs, `ChangeJournal`, `EntityRepository` |
 | `odata.persistence.inmemory` | E5 | Referenz-Backend, `ApplyExecutor`, `FileEntityRepository` (XMI-Dir), `MemoryWriteRepository` (Write+Media+Journal) |
-| `odata.persistence.jpa` | E5 | `OclToCriteriaTranslator`, `JpaApplyExecutor`, Write+Delta (Jakarta-Criteria-Pushdown, ADR-0006) |
-| `odata.persistence` | #13/#11 | Backend-neutrale Query+Write+Delta+$apply über die Fennec-Persistence-SPI (`CommandPersistenceService`: Reads via `OclToExpr`→`QueryableResource.query` mit Capability-Vorvalidierung, Writes via Insert/Update/DeleteCommand + ChangeSet-Templates, Change-Tracking via Service-Layer-`ChangeJournal` + `key IN`-Requery durch den Read-Path; Nichtübersetzbares → 501) — bedient JPA UND Mongo, Ziel-Nachfolger von `odata.persistence.jpa` |
+| `odata.persistence` | #13/#11 | Backend-neutrale Query+Write+Delta+$apply über die Fennec-Persistence-SPI (`CommandPersistenceService`: Reads via `OclToExpr`→`QueryableResource.query` mit Capability-Vorvalidierung, Writes via Insert/Update/DeleteCommand + ChangeSet-Templates, Change-Tracking via Service-Layer-`ChangeJournal` + `key IN`-Requery durch den Read-Path; Nichtübersetzbares → 501) — bedient JPA UND Mongo, Nachfolger des handgebauten `odata.persistence.jpa` (RETIRED 2026-08-05, Bundle entfernt) |
 | `odata.runtime` | E6/E7 | `ODataServlet` + `ODataRequestFilter`/`RequestLimits`/`EntityShaper`/`ODataJson` |
 | `odata.schema.api` | E8 | Client-Schema-Registry-SPI (Reader/Registrar/Resolver, ADR-0007) |
 | `odata.client` | E8 | `ODataClient`, `EntitySetRequest`, `$batch` beide Wire-Formen, CSRF, Delta, Media |
@@ -95,7 +94,7 @@ Weitere Grundsätze: **OCL ist das interne Predicate-IR** für `$filter`/`$order
 `ocl.model`); **`$apply` ist ein eigenes Submodell** (`apply.ecore`), NICHT in OCL gepresst;
 **Backend-Pushdown ist Pflicht** — Übersetzungslücken werfen `UnsupportedOperationException`
 → ehrliches 501, nie stilles In-Memory-Filtern oder falsche Antworten; der In-Memory-
-`OclEvaluator` definiert die Referenz-Semantik, Differenzialtests halten JPA dagegen.
+`OclEvaluator` definiert die Referenz-Semantik, Differenzialtests halten die IR-Engines dagegen.
 
 ## Request-Lifecycle
 
