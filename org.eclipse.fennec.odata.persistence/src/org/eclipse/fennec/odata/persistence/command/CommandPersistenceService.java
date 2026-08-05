@@ -250,9 +250,9 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			}
 			chains.add(chain);
 			if (pushExpand) {
-				// the IR fetch hint carries single-segment paths; deeper levels are
-				// materialized through the proxy contract below
-				builder.expand(chain.get(0));
+				// full multi-segment fetch hint (persistence-jpa#95: nested JOIN FETCH /
+				// batch hints); the proxy walk below stays as the backend-neutral safety net
+				builder.expand(chain.toArray(EReference[]::new));
 			}
 		}
 		Query irQuery = builder.build();

@@ -48,11 +48,11 @@ import org.junit.jupiter.api.TestFactory;
  * must yield identical result sets.
  *
  * <p>Deliberately edge-heavy dataset (nulls, LIKE metacharacters, non-ASCII, ties) —
- * this shape found the three-valued-logic bug in the JPA backend. Two DOCUMENTED
- * divergences are excluded from the corpus: {@code not(...)} over a null-valued
- * comparison (the memory engine negates two-valued where SQL and the evaluator
- * exclude the row — upstream issue) and {@code $orderby} over nullable keys (the
- * memory engine sorts nulls last, the evaluator first).
+ * this shape found the three-valued-logic bug in the JPA backend. Since
+ * persistence-jpa#94 the memory engine evaluates Kleene 3VL like the evaluator, so
+ * {@code not(...)} over null-valued comparisons is part of the corpus. ONE documented
+ * divergence remains excluded: {@code $orderby} over nullable keys (the memory engine
+ * sorts nulls last, the evaluator first).
  */
 public class ExpressionIrDifferentialTest {
 
@@ -216,6 +216,10 @@ public class ExpressionIrDifferentialTest {
 				new Case("or chain", "name eq 'Milk' or name eq 'Salt' or price gt 3"),
 				new Case("in", "name in ('Milk','Salt')"),
 				new Case("not over non-null field", "not (name eq 'Milk')"),
+				// 3VL since persistence-jpa#94: not(UNKNOWN) = UNKNOWN → row excluded, like the evaluator
+				new Case("not over nullable comparison", "not (price gt 2.00)"),
+				new Case("not over nullable equality", "not (price eq 2.80)"),
+				new Case("not over nullable in junction", "not (price lt 1.00 or price gt 3.00)"),
 				new Case("contains percent", "contains(name,'%')"),
 				new Case("contains underscore", "contains(name,'_')"),
 				new Case("contains non-ascii", "contains(name,'ß')"),
