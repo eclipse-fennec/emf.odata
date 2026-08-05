@@ -46,6 +46,11 @@ public class CommandPersistenceServiceTest {
 	private EAttribute addressStreet;
 	private EReference personAddress;
 	private EReference personFriend;
+	private EReference personColleagues;
+	private EClass slotClass;
+	private EAttribute slotDay;
+	private EAttribute slotRoom;
+	private EAttribute slotCapacity;
 
 	private FakeCommandBackend backend;
 	private CommandPersistenceService service;
@@ -97,10 +102,25 @@ public class CommandPersistenceServiceTest {
 		personFriend = ecore.createEReference();
 		personFriend.setName("friend");
 		personFriend.setEType(personClass);
+		personColleagues = ecore.createEReference();
+		personColleagues.setName("colleagues");
+		personColleagues.setEType(personClass);
+		personColleagues.setUpperBound(-1);
 		personClass.getEStructuralFeatures().addAll(List.of(personId, personName, personAge,
-				personTags, personAddress, personFriend));
+				personTags, personAddress, personFriend, personColleagues));
 
-		shopPackage.getEClassifiers().addAll(List.of(personClass, addressClass));
+		slotClass = ecore.createEClass();
+		slotClass.setName("Slot");
+		slotDay = attribute(ecore, "day", false);
+		slotDay.setID(true);
+		slotRoom = attribute(ecore, "room", false);
+		slotRoom.setID(true);
+		slotCapacity = ecore.createEAttribute();
+		slotCapacity.setName("capacity");
+		slotCapacity.setEType(EcorePackage.Literals.EINT);
+		slotClass.getEStructuralFeatures().addAll(List.of(slotDay, slotRoom, slotCapacity));
+
+		shopPackage.getEClassifiers().addAll(List.of(personClass, addressClass, slotClass));
 	}
 
 	private static EAttribute attribute(EcoreFactory ecore, String name, boolean many) {
@@ -179,12 +199,25 @@ public class CommandPersistenceServiceTest {
 	}
 
 	@Test
-	void createRefusesNonContainmentMembers() {
+	void createBindsNonContainmentMembersByKey() {
+		service.create(personClass, person(1, "Ada", 36));
 		EObject payload = person(2, "Grace", 40);
-		payload.eSet(personFriend, person(1, "Ada", 36));
-		assertThatThrownBy(() -> service.create(personClass, payload))
-				.isInstanceOf(UnsupportedOperationException.class)
-				.hasMessageContaining("friend");
+		payload.eSet(personFriend, friendStub(1)); // id-stub → bound to the EXISTING Ada
+		service.create(personClass, payload);
+		EObject stored = stored(2);
+		assertThat(((EObject) stored.eGet(personFriend)).eGet(personName)).isEqualTo("Ada");
+
+		// a dangling target is a client error, not a silent insert
+		EObject dangling = person(3, "Ghost", 1);
+		dangling.eSet(personFriend, friendStub(99));
+		assertThatThrownBy(() -> service.create(personClass, dangling))
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	private EObject friendStub(int id) {
+		EObject stub = shopPackage.getEFactoryInstance().create(personClass);
+		stub.eSet(personId, id);
+		return stub;
 	}
 
 	@Test
@@ -252,13 +285,19 @@ public class CommandPersistenceServiceTest {
 	}
 
 	@Test
-	void updateRefusesReferenceMembers() {
+	void updatePatchesReferenceMembersByKey() {
 		service.create(personClass, person(1, "Ada", 36));
+		service.create(personClass, person(2, "Grace", 40));
 		EObject patch = shopPackage.getEFactoryInstance().create(personClass);
-		patch.eSet(personFriend, person(2, "Grace", 40));
-		assertThatThrownBy(() -> service.update(personClass, "1", patch, false))
-				.isInstanceOf(UnsupportedOperationException.class)
-				.hasMessageContaining("reference");
+		patch.eSet(personFriend, friendStub(2));
+		service.update(personClass, "1", patch, false);
+		assertThat(((EObject) stored(1).eGet(personFriend)).eGet(personName)).isEqualTo("Grace");
+
+		// explicit null clears; a dangling target refuses as a client error
+		EObject clear = shopPackage.getEFactoryInstance().create(personClass);
+		clear.eSet(personFriend, friendStub(99));
+		assertThatThrownBy(() -> service.update(personClass, "1", clear, false))
+				.isInstanceOf(IllegalArgumentException.class);
 	}
 
 	@Test
@@ -299,8 +338,78 @@ public class CommandPersistenceServiceTest {
 	}
 
 	@Test
-	void reportsNoBatchTransactionSupport() {
-		assertThat(service.transactional()).isFalse();
+	void linkUnlinkAndCreateRelated() {
+		service.create(personClass, person(1, "Ada", 36));
+		service.create(personClass, person(2, "Grace", 40));
+
+		service.link(personClass, "1", "friend", "2"); // single-valued → SET
+		assertThat(((EObject) stored(1).eGet(personFriend)).eGet(personName)).isEqualTo("Grace");
+		assertThat(service.unlink(personClass, "1", "friend", null)).isTrue();
+		assertThat(stored(1).eGet(personFriend)).isNull();
+
+		service.link(personClass, "1", "colleagues", "2"); // many-valued → ADD/REMOVE by id
+		assertThat((List<?>) stored(1).eGet(personColleagues)).hasSize(1);
+		assertThat(service.unlink(personClass, "1", "colleagues", "2")).isTrue();
+		assertThat(service.unlink(personClass, "1", "colleagues", "2"))
+				.as("the second unlink finds no member").isFalse();
+
+		EObject related = service.createRelated(personClass, "1", "friend", person(5, "New", 20));
+		assertThat(related.eGet(personId)).isEqualTo(5);
+		assertThat(((EObject) stored(1).eGet(personFriend)).eGet(personId)).isEqualTo(5);
+
+		assertThatThrownBy(() -> service.link(personClass, "1", "address", "2"))
+				.as("containments are no navigations for $ref")
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	void compositeKeysRideTheFragmentContract() {
+		assertThat(service.supports(slotClass)).isTrue();
+
+		EObject slot = shopPackage.getEFactoryInstance().create(slotClass);
+		slot.eSet(slotDay, "mo");
+		slot.eSet(slotRoom, "r1");
+		slot.eSet(slotCapacity, 5);
+		service.create(slotClass, slot);
+		assertThat(backend.storeFor("Slot")).containsKey("day=mo,room=r1");
+
+		EObject patch = shopPackage.getEFactoryInstance().create(slotClass);
+		patch.eSet(slotCapacity, 9);
+		WriteResult patched = service.update(slotClass,
+				Map.of("day", "'mo'", "room", "'r1'"), patch, false);
+		assertThat(patched.created()).isFalse();
+		assertThat(patched.entity().eGet(slotCapacity)).isEqualTo(9);
+
+		// a single raw literal cannot address a composite key — client error, not guesswork
+		assertThatThrownBy(() -> service.delete(slotClass, "'mo'"))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("composite");
+		assertThat(service.delete(slotClass, Map.of("day", "'mo'", "room", "'r1'"))).isTrue();
+		assertThat(backend.storeFor("Slot")).isEmpty();
+	}
+
+	@Test
+	void batchBracketsAreAtomic() {
+		assertThat(service.transactional()).as("the backend supports command brackets").isTrue();
+
+		service.begin();
+		service.create(personClass, person(1, "Rolled back", 1));
+		service.rollback();
+		assertThat(stored(1)).as("a rolled-back bracket never happened").isNull();
+
+		service.begin();
+		service.create(personClass, person(2, "Committed", 2));
+		service.update(personClass, "2", named("Committed v2"), false);
+		service.commit();
+		assertThat(stored(2).eGet(personName))
+				.as("the update saw the bracket's own uncommitted insert")
+				.isEqualTo("Committed v2");
+	}
+
+	private EObject named(String name) {
+		EObject payload = shopPackage.getEFactoryInstance().create(personClass);
+		payload.eSet(personName, name);
+		return payload;
 	}
 
 	@Test

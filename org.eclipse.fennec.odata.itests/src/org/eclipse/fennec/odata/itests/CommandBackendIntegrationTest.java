@@ -172,8 +172,8 @@ public class CommandBackendIntegrationTest {
 		assertNotNull(writeService,
 				"the command factory configuration should yield the WriteService");
 		assertTrue(writeService.supports(itemClass));
-		assertFalse(writeService.transactional(),
-				"per-command transactions cannot join a $batch group");
+		assertTrue(writeService.transactional(),
+				"the JPA deployment serves the cross-command bracket (persistence-jpa#108)");
 	}
 
 	@Test
@@ -231,8 +231,8 @@ public class CommandBackendIntegrationTest {
 		assertEquals(2, read.entities().size());
 		assertEquals(2, read.totalCount());
 
-		// reference operations are honest 501s
-		assertThrows(UnsupportedOperationException.class,
+		// an unknown navigation is a client error, not an internal fault
+		assertThrows(IllegalArgumentException.class,
 				() -> writeService.link(itemClass, "'c1'", "whatever", "'c2'"));
 
 		// DELETE → DeleteCommand; the second attempt reports the miss

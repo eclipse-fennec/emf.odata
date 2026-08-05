@@ -73,7 +73,6 @@ subprojects {
             'org.eclipse.fennec.odata.runtime'             : 0.75,
             'org.eclipse.fennec.odata.persistence.api'     : 0.40,
             'org.eclipse.fennec.odata.persistence'         : 0.75,
-            'org.eclipse.fennec.odata.persistence.jpa'     : 0.75,
             'org.eclipse.fennec.odata.persistence.inmemory': 0.75,
             'org.eclipse.fennec.odata.csdl'                : 0.80,
             'org.eclipse.fennec.odata.codec.json'          : 0.65,

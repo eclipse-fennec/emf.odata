@@ -4,7 +4,6 @@
 	bnd.identity;id='org.eclipse.fennec.odata.itests',\
 	bnd.identity;id='org.eclipse.fennec.odata.runtime',\
 	bnd.identity;id='org.eclipse.fennec.odata.persistence.inmemory',\
-	bnd.identity;id='org.eclipse.fennec.odata.persistence.jpa',\
 	bnd.identity;id='org.eclipse.fennec.odata.persistence',\
 	bnd.identity;id='org.eclipse.fennec.expression.ocl',\
 	bnd.identity;id='org.eclipse.fennec.odata.client',\
@@ -69,7 +68,6 @@
 	org.eclipse.fennec.odata.operation.api;version=snapshot,\
 	org.eclipse.fennec.odata.persistence.api;version=snapshot,\
 	org.eclipse.fennec.odata.persistence.inmemory;version=snapshot,\
-	org.eclipse.fennec.odata.persistence.jpa;version=snapshot,\
 	org.eclipse.fennec.odata.query;version=snapshot,\
 	org.eclipse.fennec.odata.runtime;version=snapshot,\
 	org.eclipse.fennec.odata.schema.api;version=snapshot,\

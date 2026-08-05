@@ -175,11 +175,20 @@ public class MongoCommandPersistenceServiceTest {
 		assertThat(upserted.created()).isTrue();
 		assertThat(upserted.entity().eGet(personId)).isEqualTo("m2");
 
-		// reference members stay honest 501s
+		// reference patching by key (persistence-jpa#107): existing target binds …
 		EObject withReference = shopPackage.getEFactoryInstance().create(personClass);
-		withReference.eSet(personFriend, person("m9", "Ghost", 1));
-		assertThatThrownBy(() -> service.update(personClass, "'m1'", withReference, false))
-				.isInstanceOf(UnsupportedOperationException.class);
+		EObject friendStub = shopPackage.getEFactoryInstance().create(personClass);
+		friendStub.eSet(personId, "m2");
+		withReference.eSet(personFriend, friendStub);
+		WriteResult linked = service.update(personClass, "'m1'", withReference, false);
+		assertThat(linked.entity().eGet(personFriend)).as("friend m2 bound").isNotNull();
+		// … a dangling target is a client error
+		EObject withGhost = shopPackage.getEFactoryInstance().create(personClass);
+		EObject ghostStub = shopPackage.getEFactoryInstance().create(personClass);
+		ghostStub.eSet(personId, "m9");
+		withGhost.eSet(personFriend, ghostStub);
+		assertThatThrownBy(() -> service.update(personClass, "'m1'", withGhost, false))
+				.isInstanceOf(IllegalArgumentException.class);
 
 		// DELETE → DeleteCommand; the second attempt reports the miss
 		assertThat(service.delete(personClass, "'m1'")).isTrue();
