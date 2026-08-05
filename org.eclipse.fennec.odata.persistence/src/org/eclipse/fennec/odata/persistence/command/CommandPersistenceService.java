@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import org.eclipse.emf.common.util.Diagnostic;
@@ -52,6 +53,8 @@ import org.eclipse.fennec.model.stream.ChangeEntry;
 import org.eclipse.fennec.model.stream.ChangeSet;
 import org.eclipse.fennec.model.stream.DeltaKind;
 import org.eclipse.fennec.model.stream.StreamFactory;
+import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
+import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
@@ -63,6 +66,7 @@ import org.eclipse.fennec.persistence.query.QueryConstants;
 import org.eclipse.fennec.persistence.query.api.CommandResource;
 import org.eclipse.fennec.persistence.query.api.QueryFeature;
 import org.eclipse.fennec.persistence.query.api.QueryProcessor;
+import org.eclipse.fennec.persistence.query.api.QueryResultRow;
 import org.eclipse.fennec.persistence.query.api.QueryableResource;
 import org.eclipse.fennec.persistence.query.support.QueryValidator;
 import org.osgi.service.component.annotations.Activate;
@@ -270,6 +274,56 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		} catch (IOException e) {
 			throw readRefused(entityType, e);
 		}
+	}
+
+	/**
+	 * {@code $apply} on the pipeline stages of the query envelope (#12): leading filters
+	 * fold into WHERE, groupby/aggregate/compute become stages, the post-pipeline options
+	 * (row filter with alias references, row sort, paging) ride the envelope. Row shape
+	 * follows the reference backend: grouping paths nest, aliases stay flat. {@code $count}
+	 * is a second, unpaged run whose rows are counted while streaming — the engines expose
+	 * no countOnly over pipelines.
+	 */
+	@Override
+	public ApplyResult executeApply(ApplyQuery query) {
+		EClass entityType = query.entityType();
+		long total = -1;
+		if (query.count()) {
+			ApplyQueries.Plan unpaged = ApplyQueries.plan(new ApplyQuery(entityType,
+					query.pipeline(), query.rowFilter(), List.of(), 0, -1, false), 0);
+			total = executePlan(unpaged, entityType, rows -> rows.count());
+		}
+		ApplyQueries.Plan plan = ApplyQueries.plan(query, maxPageSize);
+		List<Map<String, Object>> rows = executePlan(plan, entityType, Stream::toList);
+		return new ApplyResult(rows, total);
+	}
+
+	private <T> T executePlan(ApplyQueries.Plan plan, EClass entityType,
+			Function<Stream<Map<String, Object>>, T> terminal) {
+		validate(plan.query(), entityType);
+		Resource resource = resource(resourceSetFactory.createResourceSet(), entityType);
+		try (var result = queryable(resource).query(plan.query())) {
+			if (plan.columns().isEmpty()) {
+				// the pipeline never left the entity shape — flatten attributes (v1 row
+				// contract of the reference backend: attribute values, no references)
+				try (Stream<EObject> objects = result.objects()) {
+					return terminal.apply(objects.map(CommandPersistenceService::attributeRow));
+				}
+			}
+			try (Stream<QueryResultRow> resultRows = result.rows()) {
+				return terminal.apply(resultRows.map(row -> ApplyQueries.row(row, plan.columns())));
+			}
+		} catch (IOException e) {
+			throw readRefused(entityType, e);
+		}
+	}
+
+	private static Map<String, Object> attributeRow(EObject entity) {
+		Map<String, Object> row = new LinkedHashMap<>();
+		for (EAttribute attribute : entity.eClass().getEAllAttributes()) {
+			row.put(attribute.getName(), entity.eGet(attribute));
+		}
+		return row;
 	}
 
 	/**

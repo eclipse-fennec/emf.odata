@@ -67,7 +67,7 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
 | `odata.persistence.api` | E5 | `QueryService`/`ApplyQuery`/`WriteService`/`MediaService`/`DeltaService`-SPIs, `ChangeJournal`, `EntityRepository` |
 | `odata.persistence.inmemory` | E5 | Referenz-Backend, `ApplyExecutor`, `FileEntityRepository` (XMI-Dir), `MemoryWriteRepository` (Write+Media+Journal) |
 | `odata.persistence.jpa` | E5 | `OclToCriteriaTranslator`, `JpaApplyExecutor`, Write+Delta (Jakarta-Criteria-Pushdown, ADR-0006) |
-| `odata.persistence` | #13/#11 | Backend-neutrale Query+Write+Delta über die Fennec-Persistence-SPI (`CommandPersistenceService`: Reads via `OclToExpr`→`QueryableResource.query` mit Capability-Vorvalidierung, Writes via Insert/Update/DeleteCommand + ChangeSet-Templates, Change-Tracking via Service-Layer-`ChangeJournal` + `key IN`-Requery durch den Read-Path; Nichtübersetzbares → 501) — bedient JPA UND Mongo, Ziel-Nachfolger von `odata.persistence.jpa` |
+| `odata.persistence` | #13/#11 | Backend-neutrale Query+Write+Delta+$apply über die Fennec-Persistence-SPI (`CommandPersistenceService`: Reads via `OclToExpr`→`QueryableResource.query` mit Capability-Vorvalidierung, Writes via Insert/Update/DeleteCommand + ChangeSet-Templates, Change-Tracking via Service-Layer-`ChangeJournal` + `key IN`-Requery durch den Read-Path; Nichtübersetzbares → 501) — bedient JPA UND Mongo, Ziel-Nachfolger von `odata.persistence.jpa` |
 | `odata.runtime` | E6/E7 | `ODataServlet` + `ODataRequestFilter`/`RequestLimits`/`EntityShaper`/`ODataJson` |
 | `odata.schema.api` | E8 | Client-Schema-Registry-SPI (Reader/Registrar/Resolver, ADR-0007) |
 | `odata.client` | E8 | `ODataClient`, `EntitySetRequest`, `$batch` beide Wire-Formen, CSRF, Delta, Media |
