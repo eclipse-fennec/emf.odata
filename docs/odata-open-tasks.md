@@ -217,6 +217,25 @@ nur Factory-Config `backend.uri=mongodb://<db>`. Der EclipseLink-Bug bei
 ID-Gleichheits-Queries ist upstream gefixt (#91); der `getEObject`-Key-Lookup
 bleibt trotzdem, er ist der billigere Pfad.
 
+**Delta-Teil von #11 (2026-08-05): `DeltaService` im Command-Backend** — der
+`CommandPersistenceService` implementiert jetzt auch Change-Tracking über das
+angekündigte Muster „Journal im Adapter + Requery über den Read-Path": ein
+Service-Layer-`ChangeJournal` (Kapazität 10.000, wie im JPA-Backend) protokolliert
+jeden erfolgreich ausgeführten Command (Create/Upsert/Update mit Count>0/Delete;
+leere Templates und Misses bleiben unsichtbar), `changesSince` faltet die
+betroffenen Keys als `key IN (…)` in das Defining-Prädikat und läuft als EINE
+Backend-Query durch den Read-Path (inkl. `$expand`-Materialisierung, ohne
+Page-Cap — die Delta-Paginierung ist das Journal-Fenster). Expanded Tracking
+(11.3.1): Owner-Lookup als `EXISTS(nav, key IN (geänderte Member-Keys))` bzw.
+mehrsegmentiges `nav.key IN (…)` einwertig — der Command-Backend refused
+Referenz-Patching, Member-CONTENT-Änderungen sind hier die einzige Quelle.
+Schreibvorgänge am Journal vorbei (direkt auf der DB) sind unsichtbar —
+dokumentierte Service-Layer-Eigenschaft, wie beim JPA-Backend. Belegt durch
+9 Unit-Tests (Fake-Backend mit Upstream-Semantik), Delta-Roundtrip im OSGi-Itest
+(H2/EclipseLink, 22 Itests) und gegen echtes MongoDB. emf.odata#13 kann damit
+komplett zu, #11 behält $apply/Phase-2-Rest (=#12) und das
+`odata.persistence.jpa`-Retirement.
+
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,
   ADR-0004; Nachfolger der alten VA1-Vorarbeit).

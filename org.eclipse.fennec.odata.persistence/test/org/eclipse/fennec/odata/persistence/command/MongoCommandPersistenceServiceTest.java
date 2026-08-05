@@ -31,6 +31,8 @@ import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.fennec.emf.osgi.ResourceSetFactory;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataServices;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataWhiteboard;
+import org.eclipse.fennec.odata.persistence.api.DeltaService.DeltaResult;
+import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
 import org.eclipse.fennec.persistence.mongo.MongoResourceFactory;
@@ -179,5 +181,27 @@ public class MongoCommandPersistenceServiceTest {
 		assertThat(service.delete(personClass, "'m1'")).isTrue();
 		assertThat(service.delete(personClass, "'m2'")).isTrue();
 		assertThat(service.delete(personClass, "'m1'")).isFalse();
+	}
+
+	@Test
+	@DisplayName("delta round trip: the requery pushes key IN down to MongoDB")
+	void deltaRoundTripOnMongo() {
+		String token = service.trackingToken(personClass);
+
+		service.create(personClass, person("d1", "Tracked", 30));
+		EObject patch = shopPackage.getEFactoryInstance().create(personClass);
+		patch.eSet(personName, "Tracked v2");
+		service.update(personClass, "'d1'", patch, false);
+
+		DeltaResult delta = service.changesSince(EntityQuery.all(personClass), token);
+		assertThat(delta.changed()).as("create + update collapse into one upsert").hasSize(1);
+		assertThat(delta.changed().get(0).eGet(personName)).isEqualTo("Tracked v2");
+		assertThat(delta.removals()).isEmpty();
+
+		assertThat(service.delete(personClass, "'d1'")).isTrue();
+		DeltaResult gone = service.changesSince(EntityQuery.all(personClass), delta.nextToken());
+		assertThat(gone.changed()).isEmpty();
+		assertThat(gone.removals()).hasSize(1);
+		assertThat(gone.removals().get(0).keyValues()).containsEntry("id", "d1");
 	}
 }
