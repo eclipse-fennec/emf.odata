@@ -34,11 +34,14 @@ import org.eclipse.fennec.model.command.UpdateCommand;
 import org.eclipse.fennec.model.query.Query;
 import org.eclipse.fennec.persistence.helper.CompositeIds;
 import org.eclipse.fennec.persistence.query.QueryException;
+import org.eclipse.fennec.persistence.query.api.CommandCapabilities;
+import org.eclipse.fennec.persistence.query.api.CommandFeature;
 import org.eclipse.fennec.persistence.query.api.CommandResource;
 import org.eclipse.fennec.persistence.query.api.QueryResult;
 import org.eclipse.fennec.persistence.query.api.QueryableResource;
 import org.eclipse.fennec.persistence.query.memory.MemoryQueries;
 import org.eclipse.fennec.persistence.query.support.ChangeTemplates;
+import org.eclipse.fennec.persistence.query.support.CommandCapabilitiesBuilder;
 import org.eclipse.fennec.persistence.query.support.CommandTransaction;
 import org.eclipse.fennec.persistence.query.support.ReferenceResolver;
 
@@ -132,6 +135,15 @@ final class FakeCommandBackend implements Resource.Factory {
 		public QueryResult query(String name, Map<String, Object> parameters, Map<?, ?> options)
 				throws IOException {
 			throw new IOException("named queries are not supported");
+		}
+
+		@Override
+		public CommandCapabilities capabilities() {
+			// mirror the real backends (persistence-jpa#114): full command vocabulary + bracket
+			return CommandCapabilitiesBuilder.create()
+					.support(CommandFeature.INSERT, CommandFeature.DELETE_BY_SELECTOR,
+							CommandFeature.UPDATE_BY_SELECTOR, CommandFeature.TRANSACTION_BRACKET)
+					.build();
 		}
 
 		@Override

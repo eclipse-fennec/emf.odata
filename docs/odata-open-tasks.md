@@ -271,8 +271,12 @@ Row-Shape wie das Referenz-Backend: Gruppierungspfade genestet, Aliasse flach
 `rollup`, `from`, Custom-Aggregate, Entity-Space-`compute`, `groupby`-distinct
 mitten in der Pipeline. Nachweis: 8 Unit-Tests, $apply-Roundtrip im OSGi-Itest
 (H2/EclipseLink als GROUP BY+HAVING, 23 Itests) und gegen echtes MongoDB (native
-Pipeline). Upstream-Finding: **persistence-jpa#102** (Alias-Sort verlangt
-SORT_EXPRESSION → refused auf Mongo; Pfad-Sorts gehen überall).
+Pipeline). Upstream-Finding **persistence-jpa#102 ist GESCHLOSSEN** (2026-08-06): ein barer
+AliasRef-OrderBy-Key validiert als plain SORT auf allen Backends — Alias-Sorts laufen
+auch auf Mongo nativ ($sort nach $group); der Mongo-Test sortiert wieder per Alias.
+Seit **#114** deklariert die CommandResource ihre Write-Capabilities —
+`transactional()` liest jetzt `CommandFeature.TRANSACTION_BRACKET` statt eine
+Probe-Klammer zu öffnen.
 
 **Retirement `odata.persistence.jpa` FERTIG (2026-08-05, nach persistence-jpa#107–#109):**
 Der CommandPersistenceService schließt die letzten Paritätslücken — Referenz-Patching als
