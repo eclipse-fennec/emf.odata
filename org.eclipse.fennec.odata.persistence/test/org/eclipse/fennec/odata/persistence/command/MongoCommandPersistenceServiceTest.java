@@ -201,23 +201,23 @@ public class MongoCommandPersistenceServiceTest {
 	void applyRoundTripOnMongo() {
 		service.create(personClass, person("g1", "even", 10));
 		service.create(personClass, person("g2", "odd", 30));
-		service.create(personClass, person("g3", "even", 20));
+		service.create(personClass, person("g3", "even", 25));
 		try {
 			ODataQueryParser parser = new ODataQueryParser();
 			ApplyPipeline pipeline = parser.parseApply(
 					"groupby((name),aggregate(age with sum as total,$count as n))", personClass);
-			// row sort by the grouping PATH — sorting by an aggregate alias needs
-			// SORT_EXPRESSION, which Mongo does not declare (honest refusal, upstream gap)
+			// row sort by the aggregate ALIAS — a bare AliasRef key is a plain column
+			// sort on every backend since persistence-jpa#102 ($sort after $group)
 			ApplyResult result = service.executeApply(new ApplyQuery(personClass, pipeline,
 					parser.parseFilterAfterApply("total gt 5", personClass, pipeline),
-					parser.parseOrderByAfterApply("name asc", personClass, pipeline),
+					parser.parseOrderByAfterApply("total desc", personClass, pipeline),
 					0, -1, true));
 			assertThat(result.rows()).as("two groups: " + result.rows()).hasSize(2);
 			assertThat(result.totalCount()).isEqualTo(2);
-			assertThat(result.rows().get(0).get("name")).as("name asc: even before odd")
-					.isEqualTo("even");
+			assertThat(result.rows().get(0).get("name"))
+					.as("total desc: even(10+25=35) before odd(30)").isEqualTo("even");
 			Map<String, Object> even = result.rows().get(0);
-			assertThat(((Number) even.get("total")).intValue()).isEqualTo(30);
+			assertThat(((Number) even.get("total")).intValue()).isEqualTo(35);
 			assertThat(((Number) even.get("n")).intValue()).isEqualTo(2);
 		} finally {
 			service.delete(personClass, "'g1'");

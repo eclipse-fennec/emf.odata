@@ -65,6 +65,7 @@ import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.persistence.helper.CompositeIds;
 import org.eclipse.fennec.persistence.query.QueryConstants;
 import org.eclipse.fennec.persistence.query.QueryException;
+import org.eclipse.fennec.persistence.query.api.CommandFeature;
 import org.eclipse.fennec.persistence.query.api.CommandResource;
 import org.eclipse.fennec.persistence.query.api.QueryFeature;
 import org.eclipse.fennec.persistence.query.api.QueryProcessor;
@@ -802,7 +803,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	private final ThreadLocal<Bracket> bracket = new ThreadLocal<>();
 	private volatile Boolean transactionsSupported;
 
-	/** Probed once: backends/deployments without multi-command brackets refuse begin(). */
+	/** Read once from the declared command capabilities (persistence-jpa#114). */
 	@Override
 	public boolean transactional() {
 		Boolean supported = transactionsSupported;
@@ -810,13 +811,10 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			try {
 				Resource probe = resourceSetFactory.createResourceSet()
 						.createResource(baseUri.appendSegment("tx-probe"));
-				if (probe instanceof CommandResource commandResource) {
-					commandResource.begin().close(); // close without commit = rollback
-					supported = true;
-				} else {
-					supported = false;
-				}
-			} catch (IOException | RuntimeException e) {
+				supported = probe instanceof CommandResource commandResource
+						&& commandResource.capabilities()
+								.supports(CommandFeature.TRANSACTION_BRACKET);
+			} catch (RuntimeException e) {
 				supported = false;
 			}
 			transactionsSupported = supported;
