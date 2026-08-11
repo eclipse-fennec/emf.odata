@@ -252,17 +252,27 @@ class EcoreEdmRoundTripTest {
 		assertTrue(employee.getESuperTypes().contains(person), "Employee -> Person");
 		assertTrue(((EClass) classifier(rt, "Project")).getESuperTypes().contains(abstractEntity));
 
-		// --- complex vs entity ---
-		assertFalse(EcoreToEdmConverter.isEntity((EClass) classifier(rt, "Address")), "Address stays complex");
-		assertTrue(EcoreToEdmConverter.isEntity(person), "Person stays an entity");
+		// --- complex vs entity: asserted on a second forward pass, since the resolved profile (not
+		// an isID scan) is what classifies a type ---
+		SchemaType again = new EcoreToEdmConverter().toSchema(rt);
+		assertTrue(names(again.getComplexType(), TComplexType::getName).contains("Address"),
+				"Address stays complex");
+		assertTrue(names(again.getEntityType(), TEntityType::getName).contains("Person"),
+				"Person stays an entity");
 
 		// --- key: inherited single + composite ---
 		EAttribute id = (EAttribute) abstractEntity.getEStructuralFeature("id");
 		assertTrue(id.isID(), "id is the key");
 		assertTrue(((EAttribute) person.getEStructuralFeature("id")).isID(), "Person inherits the key attribute");
+		// a multi-part key comes back as the one identity declaration, in canonical key order —
+		// never as several isID attributes, which Ecore does not allow (persistence-jpa#115)
 		EClass region = (EClass) classifier(rt, "RegionCode");
-		assertTrue(((EAttribute) region.getEStructuralFeature("countryCode")).isID());
-		assertTrue(((EAttribute) region.getEStructuralFeature("regionCode")).isID());
+		EAnnotation identity = region.getEAnnotation(ODataAnnotationConstants.IDENTITY_SOURCE);
+		assertNotNull(identity, "the composite identity survives the round trip");
+		assertEquals("countryCode,regionCode",
+				identity.getDetails().get(ODataAnnotationConstants.ID_FEATURES));
+		assertFalse(((EAttribute) region.getEStructuralFeature("countryCode")).isID());
+		assertFalse(((EAttribute) region.getEStructuralFeature("regionCode")).isID());
 
 		// --- complex-typed members come back as containment references ---
 		EReference contact = (EReference) person.getEStructuralFeature("contact");

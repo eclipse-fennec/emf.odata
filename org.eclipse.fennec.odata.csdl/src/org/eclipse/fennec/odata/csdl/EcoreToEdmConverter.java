@@ -551,8 +551,4 @@ public class EcoreToEdmConverter {
 				: typeName;
 	}
 
-	/** An EClass becomes an OData entity type iff it declares (or inherits) an {@code ID} attribute. */
-	static boolean isEntity(EClass cl) {
-		return cl.getEAllAttributes().stream().anyMatch(EAttribute::isID);
-	}
 }
