@@ -172,7 +172,7 @@ public class ODataServlet extends HttpServlet {
 	/** Schema namespace/alias per package for cast resolution — same derivation as $metadata. */
 	final Map<EPackage, ODataPackageProfile> profiles =
 			Collections.synchronizedMap(new java.util.WeakHashMap<>());
-	final EntityShaper shaper = new EntityShaper();
+	final EntityShaper shaper = new EntityShaper(this::keyAttributes);
 
 	volatile MetadataService metadataService;
 	volatile RequestLimits limits = RequestLimits.DEFAULTS;
@@ -649,8 +649,7 @@ public class ODataServlet extends HttpServlet {
 
 	/** The current entity by key, or null when absent or no read backend serves the type. */
 	EObject currentEntity(EClass entityType, String rawKey) {
-		EAttribute keyAttribute = entityType.getEAllAttributes().stream()
-				.filter(EAttribute::isID).findFirst().orElse(null);
+		EAttribute keyAttribute = keyAttribute(entityType);
 		return keyAttribute == null ? null
 				: currentEntity(entityType, keyEquals(keyAttribute, rawKey));
 	}
@@ -1008,13 +1007,53 @@ public class ODataServlet extends HttpServlet {
 	 * ({@code ''}-escaped), composite keys as named pairs — the same forms {@code keyEquals}
 	 * accepts back.
 	 */
+	/**
+	 * The key attributes of the type in canonical order, taken from the resolved OData profile —
+	 * the one place that knows the identity vocabularies ({@code isID}, {@code @OData.Key} and the
+	 * {@code idFeatures} declaration). Never an {@code isID} scan: a composite identity is declared
+	 * once on the type, because Ecore allows at most one {@code isID} attribute (emf.odata#35,
+	 * persistence-jpa#115).
+	 * <p>
+	 * An OData subtype does not redeclare the key of its root type ([OData-CSDL] 8.3), so the
+	 * declaration is looked up along the super types; the attributes themselves are resolved against
+	 * the given type, which inherits them.
+	 *
+	 * @return the key attributes, empty for a keyless (containment-only) type
+	 */
+	List<EAttribute> keyAttributes(EClass entityType) {
+		List<String> names = declaredKeyProperties(entityType);
+		for (EClass superType : entityType.getEAllSuperTypes()) {
+			if (!names.isEmpty()) {
+				break;
+			}
+			names = declaredKeyProperties(superType);
+		}
+		return names.stream().map(entityType::getEStructuralFeature)
+				.filter(EAttribute.class::isInstance).map(EAttribute.class::cast).toList();
+	}
+
+	/** The first key attribute, or {@code null} — the single-key shorthand of {@link #keyAttributes}. */
+	EAttribute keyAttribute(EClass entityType) {
+		return keyAttributes(entityType).stream().findFirst().orElse(null);
+	}
+
+	/** The key property names DECLARED by the type itself, from its (cached) profile. */
+	private List<String> declaredKeyProperties(EClass entityType) {
+		EPackage pkg = entityType.getEPackage();
+		if (pkg == null) {
+			return List.of();
+		}
+		ODataPackageProfile profile = profiles.computeIfAbsent(pkg, p -> new OdataResolver().resolve(p));
+		return profile.getClasses().stream()
+				.filter(c -> entityType.getName().equals(c.getName()))
+				.findFirst().map(c -> List.copyOf(c.getKeyPropertyNames())).orElse(List.of());
+	}
+
 	/** The canonical entity id ({@code Set(key)}) — used by `$ref` reads and reference payloads. */
 	String entityIdOf(EObject entity) {
 		Map<String, Object> keyValues = new LinkedHashMap<>();
-		for (EAttribute id : entity.eClass().getEAllAttributes()) {
-			if (id.isID()) {
-				keyValues.put(id.getName(), entity.eGet(id));
-			}
+		for (EAttribute id : keyAttributes(entity.eClass())) {
+			keyValues.put(id.getName(), entity.eGet(id));
 		}
 		if (keyValues.isEmpty()) { // keyless (containment-only) types have no canonical URL
 			throw new UnsupportedOperationException(
@@ -1484,8 +1523,7 @@ public class ODataServlet extends HttpServlet {
 			Set<String> expand, HttpServletResponse response) throws IOException {
 		OclExpression predicate;
 		if (namedKeys.isEmpty()) {
-			EAttribute keyAttribute = target.entityType().getEAllAttributes().stream()
-					.filter(EAttribute::isID).findFirst().orElse(null);
+			EAttribute keyAttribute = keyAttribute(target.entityType());
 			if (keyAttribute == null) {
 				error(response, HttpServletResponse.SC_BAD_REQUEST, "entity set has no key");
 				return null;
@@ -1508,9 +1546,8 @@ public class ODataServlet extends HttpServlet {
 	 * key property and ALL key properties must be named ([OData-URL] compoundKey) — violations
 	 * raise {@link IllegalArgumentException} (→ 400).
 	 */
-	private static OclExpression compositeKeyEquals(EClass entityType, Map<String, String> namedKeys) {
-		List<EAttribute> keyAttributes = entityType.getEAllAttributes().stream()
-				.filter(EAttribute::isID).toList();
+	private OclExpression compositeKeyEquals(EClass entityType, Map<String, String> namedKeys) {
+		List<EAttribute> keyAttributes = keyAttributes(entityType);
 		if (namedKeys.size() != keyAttributes.size()) {
 			throw new IllegalArgumentException("the key predicate must name all "
 					+ keyAttributes.size() + " key properties of " + entityType.getName());
@@ -1781,8 +1818,7 @@ public class ODataServlet extends HttpServlet {
 		Object key = literalValue(rawKey);
 		for (Object member : members) {
 			if (member instanceof EObject object) {
-				EAttribute id = object.eClass().getEAllAttributes().stream()
-						.filter(EAttribute::isID).findFirst().orElse(null);
+				EAttribute id = keyAttribute(object.eClass());
 				if (id != null && String.valueOf(object.eGet(id)).equals(String.valueOf(key))) {
 					return object;
 				}

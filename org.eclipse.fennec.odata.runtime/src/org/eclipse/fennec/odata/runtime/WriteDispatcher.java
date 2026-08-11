@@ -24,6 +24,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
+import java.util.stream.Collectors;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EAttribute;
@@ -368,7 +369,8 @@ private void referenceWrite(ResourcePath path, EClass entityType, EReference ref
 private void propertyWrite(ResourcePath path, EClass entityType, EStructuralFeature feature,
 		WriteService writeService, HttpServletRequest request, HttpServletResponse response)
 		throws IOException {
-	if (feature.isMany() || !(feature instanceof EAttribute attribute) || attribute.isID()) {
+	if (feature.isMany() || !(feature instanceof EAttribute attribute)
+			|| servlet.keyAttributes(entityType).contains(attribute)) {
 		servlet.error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
 				"only single-valued non-key properties are writable");
 		return;
@@ -636,8 +638,7 @@ private String deltaEntryKey(ObjectNode entry, EClass entityType) {
 		}
 		return literal;
 	}
-	EAttribute key = entityType.getEAllAttributes().stream()
-			.filter(EAttribute::isID).findFirst().orElse(null);
+	EAttribute key = servlet.keyAttribute(entityType);
 	if (key == null || !entry.hasNonNull(key.getName())) {
 		throw new IllegalArgumentException(
 				"delta entries carry the @id control information or the key property");
@@ -785,11 +786,20 @@ private void applyBindings(WriteService writeService, EClass entityType, String 
 	}
 }
 
-/** The entity's raw key literal (as it would appear in its edit URL), or null. */
-private static String rawKeyOf(EObject entity, EClass entityType) {
-	EAttribute id = entityType.getEAllAttributes().stream()
-			.filter(EAttribute::isID).findFirst().orElse(null);
-	return id == null ? null : urlKeyLiteral(id, entity.eGet(id));
+/**
+ * The entity's raw key literal (as it would appear in its edit URL), or null — the named-pair form
+ * {@code k1=v1,k2=v2} for a composite key, which used to be truncated to its first component.
+ */
+private String rawKeyOf(EObject entity, EClass entityType) {
+	List<EAttribute> ids = servlet.keyAttributes(entityType);
+	if (ids.isEmpty()) {
+		return null;
+	}
+	if (ids.size() == 1) {
+		return urlKeyLiteral(ids.get(0), entity.eGet(ids.get(0)));
+	}
+	return ids.stream().map(id -> id.getName() + "=" + urlKeyLiteral(id, entity.eGet(id)))
+			.collect(Collectors.joining(","));
 }
 
 /**
@@ -799,10 +809,9 @@ private static String rawKeyOf(EObject entity, EClass entityType) {
  */
 private void respondCreated(String setName, EObject entity, EClass entityType,
 		HttpServletRequest request, HttpServletResponse response) throws IOException {
-	EAttribute id = entityType.getEAllAttributes().stream()
-			.filter(EAttribute::isID).findFirst().orElse(null);
+	String rawKey = rawKeyOf(entity, entityType);
 	String editUrl = ODataServlet.contextRoot(request) + "/" + setName
-			+ (id == null ? "" : "(" + urlKeyLiteral(id, entity.eGet(id)) + ")");
+			+ (rawKey == null ? "" : "(" + rawKey + ")");
 	response.setHeader("Location", editUrl);
 	response.setHeader("OData-EntityId", editUrl);
 	if ("minimal".equals(returnPreference(request))) {

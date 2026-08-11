@@ -876,8 +876,11 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			boolean replace) {
 		ChangeSet template = StreamFactory.eINSTANCE.createChangeSet();
 		List<ChangeEntry> entries = template.getEntries();
+		// every key component is off limits, not just the eID attribute: a composite identity is
+		// declared on the type (#35), and patching one of its components would move the entity
+		List<EAttribute> ids = CompositeIds.idAttributes(entityType);
 		for (EAttribute attribute : entityType.getEAllAttributes()) {
-			if (attribute.isID() || !attribute.isChangeable() || attribute.isDerived()
+			if (ids.contains(attribute) || !attribute.isChangeable() || attribute.isDerived()
 					|| attribute.isTransient()) {
 				continue;
 			}

@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -30,9 +31,11 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.emf.ecore.EcoreFactory;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
@@ -395,6 +398,37 @@ class MemoryWriteRepositoryTest {
 		assertEquals(2, read().size(), "base-set query omits the derived instance");
 		// the derived set sees only the derived instance
 		assertEquals(1, queryService.execute(EntityQuery.all(discountedClass)).entities().size());
+	}
+
+	@Test
+	@DisplayName("a composite identity declared on the type addresses the store by named key")
+	void compositeIdentity() {
+		// Ecore allows at most one isID attribute, so the identity is declared once on the type
+		// (persistence-jpa#115) — the backend resolves it through EntityKeys, in key order
+		EAnnotation identity = EcoreFactory.eINSTANCE.createEAnnotation();
+		identity.setSource("http://eclipse.org/fennec/persistence/1.0");
+		identity.getDetails().put("idFeatures", "id,name");
+		productClass.getEAnnotations().add(identity);
+
+		repository.create(productClass, product("w1", "Water", "0.50"));
+		repository.create(productClass, product("w1", "Sparkling", "0.80"));
+		assertEquals(2, read().size(), "the components together identify the entity, not id alone");
+
+		Map<String, String> key = Map.of("id", "'w1'", "name", "'Water'");
+		EObject patch = pkg.getEFactoryInstance().create(productClass);
+		patch.eSet(productClass.getEStructuralFeature("price"), new BigDecimal("0.55"));
+		WriteResult patched = repository.update(productClass, key, patch, false);
+		assertFalse(patched.created());
+		assertEquals("Water", patched.entity().eGet(productClass.getEStructuralFeature("name")));
+
+		assertThrows(IllegalArgumentException.class,
+				() -> repository.update(productClass, Map.of("id", "'w1'"), patch, false),
+				"a predicate that names only one component addresses nothing");
+
+		assertTrue(repository.delete(productClass, key));
+		assertEquals(1, read().size());
+		assertEquals("Sparkling", read().get(0).eGet(productClass.getEStructuralFeature("name")),
+				"the sibling sharing the id component survives");
 	}
 
 	private List<EObject> read() {

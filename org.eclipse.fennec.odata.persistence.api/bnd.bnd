@@ -6,4 +6,5 @@ Bundle-Description: Backend-agnostic query SPI (req §3.5): EntityQuery (OCL pre
 -buildpath: \
 	org.osgi.service.condition;version=latest,\
 	org.eclipse.fennec.m2x.ocl.model;version=latest,\
-	org.eclipse.fennec.odata.query;version=project
+	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.persistence;version=latest

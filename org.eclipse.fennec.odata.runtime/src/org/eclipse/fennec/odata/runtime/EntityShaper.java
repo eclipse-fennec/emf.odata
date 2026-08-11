@@ -17,6 +17,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
@@ -40,6 +41,16 @@ public class EntityShaper {
 
 	/** Evaluates nested collection options on shaped copies (never on backend objects). */
 	private final OclEvaluator evaluator = new OclEvaluator();
+
+	/**
+	 * Resolves the key attributes of a type — the resolved OData profile, not an {@code isID} scan,
+	 * so a composite identity declared on the type survives the pruning (emf.odata#35).
+	 */
+	private final Function<EClass, List<EAttribute>> keyAttributes;
+
+	EntityShaper(Function<EClass, List<EAttribute>> keyAttributes) {
+		this.keyAttributes = keyAttributes;
+	}
 
 	/**
 	 * @param select        validated {@code $select} tree, or null when absent
@@ -209,7 +220,7 @@ public class EntityShaper {
 		for (EStructuralFeature feature : type.getEAllStructuralFeatures()) {
 			SelectTree child = select.child(feature.getName());
 			boolean keep = child != null || expand.contains(feature.getName())
-					|| feature instanceof EAttribute attribute && attribute.isID();
+					|| keyAttributes.apply(type).contains(feature);
 			if (!keep) {
 				if (copy.eIsSet(feature)) {
 					copy.eUnset(feature);

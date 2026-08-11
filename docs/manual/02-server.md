@@ -108,6 +108,20 @@ DELETE /odata/Product('p1')/category/$ref    # clear / remove
 - **ETags / If-Match**: weak ETags (SHA-256 over the serialized state) on single-entity GET; updates/deletes of existing entities require `If-Match` → `428`/`412`.
 - **`Prefer: return=minimal`** answers a create with `204` (headers only) and an update with `204`; **`return=representation`** returns the full entity (`201`/`200`). The honoured choice is echoed in `Preference-Applied`.
 - **Composite keys**: entity-level `PATCH`/`PUT`/`DELETE` accept compound predicates (`(k1=v1,k2=v2)`, all key properties named); below-entity composite writes answer 501. Key literals whose form contradicts the key type (quoted vs. numeric) are rejected with 400.
+  A multi-part key is **declared once on the entity type**, since Ecore allows at most one `iD="true"` attribute (`validateEClass_AtMostOneID`):
+
+  ```xml
+  <eClassifiers xsi:type="ecore:EClass" name="RegionCode">
+    <eAnnotations source="http://eclipse.org/fennec/persistence/1.0">
+      <details key="idFeatures" value="countryCode,regionCode"/>
+    </eAnnotations>
+    ...
+  ```
+
+  The listed order is the canonical key order — it drives the `<Key>` element in `$metadata`, the
+  `@odata.id` of an entity, its `Location` header, and the key fragment the backends store. See
+  [Modelling keys](/guides/01-architecture#modelling-keys) for the single-key case and the older
+  `@OData.Key` form.
 - Guards: `415` (non-JSON), `413` (body limit), `400` (empty/malformed), `405` (wrong target / no `WriteService`), `409` (conflict).
 
 ## Batch
