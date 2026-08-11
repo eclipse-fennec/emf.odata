@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.List;
 import java.util.Map;
 
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
@@ -29,6 +30,7 @@ import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.fennec.emf.osgi.ResourceSetFactory;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
+import org.eclipse.fennec.persistence.helper.CompositeIds;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -111,10 +113,15 @@ public class CommandPersistenceServiceTest {
 
 		slotClass = ecore.createEClass();
 		slotClass.setName("Slot");
+		// the canonical composite declaration (persistence-jpa#115): explicit idFeatures,
+		// at most one isID — valid Ecore (validateEClass_AtMostOneID)
+		EAnnotation identity = ecore.createEAnnotation();
+		identity.setSource(CompositeIds.ANNOTATION_SOURCE);
+		identity.getDetails().put(CompositeIds.ID_FEATURES, "day,room");
+		slotClass.getEAnnotations().add(identity);
 		slotDay = attribute(ecore, "day", false);
 		slotDay.setID(true);
 		slotRoom = attribute(ecore, "room", false);
-		slotRoom.setID(true);
 		slotCapacity = ecore.createEAttribute();
 		slotCapacity.setName("capacity");
 		slotCapacity.setEType(EcorePackage.Literals.EINT);
