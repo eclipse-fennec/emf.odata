@@ -58,6 +58,29 @@ SPI. The client mirrors the server's codec and metadata wiring.
 | `odata.client` | E8 | `ODataClient`, fluent `EntitySetRequest`, `$batch`, CSRF, schema registry impl |
 | `odata.example` | — | Demo model + data + runnable `example.bndrun` (port 8080) |
 
+## Modelling keys
+
+Which Ecore features become the OData key of an entity type — the one modelling decision the whole
+stack hangs off, since it drives `<Key>` in `$metadata`, `@odata.id`, the `Location` header, the
+key predicates in URLs and the fragment the backends store.
+
+| Model declaration | Meaning |
+|---|---|
+| one attribute `iD="true"` | single-part key — EMF's own eID attribute, nothing else needed |
+| `idFeatures` on the **EClass** | the key properties by name, in canonical key order — the ONE way to declare a multi-part key |
+| `@OData.Key="true"` on an attribute | OData-only key marker for models that cannot set `iD` |
+
+The identity annotation carries the source `http://eclipse.org/fennec/persistence/1.0` and the
+detail `idFeatures` (a comma-separated name list). It is deliberately the same declaration the
+Fennec persistence stack reads, so an entity addresses the same row in the store as it does over
+HTTP. Several `iD="true"` attributes are **not** a composite key: Ecore allows at most one
+(`validateEClass_AtMostOneID`), and the backends refuse that shape.
+
+`OdataResolver` is the only component that reads these three forms; everything downstream takes
+the key from the resolved profile (`ODataClassProfile.getKeyPropertyNames()`), and the backends
+from the same declaration via `CompositeIds`. A type with no key at all is a **complex type**, not
+an entity type.
+
 ## Request lifecycle (`GET /odata/{Set}?…`)
 
 1. **`OData-Version` negotiation** — responds 4.01 unless the client pins `OData-MaxVersion: 4.0`; non-GET on read paths → 405.

@@ -32,6 +32,7 @@ import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
+import org.eclipse.fennec.odata.persistence.api.EntityKeys;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.EntityRepository;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
@@ -682,10 +683,7 @@ public class MemoryWriteRepository
 	private String keyOf(EClass entityType, EObject entity) {
 		requiredKeyAttribute(entityType); // clear client error for keyless types
 		StringBuilder joined = new StringBuilder();
-		for (EAttribute id : entityType.getEAllAttributes()) {
-			if (!id.isID()) {
-				continue;
-			}
+		for (EAttribute id : EntityKeys.of(entityType)) {
 			Object value = entity.eGet(id);
 			if (value == null || !entity.eIsSet(id)) {
 				throw new IllegalArgumentException(
@@ -702,10 +700,7 @@ public class MemoryWriteRepository
 	/** The store key for a compound key predicate — id-attribute order, values unquoted. */
 	private String keyOf(EClass entityType, Map<String, String> namedKeys) {
 		StringBuilder joined = new StringBuilder();
-		for (EAttribute id : entityType.getEAllAttributes()) {
-			if (!id.isID()) {
-				continue;
-			}
+		for (EAttribute id : EntityKeys.of(entityType)) {
 			String raw = namedKeys.get(id.getName());
 			if (raw == null) {
 				throw new IllegalArgumentException(
@@ -720,8 +715,7 @@ public class MemoryWriteRepository
 	}
 
 	private static EAttribute keyAttribute(EClass entityType) {
-		return entityType.getEAllAttributes().stream()
-				.filter(EAttribute::isID).findFirst().orElse(null);
+		return EntityKeys.first(entityType);
 	}
 
 	/**

@@ -194,6 +194,22 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
   testet man den alten Stand. itests-`build.gradle` braucht explizites, null-gefiltertes
   `dependsOn` auf die Projekt-Jars (clean-build-Ordnung).
 
+**Identität/Keys:**
+- Zusammengesetzte Identität wird EINMAL an der EClass deklariert (`idFeatures`-Detail der
+  Annotation `http://eclipse.org/fennec/persistence/1.0`, Namen in Key-Reihenfolge) — nicht
+  über mehrere `isID`-Attribute: Ecore erlaubt höchstens eines
+  (`validateEClass_AtMostOneID`), upstream `CompositeIds` verweigert die Mehrfachform seit
+  persistence-jpa#115. Bei vorhandener Annotation wird `isID` gar nicht mehr gelesen.
+- Zwei Vokabulare über denselben Attributen: `idFeatures` (Persistence-Identität, an der
+  EClass) und `isID`/`@OData.Key` (OData-Key, pro Attribut). `OdataResolver` ist die EINZIGE
+  Stelle, die alle drei Formen kennt; OData-zugewandte Schichten nehmen den Key aus dem
+  aufgelösten Profil (`ODataClassProfile.getKeyPropertyNames()`), Backends über
+  `EntityKeys`/`CompositeIds` aus derselben Deklaration. Kein `isID`-Scan mehr im Stack —
+  vorher waren es 15 uneinheitliche Ableitungen (#35).
+- `ODataServlet.profiles` cacht Profile pro EPackage (WeakHashMap, keine Invalidierung).
+  Ein Modell, das seinen Key zur Laufzeit ändert, wird aus dem alten Profil beantwortet —
+  in Tests deshalb pro Test frisches Package, nicht mitten im Test mutieren.
+
 **EMF/Codec:**
 - `EcoreUtil.Copier` default `useOriginalReferences=true` — nicht mitkopierte Ziele bleiben
   als ORIGINALE referenziert (Server-Objekt-Leak in die Serialisierung). `Copier(true, false)`:

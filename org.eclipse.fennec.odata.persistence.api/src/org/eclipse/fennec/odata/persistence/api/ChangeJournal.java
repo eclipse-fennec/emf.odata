@@ -178,10 +178,8 @@ public final class ChangeJournal {
 	/** Key-property name → value in id-attribute order — delta layers render ids from it. */
 	public static Map<String, Object> keyValuesOf(EObject entity) {
 		Map<String, Object> keys = new LinkedHashMap<>();
-		for (EAttribute id : entity.eClass().getEAllAttributes()) {
-			if (id.isID()) {
-				keys.put(id.getName(), entity.eGet(id));
-			}
+		for (EAttribute id : EntityKeys.of(entity.eClass())) {
+			keys.put(id.getName(), entity.eGet(id));
 		}
 		return keys;
 	}

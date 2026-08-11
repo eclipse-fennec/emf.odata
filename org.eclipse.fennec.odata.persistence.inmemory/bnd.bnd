@@ -12,3 +12,8 @@ Bundle-Description: In-memory QueryService (req §3.5, mandatory reference backe
 	org.eclipse.fennec.odata.persistence.api;version=project,\
 	org.eclipse.emf.ecore.xmi;version=latest,\
 	org.eclipse.fennec.emf.osgi.api;version=latest
+
+# EntityKeys (persistence.api) resolves the identity through CompositeIds — the plain JUnit tests
+# need the helper on the classpath, at runtime the OSGi wiring of persistence.api provides it.
+-testpath: \
+	org.eclipse.fennec.persistence;version=latest

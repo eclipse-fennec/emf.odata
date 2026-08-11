@@ -960,8 +960,13 @@ class ODataServletTest {
 	@DisplayName("compound key predicates ([OData-URL] compoundKey): composite AND, named single, validation")
 	void compoundKeys() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));
-		// make the fixture composite-keyed for this test (pkg reloads per test)
-		((org.eclipse.emf.ecore.EAttribute) productClass.getEStructuralFeature("name")).setID(true);
+		// make the fixture composite-keyed for this test (pkg reloads per test) — declared the
+		// canonical way, on the type: Ecore allows at most one isID attribute, so the runtime has to
+		// read the identity declaration to see a composite key at all (#35)
+		EAnnotation identity = EcoreFactory.eINSTANCE.createEAnnotation();
+		identity.setSource(ODataAnnotationConstants.IDENTITY_SOURCE);
+		identity.getDetails().put(ODataAnnotationConstants.ID_FEATURES, "id,name");
+		productClass.getEAnnotations().add(identity);
 
 		Response composite = get("/Product(id='p1',name='Milk')", Map.of());
 		assertEquals(200, composite.status(), composite.body());
@@ -985,8 +990,16 @@ class ODataServletTest {
 				Map.of("If-Match", "*")).status(),
 				"below-entity writes on composite keys stay refused");
 
-		// the named SINGLE-key form Set(id='x') is spec-legal too
-		((org.eclipse.emf.ecore.EAttribute) productClass.getEStructuralFeature("name")).setID(false);
+	}
+
+	@Test
+	@DisplayName("the named single-key form Set(id='x') is spec-legal too ([OData-URL] compoundKey)")
+	void namedSingleKeyForm() throws Exception {
+		// its own test rather than a second phase of compoundKeys: the servlet caches the resolved
+		// profile per package (as it does for cast resolution), so a fixture whose key changes
+		// mid-test would be served from the stale profile
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
 		Response namedSingle = get("/Product(id='p1')", Map.of());
 		assertEquals(200, namedSingle.status(), namedSingle.body());
 		assertEquals("=", ((OperationCallExp) lastQuery.get().filter()).getName());
