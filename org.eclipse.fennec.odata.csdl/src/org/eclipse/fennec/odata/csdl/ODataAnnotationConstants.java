@@ -67,6 +67,28 @@ public final class ODataAnnotationConstants {
 	 */
 	public static final String ENTITY_SETS_SOURCE = "https://eclipse.org/fennec/odata/entitysets";
 
+	/**
+	 * EAnnotation source of the Fennec persistence identity vocabulary, placed on the
+	 * {@code EClass}: the detail {@link #ID_FEATURES} declares the key properties explicitly. Note
+	 * the {@code http} scheme and the version segment — the string must match
+	 * {@code org.eclipse.fennec.persistence.helper.CompositeIds#ANNOTATION_SOURCE} verbatim
+	 * (persistence-jpa#115), which is what the backends read.
+	 * <p>
+	 * It is declared here rather than imported so the CSDL bridge stays free of a dependency on the
+	 * persistence stack: {@link OdataResolver} is the only reader, and the resolved profile is what
+	 * the rest of the OData stack consumes.
+	 */
+	public static final String IDENTITY_SOURCE = "http://eclipse.org/fennec/persistence/1.0";
+
+	/**
+	 * Annotation detail of {@link #IDENTITY_SOURCE}: the key property names of the type,
+	 * comma-separated, in canonical key order. This is the one way to express a multi-part key on an
+	 * EClass — Ecore allows at most one {@code isID} attribute
+	 * ({@code validateEClass_AtMostOneID}), so flagging every key property is an invalid model
+	 * rather than a composite declaration.
+	 */
+	public static final String ID_FEATURES = "idFeatures";
+
 	// package
 	public static final String NAMESPACE = "OData.Namespace";
 	public static final String ALIAS = "OData.Alias";

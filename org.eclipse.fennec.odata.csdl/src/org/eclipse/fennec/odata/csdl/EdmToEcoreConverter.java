@@ -16,7 +16,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.eclipse.emf.ecore.EAnnotation;
@@ -204,7 +203,7 @@ public class EdmToEcoreConverter {
 		}
 		for (TComplexType t : schema.getComplexType()) {
 			wire((EClass) byName.get(t.getName()), t.getBaseType(),
-					t.getProperty(), t.getNavigationProperty(), Set.of(), byName);
+					t.getProperty(), t.getNavigationProperty(), List.of(), byName);
 		}
 
 		// pass 3 — wire bidirectional references (eOpposite) from navigation Partner names,
@@ -361,13 +360,15 @@ public class EdmToEcoreConverter {
 	}
 
 	private void wire(EClass cl, String baseType, List<TProperty> properties,
-			List<TNavigationProperty> navigation, Set<String> keyNames, Map<String, EClassifier> byName) {
+			List<TNavigationProperty> navigation, List<String> keyNames, Map<String, EClassifier> byName) {
 		if (baseType != null && !baseType.isBlank()) {
 			EClassifier sup = byName.get(simpleName(baseType));
 			if (sup instanceof EClass superClass) {
 				cl.getESuperTypes().add(superClass);
 			}
 		}
+		// a multi-part key is declared once on the type, not per property (see declareIdentity)
+		boolean composite = keyNames.size() > 1;
 		for (TProperty p : properties) {
 			String type = String.valueOf(p.getType());
 			boolean many = isCollection(type);
@@ -388,13 +389,16 @@ public class EdmToEcoreConverter {
 				a.setEType(resolved);
 				applyBounds(a, many, p.isNullable());
 				if (keyNames.contains(p.getName())) {
-					a.setID(true);
+					a.setID(!composite);
 					a.setLowerBound(1);
 				}
 				mapFacets(p, a);
 				mapAnnotations(p.getAnnotation(), a);
 				cl.getEStructuralFeatures().add(a);
 			}
+		}
+		if (composite) {
+			declareIdentity(cl, keyNames);
 		}
 		for (TNavigationProperty n : navigation) {
 			String type = String.valueOf(n.getType());
@@ -474,12 +478,36 @@ public class EdmToEcoreConverter {
 		return byName.getOrDefault(simpleName(typeName), EcorePackage.eINSTANCE.getEString());
 	}
 
-	private static Set<String> keyNames(TEntityType t) {
+	/** The key property names in the declared (canonical) order — {@code idFeatures} needs it. */
+	private static List<String> keyNames(TEntityType t) {
 		if (t.getKey().isEmpty()) {
-			return Set.of();
+			return List.of();
 		}
 		return t.getKey().get(0).getPropertyRef().stream()
-				.map(TPropertyRef::getName).collect(Collectors.toSet());
+				.map(TPropertyRef::getName).toList();
+	}
+
+	/**
+	 * Declares the composite identity of the type: the {@code idFeatures} detail naming the key
+	 * properties in canonical key order ([persistence-jpa#115]). A multi-part key cannot be
+	 * expressed by flagging every property {@code isID} — Ecore allows at most one
+	 * ({@code validateEClass_AtMostOneID}) and the backends refuse that shape.
+	 * <p>
+	 * Key refs that address a nested or aliased property path ([OData-CSDL] 8.3) have no EAttribute
+	 * counterpart in the mapped model and are therefore left out; if that leaves fewer than two
+	 * components the type stays keyless, as it already did before this declaration existed.
+	 */
+	private void declareIdentity(EClass cl, List<String> keyNames) {
+		List<String> components = keyNames.stream()
+				.filter(name -> cl.getEStructuralFeature(name) instanceof EAttribute)
+				.toList();
+		if (components.size() < 2) {
+			return;
+		}
+		EAnnotation identity = ecore.createEAnnotation();
+		identity.setSource(ODataAnnotationConstants.IDENTITY_SOURCE);
+		identity.getDetails().put(ODataAnnotationConstants.ID_FEATURES, String.join(",", components));
+		cl.getEAnnotations().add(identity);
 	}
 
 	private static boolean isCollection(String type) {

@@ -15,6 +15,7 @@ package org.eclipse.fennec.odata.csdl;
 import java.util.Locale;
 import java.util.function.IntConsumer;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EAttribute;
@@ -121,9 +122,7 @@ public class OdataResolver {
 				.ifPresent(s -> c.setBaseTypeQualifiedName(
 						typeNamespace(s, ns) + "." + s.getName())); // cross-package aware (AP-6)
 
-		// key: declared ID attributes, or attributes flagged @OData.Key (subtype inherits the root key)
-		cl.getEAttributes().stream().filter(this::isKey)
-				.forEach(a -> c.getKeyPropertyNames().add(a.getName()));
+		c.getKeyPropertyNames().addAll(keyPropertyNames(cl));
 
 		for (EAttribute a : cl.getEAttributes()) {
 			c.getProperties().add(property(a, ns));
@@ -243,13 +242,58 @@ public class OdataResolver {
 		return o;
 	}
 
-	/** An EClass is an entity iff it (or a super type) carries a key attribute (ID or @OData.Key). */
+	/**
+	 * An EClass is an entity iff it (or a super type) carries a key attribute (ID or {@code
+	 * @OData.Key}) or declares a composite identity ({@link ODataAnnotationConstants#ID_FEATURES}).
+	 */
 	private boolean isEntity(EClass cl) {
-		return cl.getEAllAttributes().stream().anyMatch(this::isKey);
+		return cl.getEAllAttributes().stream().anyMatch(this::isKey)
+				|| idFeatures(cl) != null
+				|| cl.getEAllSuperTypes().stream().anyMatch(s -> idFeatures(s) != null);
 	}
 
 	private boolean isKey(EAttribute a) {
 		return a.isID() || annFlag(a, ODataAnnotationConstants.KEY);
+	}
+
+	/**
+	 * The key property names of the type in canonical order: the {@code idFeatures} declaration when
+	 * the EClass carries one — the only way to express a multi-part key, since Ecore allows at most
+	 * one {@code isID} attribute — otherwise the attributes flagged {@code isID} or
+	 * {@code @OData.Key}, in declaration order.
+	 * <p>
+	 * Only DECLARED features count in either case: an OData subtype does not redeclare the key of
+	 * its root type ([OData-CSDL] 8.3), so {@code isEntity} looks along the super types while the
+	 * {@code <Key>} element stays with the root.
+	 */
+	private List<String> keyPropertyNames(EClass cl) {
+		List<String> declared = idFeatures(cl);
+		if (declared != null) {
+			// a declaration naming a non-attribute (or an unmapped nested key path) contributes
+			// nothing — the backends would refuse such a model anyway
+			return declared.stream()
+					.filter(name -> cl.getEStructuralFeature(name) instanceof EAttribute)
+					.toList();
+		}
+		return cl.getEAttributes().stream().filter(this::isKey).map(EAttribute::getName).toList();
+	}
+
+	/**
+	 * @return the {@code idFeatures} names of the type in declared order, or {@code null} if the
+	 *         type carries no composite identity declaration
+	 */
+	private static List<String> idFeatures(EClass cl) {
+		EAnnotation identity = cl.getEAnnotation(ODataAnnotationConstants.IDENTITY_SOURCE);
+		if (identity == null) {
+			return null;
+		}
+		String declared = identity.getDetails().get(ODataAnnotationConstants.ID_FEATURES);
+		if (declared == null || declared.isBlank()) {
+			return null;
+		}
+		List<String> names = Stream.of(declared.split(",")).map(String::trim)
+				.filter(name -> !name.isEmpty()).toList();
+		return names.isEmpty() ? null : names;
 	}
 
 	/** Qualified OData type name for a classifier, wrapped in {@code Collection(...)} when many. */

@@ -116,11 +116,17 @@
         eType="#//Project" eOpposite="#//Project/milestones"/>
   </eClassifiers>
 
-  <!-- ============== Standalone entity with a COMPOSITE key ============== -->
+  <!-- ============== Standalone entity with a COMPOSITE key ==============
+       The identity is declared once on the type, in canonical key order: Ecore allows at most
+       one iD="true" attribute (validateEClass_AtMostOneID), so a multi-part key cannot be
+       expressed by flagging every component. -->
   <eClassifiers xsi:type="ecore:EClass" name="RegionCode">
-    <eStructuralFeatures xsi:type="ecore:EAttribute" name="countryCode" lowerBound="1" iD="true"
+    <eAnnotations source="http://eclipse.org/fennec/persistence/1.0">
+      <details key="idFeatures" value="countryCode,regionCode"/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="countryCode" lowerBound="1"
         eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
-    <eStructuralFeatures xsi:type="ecore:EAttribute" name="regionCode" lowerBound="1" iD="true"
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="regionCode" lowerBound="1"
         eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="name" lowerBound="1"
         eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>

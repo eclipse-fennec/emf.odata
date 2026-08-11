@@ -120,8 +120,10 @@ class XsdRoundTripRegressionTest {
 		assertTrue(((EAttribute) abstractEntity.getEStructuralFeature("id")).isID(), "key survives");
 
 		EClass region = (EClass) rt.getEClassifier("RegionCode");
-		assertTrue(((EAttribute) region.getEStructuralFeature("countryCode")).isID()
-				&& ((EAttribute) region.getEStructuralFeature("regionCode")).isID(), "composite key survives");
+		EAnnotation identity = region.getEAnnotation(ODataAnnotationConstants.IDENTITY_SOURCE);
+		assertNotNull(identity, "the composite identity survives the XML layer");
+		assertEquals("countryCode,regionCode",
+				identity.getDetails().get(ODataAnnotationConstants.ID_FEATURES), "in canonical key order");
 
 		EClass employee = (EClass) rt.getEClassifier("Employee");
 		EClass person = (EClass) rt.getEClassifier("Person");
