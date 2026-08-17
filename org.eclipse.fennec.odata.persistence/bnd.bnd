@@ -11,6 +11,7 @@ Bundle-Description: Backend-neutral WriteService over the Fennec Persistence Com
 	org.eclipse.fennec.query.model;version=latest,\
 	org.eclipse.fennec.stream.model;version=latest,\
 	org.eclipse.fennec.persistence.query;version=latest,\
+	org.eclipse.fennec.persistence.capabilities;version=latest,\
 	org.eclipse.fennec.persistence;version=latest,\
 	org.eclipse.fennec.emf.osgi.api;version=latest,\
 	org.eclipse.emf.ecore;version=latest,\

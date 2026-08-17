@@ -62,17 +62,18 @@ import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
+import org.eclipse.fennec.persistence.capabilities.QueryFeature;
+import org.eclipse.fennec.persistence.capabilities.StoreFeature;
 import org.eclipse.fennec.persistence.helper.CompositeIds;
 import org.eclipse.fennec.persistence.query.QueryConstants;
 import org.eclipse.fennec.persistence.query.QueryException;
-import org.eclipse.fennec.persistence.query.api.CommandFeature;
 import org.eclipse.fennec.persistence.query.api.CommandResource;
-import org.eclipse.fennec.persistence.query.api.QueryFeature;
 import org.eclipse.fennec.persistence.query.api.QueryProcessor;
 import org.eclipse.fennec.persistence.query.api.QueryResultRow;
 import org.eclipse.fennec.persistence.query.api.QueryableResource;
 import org.eclipse.fennec.persistence.query.support.CommandTransaction;
 import org.eclipse.fennec.persistence.query.support.QueryValidator;
+import org.eclipse.fennec.persistence.resource.PersistenceResource;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.ConfigurationPolicy;
@@ -803,7 +804,11 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	private final ThreadLocal<Bracket> bracket = new ThreadLocal<>();
 	private volatile Boolean transactionsSupported;
 
-	/** Read once from the declared command capabilities (persistence-jpa#114). */
+	/**
+	 * Read once from the resource's effective store capabilities (persistence-jpa#114): the
+	 * bracket is a store feature, not a command verb, so it is asked of the persistence
+	 * resource rather than of an optional command role (persistence-jpa#134).
+	 */
 	@Override
 	public boolean transactional() {
 		Boolean supported = transactionsSupported;
@@ -811,9 +816,9 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			try {
 				Resource probe = resourceSetFactory.createResourceSet()
 						.createResource(baseUri.appendSegment("tx-probe"));
-				supported = probe instanceof CommandResource commandResource
-						&& commandResource.capabilities()
-								.supports(CommandFeature.TRANSACTION_BRACKET);
+				supported = probe instanceof PersistenceResource persistenceResource
+						&& persistenceResource.capabilities().store()
+								.supports(StoreFeature.TRANSACTION_BRACKET);
 			} catch (RuntimeException e) {
 				supported = false;
 			}

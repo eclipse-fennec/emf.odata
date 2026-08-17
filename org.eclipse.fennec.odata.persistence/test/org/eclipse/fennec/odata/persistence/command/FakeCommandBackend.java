@@ -32,18 +32,22 @@ import org.eclipse.fennec.model.command.DeleteCommand;
 import org.eclipse.fennec.model.command.InsertCommand;
 import org.eclipse.fennec.model.command.UpdateCommand;
 import org.eclipse.fennec.model.query.Query;
+import org.eclipse.fennec.persistence.capabilities.CommandCapabilitiesBuilder;
+import org.eclipse.fennec.persistence.capabilities.CommandFeature;
+import org.eclipse.fennec.persistence.capabilities.PersistenceCapabilities;
+import org.eclipse.fennec.persistence.capabilities.StoreCapabilitiesBuilder;
+import org.eclipse.fennec.persistence.capabilities.StoreFeature;
 import org.eclipse.fennec.persistence.helper.CompositeIds;
 import org.eclipse.fennec.persistence.query.QueryException;
-import org.eclipse.fennec.persistence.query.api.CommandCapabilities;
-import org.eclipse.fennec.persistence.query.api.CommandFeature;
 import org.eclipse.fennec.persistence.query.api.CommandResource;
 import org.eclipse.fennec.persistence.query.api.QueryResult;
 import org.eclipse.fennec.persistence.query.api.QueryableResource;
 import org.eclipse.fennec.persistence.query.memory.MemoryQueries;
+import org.eclipse.fennec.persistence.query.memory.MemoryQueryProcessor;
 import org.eclipse.fennec.persistence.query.support.ChangeTemplates;
-import org.eclipse.fennec.persistence.query.support.CommandCapabilitiesBuilder;
 import org.eclipse.fennec.persistence.query.support.CommandTransaction;
 import org.eclipse.fennec.persistence.query.support.ReferenceResolver;
+import org.eclipse.fennec.persistence.resource.PersistenceResource;
 
 /**
  * In-memory stand-in for a persistence backend with the REAL upstream semantics:
@@ -93,7 +97,7 @@ final class FakeCommandBackend implements Resource.Factory {
 	}
 
 	private static final class FakeResource extends ResourceImpl
-			implements QueryableResource, CommandResource {
+			implements PersistenceResource, QueryableResource, CommandResource {
 
 		private final FakeCommandBackend backend;
 		private Map<String, Map<Object, EObject>> snapshot;
@@ -137,13 +141,52 @@ final class FakeCommandBackend implements Resource.Factory {
 			throw new IOException("named queries are not supported");
 		}
 
+		/**
+		 * Mirror the real backends (persistence-jpa#114, #134): the full command vocabulary,
+		 * the store bracket this fake really opens in {@link #begin()}, and — since selectors
+		 * are evaluated by {@code MemoryQueries} — that engine's own query declaration.
+		 */
 		@Override
-		public CommandCapabilities capabilities() {
-			// mirror the real backends (persistence-jpa#114): full command vocabulary + bracket
-			return CommandCapabilitiesBuilder.create()
-					.support(CommandFeature.INSERT, CommandFeature.DELETE_BY_SELECTOR,
-							CommandFeature.UPDATE_BY_SELECTOR, CommandFeature.TRANSACTION_BRACKET)
-					.build();
+		public PersistenceCapabilities capabilities() {
+			return PersistenceCapabilities.of(new MemoryQueryProcessor().capabilities(),
+					CommandCapabilitiesBuilder.create()
+							.support(CommandFeature.INSERT, CommandFeature.DELETE_BY_SELECTOR,
+									CommandFeature.UPDATE_BY_SELECTOR)
+							.build(),
+					StoreCapabilitiesBuilder.create().support(StoreFeature.TRANSACTION_BRACKET)
+							.build());
+		}
+
+		// --- PersistenceResource beyond the capability statement: the store is the map ---
+
+		@Override
+		public void updateDefaultOptions(Map<Object, Object> options, ActionType... types) {
+			// the fake reads no options
+		}
+
+		@Override
+		public long count() throws IOException {
+			return store().size();
+		}
+
+		@Override
+		public long count(Map<?, ?> options) throws IOException {
+			return count();
+		}
+
+		@Override
+		public boolean exist() throws IOException {
+			return !store().isEmpty();
+		}
+
+		@Override
+		public boolean exist(Map<?, ?> options) throws IOException {
+			return exist();
+		}
+
+		@Override
+		public void close() {
+			unload();
 		}
 
 		@Override
