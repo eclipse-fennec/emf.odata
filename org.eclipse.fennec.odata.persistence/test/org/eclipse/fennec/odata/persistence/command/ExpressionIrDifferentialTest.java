@@ -226,6 +226,9 @@ public class ExpressionIrDifferentialTest {
 				new Case("startswith", "startswith(name,'S')"),
 				new Case("endswith", "endswith(name,'ware')"),
 				new Case("tolower", "tolower(name) eq 'cheese'"),
+				// the shape $search synthesizes (#40) — the symmetric tolower pair the bridge
+				// folds into a case-insensitive StringMatch; both engines must agree on it
+				new Case("case-insensitive contains", "contains(tolower(name),tolower('MILK'))"),
 				new Case("toupper", "toupper(name) eq 'MILK'"),
 				new Case("length", "length(name) gt 4"),
 				new Case("substring", "substring(name,1) eq 'alt'"),

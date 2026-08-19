@@ -1351,6 +1351,30 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("$search matches case-insensitively, and a null property stays excluded (#40)")
+	void searchIsCaseInsensitive() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		OclEvaluator evaluator = new OclEvaluator();
+		EObject milk = product("p1", "Milk", "1.20", null);
+
+		// a lower-case term finds the capitalized value — the whole point of #40
+		assertEquals(200, get("/Product", Map.of("$search", "milk")).status());
+		assertTrue(evaluator.matchesNullSafe(lastQuery.get().filter(), milk),
+				"$search=milk matches 'Milk'");
+
+		// and an upper-case one does too: the fold is applied to BOTH sides, not just the term
+		assertEquals(200, get("/Product", Map.of("$search", "MILK")).status());
+		assertTrue(evaluator.matchesNullSafe(lastQuery.get().filter(), milk),
+				"$search=MILK matches 'Milk'");
+		assertFalse(evaluator.matchesNullSafe(lastQuery.get().filter(),
+				product("p2", "Cheese", "2.00", null)), "a non-matching entity stays excluded");
+
+		// 3VL is unchanged by the added function call: tolower(null) is UNKNOWN, not an error
+		assertFalse(evaluator.matchesNullSafe(lastQuery.get().filter(),
+				product("p3", null, "3.00", null)), "a null string property excludes the row");
+	}
+
+	@Test
 	@DisplayName("$compute adds a computed property to each entity (no longer 501)")
 	void computeOption() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));

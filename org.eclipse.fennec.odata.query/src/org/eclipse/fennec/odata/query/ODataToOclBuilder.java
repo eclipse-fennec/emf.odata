@@ -540,10 +540,10 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 
 	/**
 	 * {@code path/$count($search=…)} ([OData-URL] 5.1.1.14, §13.2.3/3): the search words become
-	 * a {@code contains} disjunction over the element type's string attributes — the same
-	 * free-text mapping the protocol layer applies to a top-level {@code $search} — wrapped in
-	 * a {@code select} like the filtered count. Terms combine with AND, {@code not} negates,
-	 * parenthesized groups nest.
+	 * a case-insensitive {@code contains} disjunction over the element type's string attributes —
+	 * the same free-text mapping the protocol layer applies to a top-level {@code $search} —
+	 * wrapped in a {@code select} like the filtered count. Terms combine with AND, {@code not}
+	 * negates, parenthesized groups nest.
 	 */
 	private OclExpression selectOverSearch(OclExpression source, EClass elementClass,
 			ODataFilterParser.SearchExprContext searchExpr) {
@@ -592,7 +592,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 				property.setReferredProperty(attribute);
 				StringLiteralExp literal = FACTORY.createStringLiteralExp();
 				literal.setStringSymbol(term);
-				OperationCallExp contains = binary("contains", property, literal);
+				OperationCallExp contains = binary("contains", toLower(property), toLower(literal));
 				predicate = predicate == null ? contains : binary("or", predicate, contains);
 			}
 			if (predicate == null) { // no string properties → the term matches nothing
@@ -939,6 +939,19 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		exp.setName(name);
 		exp.setOwnedSource(source);
 		exp.getOwnedArguments().add(argument);
+		return exp;
+	}
+
+	/**
+	 * Wraps an expression in {@code toLower} — the case-folding half of the free-text search
+	 * mapping (#40). Applied to BOTH sides of the {@code contains}, because the symmetric pair is
+	 * what the {@code OclToExpr} bridge recognizes and folds into a native case-insensitive
+	 * {@code StringMatch}; a one-sided fold would degrade to two per-row function calls.
+	 */
+	private OperationCallExp toLower(OclExpression source) {
+		OperationCallExp exp = FACTORY.createOperationCallExp();
+		exp.setName("toLower");
+		exp.setOwnedSource(source);
 		return exp;
 	}
 }
