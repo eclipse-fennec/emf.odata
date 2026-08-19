@@ -1,6 +1,6 @@
 # Fennec OData – Offene Aufgaben
 
-Status: 2026-07-15. **Das eine Aufgaben-Dokument**: alle offenen Punkte — Spec-Lücken,
+Status: 2026-08-19. **Das eine Aufgaben-Dokument**: alle offenen Punkte — Spec-Lücken,
 Backlog-Reste, Findings, offene Fragen — unabhängig von ihrer Herkunft. Konsolidiert aus den
 früheren Backlog-Dokumenten (`odata-e2-converter-open-points.md`, `odata-e4-query-open-points.md`,
 `odata-e5-e6-server-state.md`, `odata-spec-repos-gap-analysis.md`, Requirements-Doc §7 —
@@ -292,6 +292,59 @@ bis zum Commit). Das Bundle `odata.persistence.jpa` ist ENTFERNT, `example-jpa` 
 Itests laufen auf dem Command-Backend (JpaWiringIntegrationTest ersatzlos gestrichen —
 CommandBackendIntegrationTest deckt die Kette), Coverage-Floor-Eintrag raus. 20 Itests
 und alle Bundle-Tests grün gegen die frischen Snapshots.
+
+**Upstream-Welle 2026-08-18 geprüft (2026-08-19): kein Nachziehbedarf im Code.** Die 11 Commits
+(persistence-jpa #158/#160/#161/#162/#164/#165/#167/#169) sind alle von einem neuen Konsumenten
+getrieben — dem Lucene-Backend in `emf.search` —, den OData nicht hat. Verifikation gegen frische
+Snapshots (m2-Artefakte + `cnf/cache` gelöscht): `clean build` 1.188 Unit-Tests grün (13 Skips),
+`resolve.test --rerun` ohne bndrun-Änderung, `testOSGi` erzwungen 20 Itests + 6 metadata.tests grün.
+
+Additiv und ungenutzt, bewusst: `StoreFeature.SERVER_CURSORS` (#162) — OData liest `StoreFeature`
+nur für `TRANSACTION_BRACKET`, und der Lifetime-Vertrag ist im `CommandPersistenceService` bereits
+eingehalten (jeder Upstream-`QueryResult` wird innerhalb seines `try` materialisiert, inklusive
+Proxy-Auflösung); `Query.withScores` + `QueryResult.hits()`/`scores()` + `Hit` (#165) — OData hat
+keine Score-Semantik und der eigene `QueryResult`-Record kein Score-Feld; `StringMatchKind.FUZZY` +
+`QueryFeature.STRING_MATCH_FUZZY` (#167) — OData kennt keinen Fuzzy-Operator und erzeugt nie FUZZY,
+die neue `ExprToOcl`-Ablehnung ist damit unerreichbar. #160 (TCK-Capability-Gating, entfernt sieben
+`supports*()`-Hooks, fordert `declaredCapabilities()`) betrifft nur TCK-Bindings — OData bindet die
+TCK nicht. #161 bestätigt die Doktrin, die der `CommandPersistenceService` schon fährt: nicht auf
+Capabilities vorrouten, `validate()` fragen, `CODE_UNSUPPORTED_FEATURE`→501, sonst 400.
+
+**#164 war die einzige Verhaltensänderung auf dem bestehenden Pfad:** `getConverter` antwortet
+Abwesenheit jetzt mit `null` statt zu werfen, `DefaultConverterService` ist konkret, und **beide
+Backends geben einen echten `ConverterService` in den Query-Context** — vorher `null`, der
+Konvertierungspfad war tot. Query-Literale und -Parameter laufen also ab jetzt durch dieselben
+Converter wie Mapping/Codec beim Schreiben. OData ruft `getConverter` nirgends selbst und hat keine
+eorm-`Convert`-Mappings; der Testlauf oben zeigt keine Drift.
+
+**Zwei Kontrakt-Lockerungen, die aus #158 (MariaDB als dritter JPA-Flavor) folgen** — beide gelten
+jetzt für alle Backends, nicht nur MariaDB:
+- **String-Gleichheit ist case-sensitiv.** Upstream hat die ambiente utf8mb4-CI-Kollation als Leck
+  in der EMF-Gleichheit gefunden und String-Spalten der MySQL-Familie auf binäre Kollation
+  umgestellt; Case-Insensitivity ist ausschließlich das Per-Prädikat-Opt-in
+  `STRING_MATCH_CASE_INSENSITIVE`, TCK-Kernprobe `queryStringEqualityIsCaseSensitive`. Für `$filter`
+  ist das korrekte OData-Semantik. Für **`$search` ist es ein Mangel** — unsere contains-OR-Synthese
+  kann Case-Insensitivity nicht anfordern, `search=alice` findet `Alice` nicht: emf.odata#40.
+- **Ein Laufzeit-Nulldivisor darf per 3VL die Zeile ausschließen** statt zu werfen (TCK-Case heißt
+  jetzt `queryRuntimeZeroDivisorErrorsOrExcludes` — „der Fehler des Backends oder der
+  3VL-Ausschluss, niemals ein Match"). Damit steht das neben der `$orderby`-Null-Platzierung als
+  zweite dokumentierte Backend-Divergenz.
+
+**Befund an upstream: persistence-jpa#177** — vier exportierte Pakete haben in der Welle API
+bekommen (`QueryResult.hits()/scores()` + `Hit`, `Query.withScores`, `StringMatch`
+`maxEdits`/`prefixLength` + `StringMatchKind.FUZZY`, `StoreFeature.SERVER_CURSORS` +
+`QueryFeature.STRING_MATCH_FUZZY`), ohne einen einzigen Package-Version-Bump; die EMF-Feature-IDs
+sind dabei durchgeschoben und inlinen als `static final int` in Konsumenten-Klassen. Ursache: der
+Workspace hat kein Baselining konfiguriert. Für OData heißt das bis dahin: der Snapshot ist die
+einzige Pin-Möglichkeit, ein Import-Range kann die Anforderung nicht ausdrücken.
+
+**Beobachten, nicht darauf bauen:** die ungemergte Repository-Fassade auf
+`emf.persistence-jpa` `origin/repository-service` (`RepositoryService`/`ReadRepository`/
+`WriteRepository`/`Repository` + `PreparedQuery`, Nachfolger von Geckos `EMFRepository`, plus dünne
+JPA-/Mongo-Flavor-Komponenten) überlappt mit `odata.persistence.api` (`EntityRepository`,
+`QueryService`) — und `PreparedQuery` (einmal bei `prepare` validiert, danach nur Parameter) wäre der
+natürliche Andockpunkt für die ADR-0004-Cache-Geschichte. Solange ungemergt: User-Entscheidung, kein
+Commitment.
 
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,

@@ -38,7 +38,7 @@ Spec documents (OASIS OData **v4.01**):
 | `$count` (inline + `/$count`) | Count | ✅ | URL Conv. §5.1.7 |
 | `$select` (nested `$select`; `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count` on selected collections) | Project properties | ✅ (`$count` below top level → 501) | URL Conv. §5.1.3 |
 | `$expand` (nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, `$levels` on self-recursive navigations, `nav/$ref` reference expansion, cast-in-expand) | Expand related | ✅ (nested `$select`-in-`$expand` → 501) | URL Conv. §5.1.2/5.1.3 |
-| `$search` | Free-text search | ✅ | URL Conv. §5.1.8 |
+| `$search` | Free-text search | ✅ — folded into `$filter` as a `contains` OR-chain over the type's string properties; **matches case-sensitively** ([#40](https://github.com/eclipse-fennec/emf.odata/issues/40)) | URL Conv. §5.1.8 |
 | `$compute` | Computed properties | ✅ | URL Conv. §5.1.9 |
 | `$apply` | Aggregation | ✅ (see below) | Data Aggregation §3 |
 | `$format` | Response format | ✅ `json` / `xml` (XMI) | Protocol §11.2.10 |
