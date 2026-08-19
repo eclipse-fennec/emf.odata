@@ -296,8 +296,11 @@ und alle Bundle-Tests grün gegen die frischen Snapshots.
 **Upstream-Welle 2026-08-18 geprüft (2026-08-19): kein Nachziehbedarf im Code.** Die 11 Commits
 (persistence-jpa #158/#160/#161/#162/#164/#165/#167/#169) sind alle von einem neuen Konsumenten
 getrieben — dem Lucene-Backend in `emf.search` —, den OData nicht hat. Verifikation gegen frische
-Snapshots (m2-Artefakte + `cnf/cache` gelöscht): `clean build` 1.188 Unit-Tests grün (13 Skips),
+Snapshots (m2-Artefakte + `cnf/cache` gelöscht): `clean build` **1.084 Unit-Tests** grün (13 Skips),
 `resolve.test --rerun` ohne bndrun-Änderung, `testOSGi` erzwungen 20 Itests + 6 metadata.tests grün.
+(Die zuerst notierten „1.188" waren falsch: die Summe zählte 104 verwaiste Report-XMLs im
+untracked-Verzeichnis des 2026-08-05 entfernten Bundles `odata.persistence.jpa` mit — das Verzeichnis
+ist inzwischen gelöscht. Report-Summen also immer nur über existierende Bundles bilden.)
 
 Additiv und ungenutzt, bewusst: `StoreFeature.SERVER_CURSORS` (#162) — OData liest `StoreFeature`
 nur für `TRANSACTION_BRACKET`, und der Lifetime-Vertrag ist im `CommandPersistenceService` bereits
@@ -323,12 +326,29 @@ jetzt für alle Backends, nicht nur MariaDB:
   in der EMF-Gleichheit gefunden und String-Spalten der MySQL-Familie auf binäre Kollation
   umgestellt; Case-Insensitivity ist ausschließlich das Per-Prädikat-Opt-in
   `STRING_MATCH_CASE_INSENSITIVE`, TCK-Kernprobe `queryStringEqualityIsCaseSensitive`. Für `$filter`
-  ist das korrekte OData-Semantik. Für **`$search` ist es ein Mangel** — unsere contains-OR-Synthese
-  kann Case-Insensitivity nicht anfordern, `search=alice` findet `Alice` nicht: emf.odata#40.
+  ist das korrekte OData-Semantik. Für `$search` war es ein Mangel (`search=alice` fand `Alice`
+  nicht) — **emf.odata#40 ist erledigt**, siehe den Abschnitt unten.
 - **Ein Laufzeit-Nulldivisor darf per 3VL die Zeile ausschließen** statt zu werfen (TCK-Case heißt
   jetzt `queryRuntimeZeroDivisorErrorsOrExcludes` — „der Fehler des Backends oder der
   3VL-Ausschluss, niemals ein Match"). Damit steht das neben der `$orderby`-Null-Platzierung als
   zweite dokumentierte Backend-Divergenz.
+
+**#40 FERTIG (2026-08-19): `$search` ist case-insensitiv.** Beide Synthese-Stellen wrappen jetzt
+BEIDE Seiten in `tolower`: `ODataServlet.searchExpression` emittiert
+`contains(tolower(prop),tolower('term'))` (davon erbt der genestete `$search` in `$expand`/`$select`
+über `ResponseFormatter`), und `ODataToOclBuilder.searchAtom` baut für `path/$count($search=…)` das
+gleiche Paar direkt in OCL. Die Symmetrie ist der Punkt und kein Zufall: der Upstream-Bridge
+`OclToExpr` erkennt genau das `toLower`-Paar und faltet es in ein natives `StringMatch` mit
+`caseInsensitive=true` (upstream getestet als `evaluatorDialectToLowerPairFoldsIntoCaseInsensitiveMatch`,
+inklusive unserer `toLower`-Dialektschreibweise) — es bleibt also EIN gepushtes Prädikat statt zweier
+Funktionsaufrufe pro Zeile, und JPA, Mongo UND die Referenz-Engine deklarieren
+`STRING_MATCH_CASE_INSENSITIVE`, es droht also kein neues 501. Auf dem Evaluator-Pfad wertet
+`toLower` direkt aus; die 3VL bleibt unberührt, weil eine Funktion auf einem Null-Operanden dort
+unverändert UNKNOWN ergibt (Zeile ausgeschlossen). `$filter`-Vergleiche (`eq`, `contains`,
+`startswith`, `endswith`) bleiben bewusst case-sensitiv — das ist OData-Semantik. Nachweis: neuer
+Servlet-Test (Term in Klein- UND Großschreibung plus Null-Property), neue Differential-Case
+`contains(tolower(name),tolower('MILK'))` und eine Case-Insensitivity-Assertion am
+`reviews/$count($search=GREAT)`-Pfad des In-Memory-Backends.
 
 **Befund an upstream: persistence-jpa#177** — vier exportierte Pakete haben in der Welle API
 bekommen (`QueryResult.hits()/scores()` + `Hit`, `Query.withScores`, `StringMatch`

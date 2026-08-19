@@ -170,6 +170,9 @@ class InMemoryQueryServiceTest {
 		assertEquals(List.of("Cheese"), names(query("reviews/$count($search=great) gt 0",
 				null, 0, -1, false)),
 				"the search words match against the element type's string properties");
+		assertEquals(List.of("Cheese"), names(query("reviews/$count($search=GREAT) gt 0",
+				null, 0, -1, false)),
+				"free-text search is case-insensitive on the OCL path too (#40): 'GREAT' finds 'great'");
 		assertEquals(List.of("Milk", "Bread", "Salt"),
 				names(query("reviews/$count($search=not great) eq 0", null, 0, -1, false)),
 				"Cheese has one non-'great' review; the reviewless products count 0");

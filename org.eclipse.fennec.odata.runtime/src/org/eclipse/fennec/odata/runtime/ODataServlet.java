@@ -2110,8 +2110,9 @@ public class ODataServlet extends HttpServlet {
 
 	/**
 	 * The effective {@code $filter}, folding in {@code $search} (13.1.2 SHOULD): a free-text search
-	 * becomes {@code contains(prop,'term')} OR-ed over the type's string properties, AND-ed with any
-	 * {@code $filter}. It thus rides the existing typed-IR pushdown — no backend change, both backends.
+	 * becomes {@code contains(tolower(prop),tolower('term'))} OR-ed over the type's string
+	 * properties, AND-ed with any {@code $filter}. It thus rides the existing typed-IR pushdown —
+	 * no backend change, both backends.
 	 */
 	String filterWithSearch(HttpServletRequest request, EClass context) {
 		String search = option(request, "$search");
@@ -2124,13 +2125,22 @@ public class ODataServlet extends HttpServlet {
 				: "(" + filter + ") and (" + searchExpr + ")";
 	}
 
-	/** The free-text term as a contains-OR over the type's string properties (OData syntax). */
+	/**
+	 * The free-text term as a contains-OR over the type's string properties (OData syntax).
+	 * <p>
+	 * Both sides are wrapped in {@code tolower} (#40): free-text search is case-insensitive by
+	 * every client's expectation, and string equality is case-sensitive by contract upstream
+	 * (persistence-jpa#158), so the insensitivity has to be asked for. The symmetric pair is the
+	 * form the {@code OclToExpr} bridge folds into a native case-insensitive {@code StringMatch}
+	 * — JPA, Mongo and the reference engine all declare {@code STRING_MATCH_CASE_INSENSITIVE} —
+	 * so this stays a single pushed-down predicate rather than two function calls per row.
+	 */
 	static String searchExpression(String search, EClass context) {
-		String literal = "'" + search.trim().replace("'", "''") + "'";
+		String literal = "tolower('" + search.trim().replace("'", "''") + "')";
 		return context.getEAllAttributes().stream()
 				.filter(a -> !a.isMany() && a.getEAttributeType() != null
 						&& String.class.equals(a.getEAttributeType().getInstanceClass()))
-				.map(a -> "contains(" + a.getName() + "," + literal + ")")
+				.map(a -> "contains(tolower(" + a.getName() + ")," + literal + ")")
 				.reduce((l, r) -> l + " or " + r)
 				.orElse("false"); // no string properties → matches nothing
 	}
