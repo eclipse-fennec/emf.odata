@@ -34,17 +34,30 @@ Alle Level 4.0+4.01 Minimal–Advanced sind beansprucht; das hier ist der Rest d
 - **Delta-Wire-Formen**: nested `nav@delta` (wir emittieren die spec-legale
   Full-Representation), 4.0-flattened-Delta-Payloads, `continue-on-error`,
   `@odata.bind` im `#$delta`-PATCH-Payload (alles ehrliche 501/nicht-angewendet).
-- **Ausdrucks-Restlücken** (die 13 verbleibenden ABNF-Skips von 710 Fällen): `geo.*`
-  (10 Skips = 5 Ausdrücke, jeder in beiden Suiten — **emf.odata#47**; die Aussage „eigenes
-  Spatial-Paket nötig" war überholt: die IR hat seit persistence-jpa#101 `GeoWithin`,
-  `GeoDistance` als Wert-Ausdruck, Point/Box/Polygon und `GEO_*`-Capabilities, deklariert von
-  Mongo und der Memory-Engine, JPA verweigert bis PostGIS. Zwei unserer fünf Ausdrücke wären
-  damit abbildbar; Pfad-zu-Pfad-Distanz, `geo.length` und Shape-in-Shape sind echte
-  IR-Lücken → persistence-jpa#233. **Blocker ist die Bridge**: `OclToExpr` kennt kein Geo und
-  `ExprToOcl` verweigert als „dritte Totalitäts-Ausnahme" → persistence-jpa#232; solange das
-  offen ist, gibt es von unserem OCL-Pfad keinen Weg in die IR), 4.02 `case()` (1 Skip,
-  im selben `$apply`-Fall wie `rolluprecursive`), roher Apostroph im Key-Segment
-  (URL-Decode/Lexer-Randfall — 2 Skips).
+- **Ausdrucks-Restlücken** (die 13 ABNF-Skips von 710 Fällen), nach Grund getrennt:
+  - **`geo.*` — 10 Skips, ab jetzt dokumentierte Nicht-Unterstützung, kein Backlog.**
+    persistence-jpa#233 ist geschlossen mit „die #101-Grenze bleibt, wo sie ist": Distanz
+    zwischen zwei Pfaden und Shape-in-Shape kommen nicht ins Vokabular, ein Linien-Typ mit
+    Längenmaß erst, wenn etwas LineStrings speichert (#207-Regel: das Literal erscheint, wenn
+    es jemand deklariert). Die Suiten enthalten **genau fünf** Geo-Ausdrücke
+    (`geo.distance(Supplier/Location,Product/Location)`,
+    `geo.intersects(Supplier/SalesArea,Product/Location)`, `geo.length(Line)`,
+    `geo.length(geography'…LineString…')`,
+    `geo.intersects(geometry'Point…',geometry'Polygon…')`) — **keiner davon** ist die Form, die
+    die IR trägt (Subjekt gegen Literal-Shape bzw. Literal-Punkt). Sie zu parsen würde also
+    Ausdrücke erzeugen, die kein Backend bedienen kann. Die Skip-Gründe in beiden Suiten sagen
+    das jetzt pro Fall.
+  - **Geo, was die IR KANN** (`GeoWithin`, `GeoDistance` als Wert-Ausdruck, Point/Box/Polygon,
+    Subjekt als lat/lon-Paar oder gepackter Punkt-Pfad; Mongo + Memory deklarieren
+    `GEO_*`, JPA verweigert bis PostGIS) — davon exerziert **keine** ABNF-Suite etwas, es sind
+    die Formen, die echte Clients schicken: „innerhalb dieses Polygons", „nahe diesem Punkt",
+    `$orderby` nach Distanz. Das ist der Inhalt von **emf.odata#47** und bringt keinen Skip
+    weniger, sondern Funktionalität. Blocker bleibt die Bridge: `OclToExpr` kennt kein Geo,
+    `ExprToOcl` verweigert als „dritte Totalitäts-Ausnahme" → **persistence-jpa#232, in
+    Arbeit**.
+  - **Roher Apostroph im Key-Segment** (`People/O'Neil`, URL-Decode/Lexer-Randfall, ADR-0005)
+    — 2 Skips.
+  - **4.02 `case()` zusammen mit `rolluprecursive`** — 1 Skip, `$apply`-Submodell.
 - **`$root`**-Backend-Semantik und **`@Ns.Term`**-Laufzeitwerte in Ausdrücken
   (beides parst → 501; Termwerte bräuchten Vokabular-Auswertung zur Laufzeit,
   niedriger Praxisnutzen).

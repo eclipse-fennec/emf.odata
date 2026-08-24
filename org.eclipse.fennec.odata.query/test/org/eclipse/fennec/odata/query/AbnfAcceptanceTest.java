@@ -57,10 +57,44 @@ class AbnfAcceptanceTest {
 			"filter", "boolCommonExpr", "commonExpr", "orderby");
 
 	/** Constructs the expression grammar deliberately does not cover YET (E4 backlog). */
-	private static final List<Pattern> BACKLOG = List.of(
-			Pattern.compile("(?i)\\bgeo(graphy|metry)?\\s*'"),       // spatial literals
-			Pattern.compile("\\bdiv\\s+by\\b"),                      // spaced "div by" (only divby is one keyword)
-			Pattern.compile("\\bgeo\\.\\w"));                          // geo.* built-ins on literals we lack
+	/**
+	 * Expression constructs this grammar does not parse, each with the reason it does not —
+	 * the reason is the documentation at the point of the skip, so it must distinguish
+	 * "not built yet" from "deliberately not served".
+	 * <p>
+	 * All five geo expressions the suites carry fall outside the Fennec IR's geo boundary
+	 * (persistence-jpa#101), and upstream closed persistence-jpa#233 keeping that boundary
+	 * where it is: distance between two paths and shape-in-shape are not in the vocabulary,
+	 * and a line type with a measure over it lands when something stores linestrings. So
+	 * these are documented non-support rather than backlog — parsing them would produce
+	 * expressions no backend can serve. What the IR *does* cover — a position within a
+	 * literal shape, the distance to a literal point — no ABNF case exercises (emf.odata#47).
+	 */
+	private record Unparsed(Pattern pattern, String reason) {
+	}
+
+	private static final List<Unparsed> BACKLOG = List.of(
+			new Unparsed(Pattern.compile("(?i)\\bgeo\\.length\\s*\\("),
+					"geo.length: no line type and no measure over one in the query IR"
+							+ " — deliberately not served (persistence-jpa#233)"),
+			new Unparsed(Pattern.compile("(?i)\\bgeo\\.\\w+\\s*\\(\\s*geo(graphy|metry)?\\s*'"),
+					"geo over two literals is a constant, not a query"
+							+ " — deliberately not served (persistence-jpa#233)"),
+			new Unparsed(Pattern.compile("(?i)\\bgeo\\.(distance|intersects)\\s*\\(\\s*[A-Za-z_]"),
+					"geo between two stored positions: the IR binds a subject against a literal"
+							+ " shape or point — deliberately not served (persistence-jpa#233)"),
+			new Unparsed(Pattern.compile("(?i)\\bgeo(graphy|metry)?\\s*'"),
+					"spatial literal, only reachable through a geo built-in we do not serve"),
+			new Unparsed(Pattern.compile("(?i)\\bgeo\\.\\w"),
+					"geo built-in outside the IR vocabulary (persistence-jpa#233)"),
+			new Unparsed(Pattern.compile("\\bdiv\\s+by\\b"),
+					"spaced \"div by\" — only divby is one keyword (expression grammar backlog, E4)"));
+
+	/** The reason the input is not parsed, or {@code null} when it is judgeable. */
+	private static String unparsedReason(String input) {
+		return BACKLOG.stream().filter(entry -> entry.pattern().matcher(input).find())
+				.map(Unparsed::reason).findFirst().orElse(null);
+	}
 
 	/** Expression cases owned by ANOTHER layer — never judgeable here, not generated. */
 	private static final List<Pattern> OUT_OF_SCOPE = List.of(
@@ -191,12 +225,14 @@ class AbnfAcceptanceTest {
 	private void runCase(String rule, String rawInput, boolean negative) {
 		String input = stripQueryOptionPrefix(rawInput);
 		if (!negative) {
-			Assumptions.assumeTrue(BACKLOG.stream().noneMatch(p -> p.matcher(input).find()),
-					"expression grammar backlog (E4)");
+			String unparsed = unparsedReason(input);
+			Assumptions.assumeTrue(unparsed == null, unparsed);
 			parse(rule, input);
 		} else {
-			Assumptions.assumeTrue(BACKLOG.stream().noneMatch(p -> p.matcher(input).find()),
-					"negative case about a backlog construct — not judgeable yet");
+			String unparsed = unparsedReason(input);
+			Assumptions.assumeTrue(unparsed == null,
+					unparsed == null ? null : "negative case about a construct we do not parse: "
+							+ unparsed);
 			assertThrows(ODataQueryParseException.class, () -> parse(rule, input),
 					"grammar must reject: " + input);
 		}
