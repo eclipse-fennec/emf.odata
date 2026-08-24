@@ -1416,6 +1416,50 @@ class ODataServletTest {
 		assertFalse(projected.body().contains("\"price\""), "price is not selected: " + projected.body());
 	}
 
+	@Test
+	@DisplayName("entity-space $apply=compute(...) is served on the entity path, not as rows (#44)")
+	void applyComputeInEntitySpace() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		// same request as $compute, in $apply spelling: an entity collection with an extra member
+		Response result = get("/Product", Map.of("$apply", "compute(price mul 2 as doublePrice)"));
+		assertEquals(200, result.status(), result.body());
+		assertTrue(result.body().contains("\"doublePrice\":2.40"),
+				"the computed member is spliced into the entity: " + result.body());
+		assertTrue(result.body().contains("\"Milk\""), "the entity keeps its own properties");
+		assertFalse(result.body().contains("\"@odata.context\":null"), result.body());
+
+		// the alias is inlined into $filter, so the predicate still pushes down
+		Response filtered = get("/Product", Map.of("$apply", "compute(price mul 2 as doublePrice)",
+				"$filter", "doublePrice gt 2"));
+		assertEquals(200, filtered.status(), filtered.body());
+		assertFalse(mentionsVariable(lastQuery.get().filter()),
+				"the alias is inlined to real properties, not pushed as a variable");
+
+		// $select and $expand are legal here — the row path refuses them because rows are not
+		// entities, and this result is entities
+		Response projected = get("/Product", Map.of("$apply", "compute(price mul 2 as doublePrice)",
+				"$select", "name,doublePrice"));
+		assertEquals(200, projected.status(), projected.body());
+		assertTrue(projected.body().contains("\"doublePrice\":2.40"), projected.body());
+		assertFalse(projected.body().contains("\"price\""), projected.body());
+
+		// two alias scopes in one response would be ambiguous — refused, not silently merged
+		assertEquals(400, get("/Product", Map.of("$apply", "compute(price mul 2 as doublePrice)",
+				"$compute", "price mul 3 as triplePrice")).status());
+	}
+
+	@Test
+	@DisplayName("a pipeline that leaves the entity shape still takes the row path")
+	void applyWithGroupingStaysOnTheRowPath() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		// grouping produces rows, so $select stays refused there — the guard the entity-space
+		// route must not lift for pipelines that really transform the shape
+		Response grouped = get("/Product", Map.of("$apply",
+				"groupby((name),aggregate(price with sum as total))", "$select", "name"));
+		assertEquals(400, grouped.status(), grouped.body());
+	}
+
 	private static boolean mentionsVariable(OclExpression expression) {
 		if (expression instanceof org.eclipse.fennec.m2x.model.ocl.VariableExp) {
 			return true;

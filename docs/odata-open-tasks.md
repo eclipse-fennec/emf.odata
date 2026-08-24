@@ -103,8 +103,18 @@ Lücken sind jetzt Upstream-Themen der IR/Backends (Issues in emf.persistence-jp
   resolve-then-inline statt echter Cross-Root-Subquery.
 - **`rollup`-Grouping-Sets, `aggregate … from`, Custom-Aggregates** — genuin nicht portabel,
   bleibt bewusst 501 (auch im `ApplyQueries`-Übersetzer refused).
-- **Entity-space `$apply=compute(...)`** (compute ohne vorheriges Grouping) — seit
-  persistence-jpa#189 (`PROJECTION_EXPRESSION`) ausdrückbar, siehe **emf.odata#44** und §8.
+- **Entity-space `$apply=compute(...)`** — **ERLEDIGT** (emf.odata#44): kein 501 mehr, und ohne
+  `PROJECTION_EXPRESSION`. Ein `$apply`, dessen Pipeline aus einer einzigen
+  `ComputeTransformation` besteht, ist semantisch die Systemoption `$compute` in
+  `$apply`-Schreibweise → läuft über den **Entity-Pfad** mit der vorhandenen Maschinerie
+  (`computeAliasMap`, `inlineComputeAliases`/`inlineOrderBy` inlinen die Alias-Definition in
+  `$filter`/`$orderby`, Pushdown also unberührt; `ResponseFormatter` spleißt die Member je
+  Entität). Nebeneffekt: `$select`/`$expand` sind damit erlaubt — der Row-Pfad verweigert sie zu
+  Recht („rows are not entities"), hier sind es Entities. `$apply=compute(…)` + `$compute`
+  zusammen ist 400 statt stillschweigend eine Alias-Ebene zu verwerfen. Bewusst offen:
+  `filter`+`compute` gemischt in einer Pipeline (bräuchte Alias-Scoping je Position; bleibt
+  ehrliches 501). `PROJECTION_EXPRESSION` bleibt nützlich für ein `$select` berechneter Werte,
+  das wirklich in der DB projizieren soll — Performance-Frage, kein 501.
 
 **$apply-Struktur-Transformationen** (beidseitig parse→501; vor dem Bau Praxisnutzen prüfen —
 braucht RecHier-Modelle bzw. Operations-Dispatch): `search`, `nest`/`addnested`,
