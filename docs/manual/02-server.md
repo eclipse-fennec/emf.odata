@@ -123,6 +123,10 @@ DELETE /odata/Product('p1')/category/$ref    # clear / remove
   [Modelling keys](/guides/01-architecture#modelling-keys) for the single-key case and the older
   `@OData.Key` form.
 - Guards: `415` (non-JSON), `413` (body limit), `400` (empty/malformed), `405` (wrong target / no `WriteService`), `409` (conflict).
+  A conflict is either a `POST` whose key already exists, or a `DELETE` of an entity that a
+  non-containment reference still points at — the backends refuse that, and the client's way out
+  is to delete or re-point the referrer first. An entity referencing itself is refused for the
+  same reason.
 
 ## Batch
 

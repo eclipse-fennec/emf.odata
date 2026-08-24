@@ -71,6 +71,7 @@ import org.eclipse.fennec.persistence.query.api.CommandResource;
 import org.eclipse.fennec.persistence.query.api.QueryProcessor;
 import org.eclipse.fennec.persistence.query.api.QueryResultRow;
 import org.eclipse.fennec.persistence.query.api.QueryableResource;
+import org.eclipse.fennec.persistence.diagnostic.PersistenceDiagnostic;
 import org.eclipse.fennec.persistence.query.support.CommandTransaction;
 import org.eclipse.fennec.persistence.query.support.QueryValidator;
 import org.eclipse.fennec.persistence.resource.PersistenceResource;
@@ -1043,10 +1044,12 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	}
 
 	private long execute(EClass entityType, Command command) {
+		Resource resource = resourceFor(entityType);
+		int errorsBefore = resource.getErrors().size();
 		try {
-			return commands(resourceFor(entityType)).execute(command);
+			return commands(resource).execute(command);
 		} catch (IOException e) {
-			throw refused(entityType, e);
+			throw refused(entityType, resource, errorsBefore, e);
 		}
 	}
 
@@ -1084,11 +1087,29 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	}
 
 	/**
-	 * Backend refusals keep their honesty classes: "rejected" = the request is invalid
-	 * for the data (dangling reference target, malformed template) → 400; "not
-	 * supported" → 501; everything else stays an internal fault.
+	 * Backend refusals keep their honesty classes: a referential-integrity refusal is a
+	 * conflict with the current state → 409; "rejected" = the request is invalid for the
+	 * data (dangling reference target, malformed template) → 400; "not supported" → 501;
+	 * everything else stays an internal fault.
+	 * <p>
+	 * The referential case is the one refusal a client can act on — delete or re-point the
+	 * referrer first — so it must not arrive as a 500 (#43). It is recognised by the
+	 * diagnostic code, never by the message: persistence-jpa#229 gave the one contract a
+	 * code precisely because it has three wordings (JPA can say no more than that the
+	 * delete failed, with the constraint buried in a nested SQLException; the two mongo
+	 * paths phrase it per object and per selector). Only the diagnostics this command
+	 * appended are read — inside a bracket the resource is shared by every command in the
+	 * batch, so an earlier failure must not colour a later one.
+	 *
+	 * @param errorsBefore the size of {@code resource.getErrors()} before the command ran
 	 */
-	private static RuntimeException refused(EClass entityType, IOException cause) {
+	private static RuntimeException refused(EClass entityType, Resource resource, int errorsBefore,
+			IOException cause) {
+		if (hasReferentialRefusal(resource, errorsBefore)) {
+			// our own wording: the backend message carries the JPQL of the failed statement
+			return new WriteConflictException("the " + entityType.getName()
+					+ " cannot be deleted while another entity still references it", cause);
+		}
 		String message = String.valueOf(cause.getMessage());
 		if (message.contains("is not supported")) {
 			return new UnsupportedOperationException(message, cause);
@@ -1100,6 +1121,17 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		}
 		return new IllegalStateException(
 				"the persistence backend refused the " + entityType.getName() + " command", cause);
+	}
+
+	private static boolean hasReferentialRefusal(Resource resource, int errorsBefore) {
+		List<Resource.Diagnostic> errors = resource.getErrors();
+		for (int i = errorsBefore; i < errors.size(); i++) {
+			if (errors.get(i) instanceof PersistenceDiagnostic diagnostic
+					&& diagnostic.code() == PersistenceDiagnostic.CODE_REFERENTIAL_INTEGRITY) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static String unquote(String raw) {
