@@ -213,10 +213,11 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		Query irQuery = builder.build();
 		validate(irQuery, entityType);
 		Resource resource = resource(resourceSetFactory.createResourceSet(), entityType);
+		int errorsBefore = resource.getErrors().size();
 		try (var result = queryable(resource).query(irQuery)) {
 			return result.count();
 		} catch (IOException e) {
-			throw readRefused(entityType, e);
+			throw refused(entityType, resource, errorsBefore, e, Phase.READ);
 		}
 	}
 
@@ -267,6 +268,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		validate(irQuery, entityType);
 		ResourceSet resourceSet = resourceSetFactory.createResourceSet();
 		Resource resource = resource(resourceSet, entityType);
+		int errorsBefore = resource.getErrors().size();
 		try (var result = queryable(resource).query(irQuery)) {
 			List<EObject> entities;
 			try (Stream<EObject> objects = result.objects()) {
@@ -276,7 +278,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			materialize(entities, chains, resourceSet);
 			return entities;
 		} catch (IOException e) {
-			throw readRefused(entityType, e);
+			throw refused(entityType, resource, errorsBefore, e, Phase.READ);
 		}
 	}
 
@@ -306,6 +308,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			Function<Stream<Map<String, Object>>, T> terminal) {
 		validate(plan.query(), entityType);
 		Resource resource = resource(resourceSetFactory.createResourceSet(), entityType);
+		int errorsBefore = resource.getErrors().size();
 		try (var result = queryable(resource).query(plan.query())) {
 			if (plan.columns().isEmpty()) {
 				// the pipeline never left the entity shape — flatten attributes (v1 row
@@ -318,7 +321,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 				return terminal.apply(resultRows.map(row -> ApplyQueries.row(row, plan.columns())));
 			}
 		} catch (IOException e) {
-			throw readRefused(entityType, e);
+			throw refused(entityType, resource, errorsBefore, e, Phase.READ);
 		}
 	}
 
@@ -394,7 +397,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	 * Pre-validation against the backend's declared capabilities turns refusals into
 	 * structured errors: unsupported features → 501, structural violations → 400.
 	 * Without a bound {@link QueryProcessor} the resource-level IOException fallback
-	 * in {@link #readRefused} applies.
+	 * in {@link #refused} applies ({@link Phase#READ}).
 	 */
 	private void validate(Query irQuery, EClass entityType) {
 		QueryProcessor processor = processor();
@@ -439,15 +442,6 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			return queryableResource;
 		}
 		throw new IllegalStateException("the backend resource does not support queries");
-	}
-
-	private static RuntimeException readRefused(EClass entityType, IOException cause) {
-		String message = String.valueOf(cause.getMessage());
-		if (message.contains("is not supported by this backend")) {
-			return new UnsupportedOperationException(message, cause);
-		}
-		return new IllegalStateException(
-				"the persistence backend failed the " + entityType.getName() + " query", cause);
 	}
 
 	@Override
@@ -656,6 +650,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			Query irQuery = QueryBuilder.from(entityType).where(membersChanged).build();
 			validate(irQuery, entityType);
 			Resource resource = resource(resourceSetFactory.createResourceSet(), entityType);
+			int errorsBefore = resource.getErrors().size();
 			try (var result = queryable(resource).query(irQuery);
 					Stream<EObject> objects = result.objects()) {
 				for (EObject owner : objects.toList()) {
@@ -664,7 +659,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 							ChangeJournal.keyValuesOf(owner), false));
 				}
 			} catch (IOException e) {
-				throw readRefused(entityType, e);
+				throw refused(entityType, resource, errorsBefore, e, Phase.READ);
 			}
 		}
 		return owners;
@@ -1049,7 +1044,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		try {
 			return commands(resource).execute(command);
 		} catch (IOException e) {
-			throw refused(entityType, resource, errorsBefore, e);
+			throw refused(entityType, resource, errorsBefore, e, Phase.WRITE);
 		}
 	}
 
@@ -1087,10 +1082,42 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	}
 
 	/**
+	 * Which side of the SPI raised a refusal — it decides what a {@code QueryException}
+	 * means, and that genuinely differs (#51).
+	 */
+	private enum Phase {
+		/**
+		 * A read. The query was pre-validated against the backend's capabilities
+		 * ({@link #validate}), so a refusal reaching execution is one validation did not
+		 * cover: the backend cannot translate this query → 501, not a malformed request.
+		 */
+		READ("failed the", "query"),
+		/**
+		 * A write. Here a refusal means the request is invalid for the data — a malformed
+		 * change template, a dangling reference target → 400.
+		 */
+		WRITE("refused the", "command");
+
+		private final String verb;
+		private final String noun;
+
+		Phase(String verb, String noun) {
+			this.verb = verb;
+			this.noun = noun;
+		}
+	}
+
+	/**
 	 * Backend refusals keep their honesty classes: a referential-integrity refusal is a
-	 * conflict with the current state → 409; "rejected" = the request is invalid for the
-	 * data (dangling reference target, malformed template) → 400; "not supported" → 501;
-	 * everything else stays an internal fault.
+	 * conflict with the current state → 409; "rejected" is a client error whose code
+	 * depends on the {@link Phase}; "not supported" → 501; everything else stays an
+	 * internal fault.
+	 * <p>
+	 * Both paths run through here so they cannot drift apart again: the read path used to
+	 * classify on one message fragment and send everything else to 500, which turned every
+	 * backend refusal validation had not covered into an internal error with an ERROR log
+	 * line — mongo's range-only limit on a geo distance (persistence-jpa#237) is the case
+	 * that exposed it.
 	 * <p>
 	 * The referential case is the one refusal a client can act on — delete or re-point the
 	 * referrer first — so it must not arrive as a 500 (#43). It is recognised by the
@@ -1104,7 +1131,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	 * @param errorsBefore the size of {@code resource.getErrors()} before the command ran
 	 */
 	private static RuntimeException refused(EClass entityType, Resource resource, int errorsBefore,
-			IOException cause) {
+			IOException cause, Phase phase) {
 		if (hasReferentialRefusal(resource, errorsBefore)) {
 			// our own wording: the backend message carries the JPQL of the failed statement
 			return new WriteConflictException("the " + entityType.getName()
@@ -1114,13 +1141,14 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		if (message.contains("is not supported")) {
 			return new UnsupportedOperationException(message, cause);
 		}
-		// a QueryException cause is the upstream client-error shape (invalid template,
-		// dangling reference target) — "rejected" at validation, "failed" at apply time
+		// a QueryException cause is the upstream refusal shape — "rejected" at translation,
+		// "failed" at apply time; the message only reaches the log, never a response body
 		if (cause.getCause() instanceof QueryException || message.contains("rejected")) {
-			return new IllegalArgumentException(message, cause);
+			return phase == Phase.WRITE ? new IllegalArgumentException(message, cause)
+					: new UnsupportedOperationException(message, cause);
 		}
-		return new IllegalStateException(
-				"the persistence backend refused the " + entityType.getName() + " command", cause);
+		return new IllegalStateException("the persistence backend " + phase.verb + " "
+				+ entityType.getName() + " " + phase.noun, cause);
 	}
 
 	private static boolean hasReferentialRefusal(Resource resource, int errorsBefore) {
