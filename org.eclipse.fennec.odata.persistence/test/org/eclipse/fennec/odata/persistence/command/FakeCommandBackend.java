@@ -65,6 +65,24 @@ final class FakeCommandBackend implements Resource.Factory {
 
 	private final Map<String, Map<Object, EObject>> stores = new LinkedHashMap<>();
 
+	/** What the next query throws instead of running, if anything — see the two setters. */
+	private IOException queryFailure;
+
+	/**
+	 * Makes the next query refuse in the shape both real backends use: an
+	 * {@code IOException} whose message says "rejected" and whose cause is a
+	 * {@code QueryException}, raised at translation time rather than reported by
+	 * {@code validate()} (persistence-jpa#237 is one real instance).
+	 */
+	void refuseNextQuery(String reason) {
+		this.queryFailure = new IOException("Query rejected: " + reason, new QueryException(reason));
+	}
+
+	/** Makes the next query fail as a plain fault — no refusal shape, no cause to read. */
+	void failNextQueryWith(IOException failure) {
+		this.queryFailure = failure;
+	}
+
 	@Override
 	public Resource createResource(URI uri) {
 		return new FakeResource(uri, this);
@@ -163,6 +181,11 @@ final class FakeCommandBackend implements Resource.Factory {
 		@Override
 		public QueryResult query(Query query, Map<String, Object> parameters, Map<?, ?> options)
 				throws IOException {
+			if (backend.queryFailure != null) {
+				IOException failure = backend.queryFailure;
+				backend.queryFailure = null;
+				throw failure;
+			}
 			try {
 				return MemoryQueries.execute(query,
 						List.copyOf(backend.storeFor(query.getFrom().getName()).values()),

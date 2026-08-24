@@ -112,6 +112,33 @@ public class CommandReadServiceTest {
 		assertThat(result.totalCount()).isEqualTo(4);
 	}
 
+	/**
+	 * A backend refusal that {@code validate()} did not cover is the backend saying it cannot
+	 * serve this query — 501, not an internal error (#51). It used to be the latter, because
+	 * the read path classified on one message fragment and sent everything else to 500 with an
+	 * ERROR log line. Mongo's range-only limit on a geo distance (persistence-jpa#237) is a
+	 * real instance of the shape.
+	 */
+	@Test
+	void aBackendRefusalOnTheReadPathIsUnsupportedRatherThanAnInternalError() {
+		backend.refuseNextQuery("GeoDistance supports range comparisons only (LT/LE/GT/GE)");
+
+		assertThatThrownBy(() -> service.execute(new EntityQuery(personClass, null, null,
+				byId(), 0, 10, false)))
+				.isInstanceOf(UnsupportedOperationException.class)
+				.hasMessageContaining("range comparisons only");
+	}
+
+	/** A fault is still a fault: no message fragment, no QueryException cause → internal. */
+	@Test
+	void aPlainBackendFailureOnTheReadPathStaysInternal() {
+		backend.failNextQueryWith(new java.io.IOException("Failed to load resource: fake://store"));
+
+		assertThatThrownBy(() -> service.execute(new EntityQuery(personClass, null, null,
+				byId(), 0, 10, false)))
+				.isInstanceOf(IllegalStateException.class);
+	}
+
 	@Test
 	void topZeroServesTheCountPath() {
 		// GET Set/$count sends top == 0 and reads only the total
