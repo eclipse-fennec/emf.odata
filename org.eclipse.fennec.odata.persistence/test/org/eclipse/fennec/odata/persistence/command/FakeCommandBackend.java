@@ -37,6 +37,7 @@ import org.eclipse.fennec.persistence.capabilities.CommandFeature;
 import org.eclipse.fennec.persistence.capabilities.PersistenceCapabilities;
 import org.eclipse.fennec.persistence.capabilities.StoreCapabilitiesBuilder;
 import org.eclipse.fennec.persistence.capabilities.StoreFeature;
+import org.eclipse.fennec.persistence.diagnostic.PersistenceDiagnostic;
 import org.eclipse.fennec.persistence.helper.CompositeIds;
 import org.eclipse.fennec.persistence.query.QueryException;
 import org.eclipse.fennec.persistence.query.api.CommandResource;
@@ -60,6 +61,8 @@ import org.eclipse.fennec.persistence.resource.PersistenceResource;
  */
 final class FakeCommandBackend implements Resource.Factory {
 
+	private static final String DIAGNOSTIC_SOURCE = FakeCommandBackend.class.getName();
+
 	private final Map<String, Map<Object, EObject>> stores = new LinkedHashMap<>();
 
 	@Override
@@ -69,6 +72,39 @@ final class FakeCommandBackend implements Resource.Factory {
 
 	Map<Object, EObject> storeFor(String entityName) {
 		return stores.computeIfAbsent(entityName, name -> new LinkedHashMap<>());
+	}
+
+	/**
+	 * The §4c contract both database backends hold since persistence-jpa#195/#219: an object
+	 * something still points at is not deleted. A referrer that is itself among the deleted
+	 * objects counts, exactly as upstream documents at its own guard.
+	 *
+	 * @return {@code <Type>.<reference>} of the first inbound reference found, or {@code null}
+	 */
+	String referrerOf(EObject target) {
+		String fragment = CompositeIds.fragment(target);
+		for (Map<Object, EObject> store : stores.values()) {
+			for (EObject candidate : store.values()) {
+				for (EReference reference : candidate.eClass().getEAllReferences()) {
+					if (reference.isContainment() || reference.isDerived()
+							|| !reference.getEReferenceType().isInstance(target)) {
+						continue;
+					}
+					if (pointsAt(candidate.eGet(reference), target, fragment)) {
+						return candidate.eClass().getName() + "." + reference.getName();
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	private static boolean pointsAt(Object value, EObject target, String fragment) {
+		if (value instanceof List<?> many) {
+			return many.stream().anyMatch(held -> pointsAt(held, target, fragment));
+		}
+		return value == target || (value instanceof EObject held && fragment != null
+				&& fragment.equals(CompositeIds.fragment(held)));
 	}
 
 	private EObject resolveById(EReference reference, String id) {
@@ -272,6 +308,7 @@ final class FakeCommandBackend implements Resource.Factory {
 				throws IOException {
 			guardPlainSelector(delete.getSelector(), "Delete");
 			List<EObject> matches = matches(delete.getSelector(), parameters, "Delete");
+			refuseWhenStillReferenced(matches);
 			Map<Object, EObject> store = backend.storeFor(delete.getSelector().getFrom().getName());
 			matches.forEach(match -> store.remove(keyOf(match)));
 			return matches.size();
@@ -289,6 +326,27 @@ final class FakeCommandBackend implements Resource.Factory {
 				return matches.size();
 			} catch (QueryException e) {
 				throw new IOException("Update rejected: " + e.getMessage(), e);
+			}
+		}
+
+		/**
+		 * Refuses like both real backends do, and — the part that matters for the consumer —
+		 * with {@code CODE_REFERENTIAL_INTEGRITY} on the diagnostic. Since
+		 * persistence-jpa#229 that code, not the wording, is what a caller routes on: the
+		 * three paths upstream phrase this refusal three different ways.
+		 */
+		private void refuseWhenStillReferenced(List<EObject> matches) throws IOException {
+			for (EObject match : matches) {
+				String referrer = backend.referrerOf(match);
+				if (referrer != null) {
+					String message = "Cannot delete " + match.eClass().getName() + " '"
+							+ CompositeIds.fragment(match) + "': " + referrer
+							+ " still references it";
+					getErrors().add(PersistenceDiagnostic.error(
+							PersistenceDiagnostic.CODE_REFERENTIAL_INTEGRITY, DIAGNOSTIC_SOURCE,
+							message, getURI(), null));
+					throw new IOException(message);
+				}
 			}
 		}
 

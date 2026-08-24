@@ -294,6 +294,7 @@ public class MemoryWriteRepository
 			return false;
 		}
 		String key = unquote(rawKey);
+		refuseWhenStillReferenced(entityType, key);
 		synchronized (entities) {
 			captureEntity(entityType, key); // prior = the entity → rollback re-adds it
 			EObject removed = entities.remove(key);
@@ -518,6 +519,7 @@ public class MemoryWriteRepository
 	@Override
 	public boolean delete(EClass entityType, Map<String, String> namedKeys) {
 		String key = keyOf(entityType, namedKeys);
+		refuseWhenStillReferenced(entityType, key);
 		Map<String, EObject> entities = classStore(entityType);
 		synchronized (entities) {
 			captureEntity(entityType, key); // prior = the entity → rollback re-adds it
@@ -678,6 +680,63 @@ public class MemoryWriteRepository
 
 	private Map<String, EObject> classStore(EClass entityType) {
 		return store.computeIfAbsent(entityType, type -> new LinkedHashMap<>());
+	}
+
+	/**
+	 * Both database backends refuse to delete an object that a non-containment reference still
+	 * points at (persistence-jpa#195/#219, contract §4c). The reference backend answers the
+	 * same way, so a client sees one behaviour across backends and the conflict (#43) is
+	 * reachable without a database. Containment is a different question — it is ownership, and
+	 * the owner's write carries its children.
+	 * <p>
+	 * The target lookup and the scan each run under one class store's lock at a time, before
+	 * the deleting lock is taken: the discipline documented above, no method holds two. A
+	 * referrer added between scan and removal is the same race the relationship mutations
+	 * already accept.
+	 *
+	 * @throws WriteConflictException naming the referring reference, when one exists
+	 */
+	private void refuseWhenStillReferenced(EClass entityType, String key) {
+		Map<String, EObject> entities = classStore(entityType);
+		EObject target;
+		synchronized (entities) {
+			target = entities.get(key);
+		}
+		if (target == null) {
+			return; // a miss stays a miss — 404, not a conflict
+		}
+		for (Map.Entry<EClass, Map<String, EObject>> entry : store.entrySet()) {
+			List<EReference> candidates = entry.getKey().getEAllReferences().stream()
+					.filter(reference -> !reference.isContainment() && !reference.isDerived())
+					.filter(reference -> reference.getEReferenceType().isInstance(target))
+					.toList();
+			if (candidates.isEmpty()) {
+				continue;
+			}
+			synchronized (entry.getValue()) {
+				for (EObject referrer : entry.getValue().values()) {
+					for (EReference reference : candidates) {
+						if (pointsAt(referrer.eGet(reference), target)) {
+							throw new WriteConflictException("the " + entityType.getName()
+									+ " cannot be deleted while " + entry.getKey().getName() + "."
+									+ reference.getName() + " still references it");
+						}
+					}
+				}
+			}
+		}
+	}
+
+	private boolean pointsAt(Object value, EObject target) {
+		if (value instanceof List<?> many) {
+			return many.stream().anyMatch(held -> pointsAt(held, target));
+		}
+		if (value == target) {
+			return true;
+		}
+		// keyString is how unlink identifies a member — same notion of "the same entity"
+		return value instanceof EObject held && held.eClass() == target.eClass()
+				&& keyString(held) != null && keyString(held).equals(keyString(target));
 	}
 
 	private String keyOf(EClass entityType, EObject entity) {

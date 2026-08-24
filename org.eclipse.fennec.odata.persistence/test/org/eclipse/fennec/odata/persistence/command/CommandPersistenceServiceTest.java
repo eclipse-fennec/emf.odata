@@ -235,6 +235,48 @@ public class CommandPersistenceServiceTest {
 		assertThat(service.delete(personClass, "1")).isFalse();
 	}
 
+	/**
+	 * A refusal a client can act on must not arrive as a 500 (#43). The backend refuses with
+	 * {@code CODE_REFERENTIAL_INTEGRITY} on the diagnostic (persistence-jpa#229) — the code is
+	 * what this routes on, because the one contract has three wordings upstream — and the
+	 * service turns it into the conflict the servlet answers with 409.
+	 */
+	@Test
+	void deletingAStillReferencedEntityConflictsInsteadOfFailing() {
+		service.create(personClass, person(1, "Ada", 36));
+		EObject grace = person(2, "Grace", 45);
+		grace.eSet(personFriend, friendStub(1));
+		service.create(personClass, grace);
+
+		assertThatThrownBy(() -> service.delete(personClass, "1"))
+				.isInstanceOf(WriteConflictException.class)
+				.hasMessageContaining("Person")
+				.hasMessageContaining("references")
+				// the backend's own wording (and any JPQL in it) stays out of the answer
+				.hasMessageNotContaining("Cannot delete");
+		assertThat(stored(1)).isNotNull();
+
+		// the referrer goes first, then the target — the ordinary way out for the client
+		assertThat(service.delete(personClass, "2")).isTrue();
+		assertThat(service.delete(personClass, "1")).isTrue();
+	}
+
+	/**
+	 * Upstream documents this at its own guard: a referrer among the matched objects counts,
+	 * so an entity pointing at itself cannot be deleted. Pinned so the answer is a documented
+	 * 409 rather than a surprise.
+	 */
+	@Test
+	void deletingASelfReferencingEntityConflicts() {
+		// the link comes after the insert: an insert cannot bind a target that does not
+		// exist yet, not even itself (upstream refuses the dangling target)
+		service.create(personClass, person(1, "Narcissus", 30));
+		service.link(personClass, "1", "friend", "1");
+
+		assertThatThrownBy(() -> service.delete(personClass, "1"))
+				.isInstanceOf(WriteConflictException.class);
+	}
+
 	@Test
 	void patchChangesOnlyTransmittedAttributes() {
 		service.create(personClass, person(1, "Ada", 36, "math"));

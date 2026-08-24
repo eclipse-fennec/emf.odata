@@ -1,6 +1,6 @@
 # Fennec OData – Offene Aufgaben
 
-Status: 2026-08-24. **Das eine Aufgaben-Dokument**: alle offenen Punkte — Spec-Lücken,
+Status: 2026-08-24 (nachmittags: persistence-jpa#219/#223 gefixt, #229 neu). **Das eine Aufgaben-Dokument**: alle offenen Punkte — Spec-Lücken,
 Backlog-Reste, Findings, offene Fragen — unabhängig von ihrer Herkunft. Konsolidiert aus den
 früheren Backlog-Dokumenten (`odata-e2-converter-open-points.md`, `odata-e4-query-open-points.md`,
 `odata-e5-e6-server-state.md`, `odata-spec-repos-gap-analysis.md`, Requirements-Doc §7 —
@@ -385,22 +385,40 @@ reicht sie ebenfalls durch. OData selbst bindet keine Parameter — der Weg wär
 Prepared Queries interessant (siehe unten).
 
 **Zwei Befunde, als Issues festgehalten:**
-- **emf.odata#43** — ein abgelehntes DELETE (Entität noch referenziert) antwortet **500 statt
-  409**. #195 macht „Löschen eines noch referenzierten Objekts wird abgelehnt" zum Kontrakt
-  (§4c); die Ablehnung kommt als schlichte `IOException` (JPA: `"Delete failed for selector on
-  '<jpql>'"` mit der FK-Verletzung als Cause; Mongo: `"Cannot delete X 'id': Y.ref still
-  references it"`). `CommandPersistenceService.refused` klassifiziert per Message
-  („is not supported" → 501, `QueryException`-Cause oder „rejected" → 400, sonst
-  `IllegalStateException`) → `WriteDispatcher` fängt generisch → 500 plus ERROR-Logzeile.
-  Richtig ist 409 Conflict; `WriteConflictException` → `SC_CONFLICT` gibt es schon (POST auf
-  existierenden Key). Die saubere Lösung braucht upstream einen **typisierten** Refusal-Code,
-  sonst bleibt es Message-Sniffing.
-- **persistence-jpa#219** — #195 greift **nicht** auf `execute(DeleteCommand)`. Der
-  Mongo-Guard sitzt in `MongoResourceImpl.delete()` über `getContents()`;
-  `executeDelete(DeleteCommand, parameters)` geht direkt auf `deleteMany(filter)`. JPA erfüllt
-  den Kontrakt pfadunabhängig (FK in der DB), Mongo nur auf dem Resource-Pfad. OData löscht
-  ausschließlich per `DeleteCommand` + Key-Selektor → die Asymmetrie, die #195 beseitigen
-  wollte, besteht genau dort weiter, wo wir stehen.
+- **emf.odata#43 — ERLEDIGT am 2026-08-24**: ein abgelehntes DELETE (Entität noch referenziert)
+  antwortet jetzt **409 statt 500**. Erkannt wird die Ablehnung am **Diagnostic-Code**
+  (`PersistenceDiagnostic.CODE_REFERENTIAL_INTEGRITY`, persistence-jpa#229), NIE am Wortlaut —
+  denselben Kontrakt formulieren die drei Upstream-Pfade dreimal anders (JPA kann nur sagen,
+  dass das Delete fehlschlug, die Constraint liegt in einer verschachtelten `SQLException`;
+  Mongo formuliert pro Objekt bzw. pro Selektor). `CommandPersistenceService.execute` merkt
+  sich die Fehlerzahl der Resource vor dem Kommando und liest nur die neu angehängten
+  Diagnostics — innerhalb eines Brackets teilen alle Kommandos eines `$batch` dieselbe
+  Resource, ein früherer Fehler darf einen späteren nicht einfärben. Der Client bekommt
+  unsere eigene Formulierung, nie die des Backends (dort steckt die JPQL drin).
+  **Das In-Memory-Referenz-Backend hält den Kontrakt jetzt auch** (`MemoryWriteRepository`,
+  Scan pro Klassen-Store unter dessen eigenem Lock, vor dem Lösch-Lock — die dort
+  dokumentierte Lock-Disziplin), damit über alle Backends dieselbe Antwort kommt.
+  Mit-gepinnt: eine Entität mit Selbst-Referenz ist ebenfalls 409 (upstream bewusst so —
+  ein Referrer unter den Treffern zählt mit).
+- **persistence-jpa#219 — GEFIXT am 2026-08-24** (PR #224, `7791b00`; Befund war: #195 greift
+  nicht auf `execute(DeleteCommand)`, der Mongo-Guard saß nur in `MongoResourceImpl.delete()`
+  über `getContents()`, während `executeDelete` direkt auf `deleteMany(filter)` ging — und das
+  ist der Pfad, den OData ausschließlich benutzt). Der Command-Pfad löst jetzt erst die
+  getroffenen IDs auf (ein `find`, auf `_id` projiziert), prüft dann pro Kandidaten-Referenz mit
+  einem `$in` über alle IDs, löscht danach über die aufgelösten IDs. **Dieselbe Änderung schloss
+  persistence-jpa#223**: der Command-Pfad zieht jetzt auch die dokumentübergreifenden
+  Containment-Kinder und ihre Ownership-Records mit (#138/#139) — vorher hinterließ ein
+  OData-DELETE auf Mongo Waisen, die nur der #140-Sweep noch fand. Beides ohne Code-Arbeit bei
+  uns, aber **zwei Folgen für #43**: die Ablehnung ist jetzt auf BEIDEN Backends garantiert
+  (nicht mehr nur JPA), und es gibt eine dritte Wortlaut-Variante
+  (`"Cannot delete from '<collection>': <ref> still references at least one of the <n> …"`).
+  Neue Kante, upstream bewusst so: ein Referrer, der selbst unter den Treffern ist, zählt mit —
+  eine Entität mit Selbst-Referenz ist beim Einzel-DELETE also abgelehnt (409, heute 500).
+- **persistence-jpa#229** (neu, offen) — genau deshalb: die Ablehnung braucht einen **Code**,
+  keinen Wortlaut. Präzedenz im selben Workspace ist `QueryValidator.CODE_UNSUPPORTED_FEATURE`,
+  auf das der `CommandPersistenceService` schon routet; `PersistenceDiagnostic` trägt heute
+  Severity/Source/Message/Location/Cause und `Resource.Diagnostic` hat kein `getCode()`.
+  Bis das kommt, ist jede #43-Lösung Message-Erkennung über drei Wortlaute.
 
 **Eine 501-Chance: emf.odata#44** — #189 gibt `Selection` die Dualität `path` **oder** `key`
 (Ausdruck mit Pflicht-Alias, `QueryBuilder.selectAs`, Capability `PROJECTION_EXPRESSION`, von

@@ -153,6 +153,32 @@ class MemoryWriteRepositoryTest {
 	}
 
 	@Test
+	@DisplayName("deleting an entity a reference still points at is a conflict, not a removal")
+	void deletingAStillReferencedEntityIsRefused() {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		repository.create(categoryClass, dairy);
+		repository.create(productClass, product("m1", "Milk", "1.20"));
+		repository.link(productClass, "'m1'", "category", "'c1'");
+
+		// the same contract both database backends hold (persistence-jpa#195/#219, §4c), so
+		// the reference backend answers the conflict too instead of leaving a dangling link
+		WriteConflictException refused = assertThrows(WriteConflictException.class,
+				() -> repository.delete(categoryClass, "'c1'"));
+		assertTrue(refused.getMessage().contains("Product.category"),
+				"the refusal names the referring reference: " + refused.getMessage());
+
+		// the referrer goes first — then the target deletes normally
+		assertTrue(repository.unlink(productClass, "'m1'", "category", null));
+		assertTrue(repository.delete(categoryClass, "'c1'"));
+
+		// containment is ownership, not this question: a review lives inside its product
+		assertTrue(repository.delete(productClass, "'m1'"),
+				"a product owning contained reviews still deletes");
+	}
+
+	@Test
 	@DisplayName("non-containment payload members resolve to STORE entities by key")
 	void nonContainmentBindings() {
 		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
