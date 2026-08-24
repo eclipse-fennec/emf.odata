@@ -121,18 +121,19 @@ final class FakeCommandBackend implements Resource.Factory {
 
 		@Override
 		public QueryResult query(Query query) throws IOException {
-			try {
-				return MemoryQueries.execute(query,
-						List.copyOf(backend.storeFor(query.getFrom().getName()).values()), null);
-			} catch (QueryException e) {
-				throw new IOException("Query rejected: " + e.getMessage(), e);
-			}
+			return query(query, null, null);
 		}
 
 		@Override
 		public QueryResult query(Query query, Map<String, Object> parameters, Map<?, ?> options)
 				throws IOException {
-			return query(query);
+			try {
+				return MemoryQueries.execute(query,
+						List.copyOf(backend.storeFor(query.getFrom().getName()).values()),
+						parameters);
+			} catch (QueryException e) {
+				throw new IOException("Query rejected: " + e.getMessage(), e);
+			}
 		}
 
 		@Override
@@ -227,14 +228,25 @@ final class FakeCommandBackend implements Resource.Factory {
 
 		@Override
 		public long execute(Command command) throws IOException {
+			return execute(command, null, null);
+		}
+
+		/**
+		 * The bound form (persistence-jpa#202): a selector may carry {@code ParameterRef}
+		 * nodes, and the values reach the selector evaluation the same way they reach the
+		 * real backends. Options are read by neither.
+		 */
+		@Override
+		public long execute(Command command, Map<String, Object> parameters, Map<?, ?> options)
+				throws IOException {
 			if (command instanceof InsertCommand insert) {
 				return executeInsert(insert);
 			}
 			if (command instanceof DeleteCommand delete) {
-				return executeDelete(delete);
+				return executeDelete(delete, parameters);
 			}
 			if (command instanceof UpdateCommand update) {
-				return executeUpdate(update);
+				return executeUpdate(update, parameters);
 			}
 			throw new IOException("Unsupported command " + command.eClass().getName());
 		}
@@ -256,19 +268,21 @@ final class FakeCommandBackend implements Resource.Factory {
 			}
 		}
 
-		private long executeDelete(DeleteCommand delete) throws IOException {
+		private long executeDelete(DeleteCommand delete, Map<String, Object> parameters)
+				throws IOException {
 			guardPlainSelector(delete.getSelector(), "Delete");
-			List<EObject> matches = matches(delete.getSelector(), "Delete");
+			List<EObject> matches = matches(delete.getSelector(), parameters, "Delete");
 			Map<Object, EObject> store = backend.storeFor(delete.getSelector().getFrom().getName());
 			matches.forEach(match -> store.remove(keyOf(match)));
 			return matches.size();
 		}
 
-		private long executeUpdate(UpdateCommand update) throws IOException {
+		private long executeUpdate(UpdateCommand update, Map<String, Object> parameters)
+				throws IOException {
 			guardPlainSelector(update.getSelector(), "Update");
 			try {
 				ChangeTemplates.validate(update.getTemplate(), update.getSelector().getFrom());
-				List<EObject> matches = matches(update.getSelector(), "Update");
+				List<EObject> matches = matches(update.getSelector(), parameters, "Update");
 				for (EObject match : matches) {
 					ChangeTemplates.apply(update.getTemplate(), match, backend::resolveById);
 				}
@@ -278,9 +292,11 @@ final class FakeCommandBackend implements Resource.Factory {
 			}
 		}
 
-		private List<EObject> matches(Query selector, String operation) throws IOException {
+		private List<EObject> matches(Query selector, Map<String, Object> parameters,
+				String operation) throws IOException {
 			try (QueryResult result = MemoryQueries.execute(selector,
-					List.copyOf(backend.storeFor(selector.getFrom().getName()).values()), null);
+					List.copyOf(backend.storeFor(selector.getFrom().getName()).values()),
+					parameters);
 					Stream<EObject> objects = result.objects()) {
 				return objects.toList();
 			} catch (QueryException e) {
