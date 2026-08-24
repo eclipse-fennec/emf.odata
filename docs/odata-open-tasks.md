@@ -52,9 +52,18 @@ Alle Level 4.0+4.01 Minimal–Advanced sind beansprucht; das hier ist der Rest d
     `GEO_*`, JPA verweigert bis PostGIS) — davon exerziert **keine** ABNF-Suite etwas, es sind
     die Formen, die echte Clients schicken: „innerhalb dieses Polygons", „nahe diesem Punkt",
     `$orderby` nach Distanz. Das ist der Inhalt von **emf.odata#47** und bringt keinen Skip
-    weniger, sondern Funktionalität. Blocker bleibt die Bridge: `OclToExpr` kennt kein Geo,
-    `ExprToOcl` verweigert als „dritte Totalitäts-Ausnahme" → **persistence-jpa#232, in
-    Arbeit**.
+    weniger, sondern Funktionalität. **Der Bridge-Blocker ist weg**: persistence-jpa#232 ist
+    gemergt (PR #235), die Geo-Vokabel hat eine OCL-Dialektform —
+    `geoWithin(lonPfad, latPfad, geoPolygon(…))` bzw. `geoWithin(punktPfad, …)`,
+    `geoDistance(…, geoPoint(lon, lat)) <= 500`; Arität trägt die Bindung, Shape immer zuletzt,
+    **Longitude first** (weicht bewusst von `Expressions.geoSubject(latPath, lonPath)` ab).
+    Realistischer Erstschnitt ist damit **`$filter` only**: `GeoWithin` und `GeoDistance` in
+    einem Range-Vergleich bedienen Mongo + Memory (JPA verweigert, `eq`/`ne` auf einer Distanz
+    lehnt Mongo namentlich ab). **Nearest-first-`$orderby` ist Memory-only** — im Mongo-Sortier-
+    pfad gibt es kein `$geoNear`, bleibt also ehrliches 501. Zwei eigene Aufgaben stehen im
+    Issue: das CSDL-Mapping (eine `Edm.GeographyPoint`-Property ↔ ein gepacktes Feature ODER ein
+    lat/lon-Paar) und `geoWithin`/`geoDistance` im eigenen `OclEvaluator`, sonst antwortet das
+    In-Memory-Backend anders als Mongo (Haversine über 6371008.8 m als Referenz).
   - **Roher Apostroph im Key-Segment** (`People/O'Neil`, URL-Decode/Lexer-Randfall, ADR-0005)
     — 2 Skips.
   - **4.02 `case()` zusammen mit `rolluprecursive`** — 1 Skip, `$apply`-Submodell.
