@@ -51,8 +51,8 @@ import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.emf.ecore.xmi.XMLResource;
-import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
+import org.eclipse.fennec.emf.osgi.metadata.MetadataService;
 import org.eclipse.fennec.m2x.model.ocl.IntegerLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.OclFactory;
@@ -62,17 +62,16 @@ import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.Variable;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
-import org.eclipse.fennec.emf.osgi.metadata.MetadataService;
-import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.csdl.CsdlJsonWriter;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
 import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.eclipse.fennec.odata.csdl.OdataResolver;
 import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
+import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluationException;
+import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
-import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
@@ -82,8 +81,6 @@ import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.CachingODataQueryParser;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataResourceParser;
-import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluationException;
-import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.query.ResourcePath;
 import org.eclipse.fennec.odata.query.apply.ApplyPipeline;
@@ -119,9 +116,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Catch-all OData servlet (E6/E7 skeleton, ADR-0001: plain Jakarta Servlet on the OSGi HTTP
@@ -895,13 +890,27 @@ public class ODataServlet extends HttpServlet {
 		if (target == null) {
 			return;
 		}
+		// compute in entity space is the $compute option in $apply spelling (#44): the result is
+		// still the entity set with extra members, so it belongs on the entity path, not the row
+		// path — which also makes $select/$expand legal with it, as the protocol says they are
+		ApplyPipeline entitySpaceCompute = null;
 		if (option(request, "$apply") != null) {
 			if (castType != null) { // aggregation over a cast collection: honest 501 over wrong rows
 				error(response, 501, "$apply on type-cast collections is not implemented");
 				return;
 			}
-			apply(setName, target, request, response);
-			return;
+			entitySpaceCompute = parseChecked(option(request, "$apply"),
+					value -> entitySpaceCompute(value, target.entityType()));
+			if (entitySpaceCompute == null) {
+				apply(setName, target, request, response);
+				return;
+			}
+			if (option(request, "$compute") != null) {
+				// two alias scopes, one response: refuse rather than pick one silently
+				error(response, HttpServletResponse.SC_BAD_REQUEST,
+						"combining $apply=compute(...) with $compute is not supported");
+				return;
+			}
 		}
 		if (option(request, "$deltatoken") != null) { // following a delta link ([OData-Protocol] 11.3.2)
 			deltas.deltaResponse(setName, castName, castType, target, request, response);
@@ -910,8 +919,10 @@ public class ODataServlet extends HttpServlet {
 		// a cast makes the DERIVED type the context: its properties are addressable in options
 		EClass context = castType != null ? castType : target.entityType();
 		boolean xml = formats.wantsXml(request);
-		// $compute defines dynamic aliases that may be referenced from $filter/$orderby/$select
-		ApplyPipeline computePipeline = computePipeline(request, context);
+		// $compute defines dynamic aliases that may be referenced from $filter/$orderby/$select —
+		// an entity-space $apply=compute(...) defines exactly the same thing (#44)
+		ApplyPipeline computePipeline = entitySpaceCompute != null ? entitySpaceCompute
+				: computePipeline(request, context);
 		Map<String, OclExpression> computeAliases = computeAliasMap(computePipeline);
 		SelectTree select = formats.selectOption(request, context, computeAliases.keySet());
 		Map<String, ResponseFormatter.ExpandItem> expand = formats.expandOption(request, context);
@@ -2151,6 +2162,29 @@ public class ODataServlet extends HttpServlet {
 	 * from {@code $filter}/{@code $orderby}/{@code $select} and to splice the computed members into
 	 * the response (evaluated per entity), so it stays backend-agnostic. Null when no {@code $compute}.
 	 */
+	/**
+	 * {@code $apply=compute(…)} with nothing else in the pipeline: the transformation adds
+	 * members to each entity and changes nothing about the shape, which is what {@code $compute}
+	 * (13.1.2) does — so it is served on the entity path with the same machinery (#44). The
+	 * aliases are inlined into {@code $filter}/{@code $orderby}, so the pushdown is unaffected,
+	 * and spliced into the response per entity.
+	 * <p>
+	 * Everything else — anything that groups, aggregates or otherwise leaves the entity shape —
+	 * returns {@code null} and takes the row path. A pipeline mixing {@code filter} with
+	 * {@code compute} would be servable the same way (the filters fold into the query's own
+	 * predicate) and is deliberately left for when something asks: it needs alias scoping per
+	 * position in the pipeline, which the single-transformation case does not.
+	 *
+	 * @return the pipeline when it is entity-space compute, {@code null} otherwise
+	 */
+	private ApplyPipeline entitySpaceCompute(String applyOption, EClass context) {
+		ApplyPipeline pipeline = parser.parseApply(applyOption, context);
+		return pipeline.getTransformations().size() == 1
+				&& pipeline.getTransformations().get(0) instanceof ComputeTransformation
+						? pipeline
+						: null;
+	}
+
 	private ApplyPipeline computePipeline(HttpServletRequest request, EClass context) {
 		String compute = option(request, "$compute");
 		if (compute == null || compute.isBlank()) {
