@@ -34,9 +34,17 @@ Alle Level 4.0+4.01 Minimal–Advanced sind beansprucht; das hier ist der Rest d
 - **Delta-Wire-Formen**: nested `nav@delta` (wir emittieren die spec-legale
   Full-Representation), 4.0-flattened-Delta-Payloads, `continue-on-error`,
   `@odata.bind` im `#$delta`-PATCH-Payload (alles ehrliche 501/nicht-angewendet).
-- **Ausdrucks-Restlücken** (die 13 verbleibenden ABNF-Skips von 710 Fällen):
-  Geo-Literale (`geo.*` — eigenes Spatial-Paket nötig), 4.02 `case()`,
-  roher Apostroph im Key-Segment (URL-Decode/Lexer-Randfall).
+- **Ausdrucks-Restlücken** (die 13 verbleibenden ABNF-Skips von 710 Fällen): `geo.*`
+  (10 Skips = 5 Ausdrücke, jeder in beiden Suiten — **emf.odata#47**; die Aussage „eigenes
+  Spatial-Paket nötig" war überholt: die IR hat seit persistence-jpa#101 `GeoWithin`,
+  `GeoDistance` als Wert-Ausdruck, Point/Box/Polygon und `GEO_*`-Capabilities, deklariert von
+  Mongo und der Memory-Engine, JPA verweigert bis PostGIS. Zwei unserer fünf Ausdrücke wären
+  damit abbildbar; Pfad-zu-Pfad-Distanz, `geo.length` und Shape-in-Shape sind echte
+  IR-Lücken → persistence-jpa#233. **Blocker ist die Bridge**: `OclToExpr` kennt kein Geo und
+  `ExprToOcl` verweigert als „dritte Totalitäts-Ausnahme" → persistence-jpa#232; solange das
+  offen ist, gibt es von unserem OCL-Pfad keinen Weg in die IR), 4.02 `case()` (1 Skip,
+  im selben `$apply`-Fall wie `rolluprecursive`), roher Apostroph im Key-Segment
+  (URL-Decode/Lexer-Randfall — 2 Skips).
 - **`$root`**-Backend-Semantik und **`@Ns.Term`**-Laufzeitwerte in Ausdrücken
   (beides parst → 501; Termwerte bräuchten Vokabular-Auswertung zur Laufzeit,
   niedriger Praxisnutzen).
