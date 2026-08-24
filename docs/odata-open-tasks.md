@@ -1,6 +1,6 @@
 # Fennec OData – Offene Aufgaben
 
-Status: 2026-08-19. **Das eine Aufgaben-Dokument**: alle offenen Punkte — Spec-Lücken,
+Status: 2026-08-24. **Das eine Aufgaben-Dokument**: alle offenen Punkte — Spec-Lücken,
 Backlog-Reste, Findings, offene Fragen — unabhängig von ihrer Herkunft. Konsolidiert aus den
 früheren Backlog-Dokumenten (`odata-e2-converter-open-points.md`, `odata-e4-query-open-points.md`,
 `odata-e5-e6-server-state.md`, `odata-spec-repos-gap-analysis.md`, Requirements-Doc §7 —
@@ -56,6 +56,8 @@ Lücken sind jetzt Upstream-Themen der IR/Backends (Issues in emf.persistence-jp
   beide auch in der IR noch nicht ausgedrückt; bei Bedarf upstream einkippen.
 - **`rollup`-Grouping-Sets, `aggregate … from`, Custom-Aggregates** — genuin nicht portabel,
   bleibt bewusst 501 (auch im `ApplyQueries`-Übersetzer refused).
+- **Entity-space `$apply=compute(...)`** (compute ohne vorheriges Grouping) — seit
+  persistence-jpa#189 (`PROJECTION_EXPRESSION`) ausdrückbar, siehe **emf.odata#44** und §8.
 
 **$apply-Struktur-Transformationen** (beidseitig parse→501; vor dem Bau Praxisnutzen prüfen —
 braucht RecHier-Modelle bzw. Operations-Dispatch): `search`, `nest`/`addnested`,
@@ -358,13 +360,101 @@ sind dabei durchgeschoben und inlinen als `static final int` in Konsumenten-Klas
 Workspace hat kein Baselining konfiguriert. Für OData heißt das bis dahin: der Snapshot ist die
 einzige Pin-Möglichkeit, ein Import-Range kann die Anforderung nicht ausdrücken.
 
-**Beobachten, nicht darauf bauen:** die ungemergte Repository-Fassade auf
-`emf.persistence-jpa` `origin/repository-service` (`RepositoryService`/`ReadRepository`/
-`WriteRepository`/`Repository` + `PreparedQuery`, Nachfolger von Geckos `EMFRepository`, plus dünne
-JPA-/Mongo-Flavor-Komponenten) überlappt mit `odata.persistence.api` (`EntityRepository`,
-`QueryService`) — und `PreparedQuery` (einmal bei `prepare` validiert, danach nur Parameter) wäre der
-natürliche Andockpunkt für die ADR-0004-Cache-Geschichte. Solange ungemergt: User-Entscheidung, kein
-Commitment.
+### Welle 2026-08-19 … 2026-08-23 geprüft (2026-08-24)
+
+~50 Commits upstream. Treiber ist diesmal nicht `emf.search`, sondern die
+Named-Operations-/Prepared-Query-Serie (#201–#204, #163), die TCK-Härtung (#174/#175/#195),
+die Flavor-Achse (#172) und die IR-Runde für Intervalle/Group-Representatives (#215/#214).
+Nachweis gegen frische Snapshots (`~/.m2/…/fennec/persistence` + `cnf/cache` gelöscht;
+Index `Eclipse Fennec Persistence – 0.1.0.202608232030-SNAPSHOT`): `build` grün,
+`test --rerun` erzwungen **1.086 Unit-Tests / 0 Failures / 13 Skips**, `testOSGi --rerun`
+erzwungen **20 Itests + 6 metadata.tests** grün, alle vier bndruns einzeln erzwungen
+resolvt. Merke: `--rerun` wirkt hier nur auf die *zuletzt* genannte Task — die Resolves
+müssen einzeln erzwungen werden, sonst melden sie UP-TO-DATE und lügen grün
+(→ Sync-Gotchas). Beim ersten Lauf nach dem Cache-Ritual scheitert der Build einmal mit
+„`persistence.orm` Not found" — das Jar war noch nicht heruntergeladen; zweiter Lauf zieht es.
+
+**#202 ist ein echter Bruch, und der einzige** — `CommandResource` hat eine neue
+Interface-Methode: `execute(Command, parameters, options)`, das Schreib-Gegenstück zu
+`find(query, parameters, options)`. Produktivcode ist nicht betroffen (wir *rufen* die SPI
+nur), aber `FakeCommandBackend.FakeResource` implementiert das Interface und kompilierte
+nicht mehr. Das Double fährt jetzt die gebundene Form als die echte und reicht die Bindings
+in die Selektor-Auswertung (`MemoryQueries.execute(selector, candidates, parameters)`);
+`query(Query, parameters, options)` hat die Parameter vorher stillschweigend verworfen und
+reicht sie ebenfalls durch. OData selbst bindet keine Parameter — der Weg wäre erst mit
+Prepared Queries interessant (siehe unten).
+
+**Zwei Befunde, als Issues festgehalten:**
+- **emf.odata#43** — ein abgelehntes DELETE (Entität noch referenziert) antwortet **500 statt
+  409**. #195 macht „Löschen eines noch referenzierten Objekts wird abgelehnt" zum Kontrakt
+  (§4c); die Ablehnung kommt als schlichte `IOException` (JPA: `"Delete failed for selector on
+  '<jpql>'"` mit der FK-Verletzung als Cause; Mongo: `"Cannot delete X 'id': Y.ref still
+  references it"`). `CommandPersistenceService.refused` klassifiziert per Message
+  („is not supported" → 501, `QueryException`-Cause oder „rejected" → 400, sonst
+  `IllegalStateException`) → `WriteDispatcher` fängt generisch → 500 plus ERROR-Logzeile.
+  Richtig ist 409 Conflict; `WriteConflictException` → `SC_CONFLICT` gibt es schon (POST auf
+  existierenden Key). Die saubere Lösung braucht upstream einen **typisierten** Refusal-Code,
+  sonst bleibt es Message-Sniffing.
+- **persistence-jpa#219** — #195 greift **nicht** auf `execute(DeleteCommand)`. Der
+  Mongo-Guard sitzt in `MongoResourceImpl.delete()` über `getContents()`;
+  `executeDelete(DeleteCommand, parameters)` geht direkt auf `deleteMany(filter)`. JPA erfüllt
+  den Kontrakt pfadunabhängig (FK in der DB), Mongo nur auf dem Resource-Pfad. OData löscht
+  ausschließlich per `DeleteCommand` + Key-Selektor → die Asymmetrie, die #195 beseitigen
+  wollte, besteht genau dort weiter, wo wir stehen.
+
+**Eine 501-Chance: emf.odata#44** — #189 gibt `Selection` die Dualität `path` **oder** `key`
+(Ausdruck mit Pflicht-Alias, `QueryBuilder.selectAs`, Capability `PROJECTION_EXPRESSION`, von
+JPA, Mongo UND der Memory-Engine deklariert). Damit ist genau die Zeilenform ausdrückbar, an
+der `ApplyQueries` heute scheitert („entity-space compute would need 'all attributes + alias'
+result rows"): entity-space `$apply=compute(...)` muss kein 501 bleiben. Offene Entscheidungen
+im Issue (Response-Shape, Navigation-Properties, ETag, und ob `$compute` (13.1.2) mitgeschoben
+wird statt im `ResponseFormatter` pro Entität ausgewertet).
+
+**Bndrun-Drift, mitgezogen:** beide Beispiel-Closures ziehen jetzt Jackson 2.22 / 3.2.2
+(kommt von den Codec-/Upstream-Snapshots), und `example-jpa` zusätzlich
+`org.eclipse.fennec.emf.osgi.eobject.registry` — Folge von #203: `RegistryNamedOperations`
+liegt auf der emf.osgi-EObject-Registry, und die Persistence-Bundles binden den
+`NamedOperations`-Service (optional+greedy, deshalb resolvt der Itest-Closure unverändert).
+
+**#172 bringt uns Genauigkeit gratis:** Capabilities werden per Backend × Flavor deklariert
+(`CapabilityDeclaration`, `JpaFlavor` **geprobt** statt konfiguriert, `JpaFlavorCapabilities`
+analog zu Mongo), und der `jpa://`-Whiteboard gibt jeder Resource den Prozessor ihres Flavors.
+Unsere Capability-Fragen hängen am Resource-Prozessor (`processor.capabilities().supports(…)`),
+werden also automatisch flavor-genau statt Union über alle relationalen DBs. Alle drei
+Gap-Sets sind heute leer (gemessen gegen H2/PostgreSQL/MariaDB); die erste echte Lücke ist
+angekündigt (Fuzzy auf PostgreSQL, nicht auf H2) — für `$search` unkritisch, weil das
+`toLower`-Paar in `STRING_MATCH_CASE_INSENSITIVE` faltet und das alle Flavors deklarieren.
+
+**Additiv und für OData ohne Wirkung:** #207 (`QueryFeature.SERIES_RANGE` **entfernt** — von
+uns nie deklariert oder gelesen; `AS_OF` bleibt als CHANGELOG-Vokabular), #215
+(`IntervalSubject`/`IntervalMatch` — OData hat keinen Intervall-Typ, Validity-Perioden wären
+Modell-Sache), #214 (Group-Representatives, Top-N-Dokumente je Gruppe; der reservierte
+`BottomTop`-Slot nennt ausdrücklich ODatas `topcount`-Familie, die bei uns bewusst 501 ist),
+#186/#183–#185 (`MapValue` + EMap-auf-Tabelle — OData modelliert keine EMaps), #188/#190
+(Quantoren/Group-by über Maps), #196/#197/#174/#175 (TCK), #193 (Doku-Seite).
+
+**#217 betrifft uns nicht:** die Plugin-Key-Kollision ist `fennecJPA` (der zurückgezogene
+alte Name) gegen `fennecPersistence`; `cnf/ext/fennec.bnd` aktiviert nur letzteren. Die neue
+zweite Library `fennecPersistenceTest` (#216, TCK + `query.derived` + JUnit/AssertJ) wäre der
+Weg, falls wir die Persistence-TCK je binden wollen — heute binden wir sie nicht.
+
+**Repository-Fassade ist GEMERGT und publiziert** (2026-08-19 `3aab395`, Bundles
+`persistence.repository{,.jpa,.mongo}` seit 2026-08-23 im Index; der frühere Hinweis
+„ungemergt, beobachten" ist überholt): `RepositoryService`/`ReadRepository`/`WriteRepository`
++ `PreparedQuery` überlappt weiterhin mit `odata.persistence.api` (`EntityRepository`,
+`QueryService`). Dazu kommt jetzt die Named-Operations-Schicht: `NamedOperations`-Katalog
+(#203, Default über die emf.osgi-EObject-Registry, Backend-Tabelle/-Collection als Fallback),
+`Command.name` (#201), gebundene Command-Selektoren (#202), und `PreparedQuery` als
+**konfigurierter Service** mit `parameterDeclarations()`, dessen Query bei `prepare` gegen die
+Backend-Capabilities validiert wird (#204) — plus #163, damit eine aus dem Katalog geladene
+Query nicht bei jeder Ausführung zurückgeschrieben wird. Zwei Andockpunkte, beide
+**User-Entscheidung, kein Commitment**:
+1. **ADR-0004-Cache-Story**: `PreparedQuery` ist das „einmal validiert, danach nur Parameter"-
+   Objekt, das wir heute pro Request neu bauen (OCL→IR-Übersetzung + `validate()`).
+2. **CSDL-Functions/Actions auf benannte Operationen** stellen, statt sie im
+   `OperationDispatcher` fest zu verdrahten: ein Katalog-Eintrag ist genau „diese Operation,
+   benannt, mit deklarierten Parametern".
+
 
 **Weiter offen:**
 - **Cache-/Lifecycle-Adapter nach `emf.m2x`** verlagern (`OclAspectProvider`,
