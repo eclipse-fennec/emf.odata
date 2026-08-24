@@ -82,8 +82,25 @@ Alle Level 4.0+4.01 Minimal–Advanced sind beansprucht; das hier ist der Rest d
 des handgebauten `odata.persistence.jpa` 2026-08-05 der EINZIGE Datenbankpfad): Pushdown-
 Lücken sind jetzt Upstream-Themen der IR/Backends (Issues in emf.persistence-jpa nach dem
 #76–#84-Muster), nicht mehr odata-seitige Übersetzer-Baustellen. Odata-seitig verbleibt:
-- **Mehrfach-`groupby`** (mehr als eine Grouping-Stufe) und `date()`/`time()`-ISO-Formen —
-  beide auch in der IR noch nicht ausgedrückt; bei Bedarf upstream einkippen.
+- **Mehrfach-`groupby`** (mehr als eine Grouping-Stufe) → **persistence-jpa#239**: die
+  Stage-Liste erlaubt zwei `GroupByStage`s strukturell, `JpaQueryProcessor` übersetzt aber nur
+  „a single GroupByStage pipeline" und lehnt mehr ab; Mongo könnte es fast gratis ($group zweimal).
+  Offene Frage dort ist Legalität + Capability, nicht Vokabular.
+- **`date()`/`time()`** → **persistence-jpa#240**: `TemporalFunctionKind` hat YEAR…SECOND, aber
+  keine Datums-/Zeitteil-Extraktion; `TemporalKind` kennt DATE/TIME/DATE_TIME/INSTANT, es fehlt
+  nur die Funktion. Billigster offener 501, und die Form, die Excel/Power BI generieren.
+- **Nested-`$expand`-Optionen** (`$filter`/`$orderby`/`$top`/`$skip`/`$count`/`$search` INNERHALB
+  `$expand`) → **persistence-jpa#238**, der größte verbleibende Brocken: `Query.expand` ist eine
+  Liste von `PropertyPath`, also reine Fetch-Hints. Ohne Optionen am Expand bleibt nur
+  In-Memory-Trimmen, und das ist per Doktrin verboten → ehrliche 501er. Vorschlag dort: `Expand`
+  als Klasse mit filter/orderBy/top/skip/count + Verschachtelung, Capabilities getrennt
+  (`EXPAND_FILTER`/`EXPAND_ORDER`/`EXPAND_PAGE`/`EXPAND_COUNT`), weil Paging je Elternzeile
+  teuer ist (Window-Funktion wie bei #214) und Filtern/Sortieren billig.
+- **`$root`** (Vergleich gegen eine feste andere Entität) → **persistence-jpa#241**: jedes
+  Prädikat wurzelt heute im eigenen `from`, `Exists`/`ForAll` laufen über eine mehrwertige
+  Navigation DIESER Wurzel. Vorgeschlagen als Wert-Ausdruck `RootReference(from, key, path)` mit
+  Null-bei-kein-Treffer (3VL) und — weil ODatas Syntax den Key immer konstant liefert —
+  resolve-then-inline statt echter Cross-Root-Subquery.
 - **`rollup`-Grouping-Sets, `aggregate … from`, Custom-Aggregates** — genuin nicht portabel,
   bleibt bewusst 501 (auch im `ApplyQueries`-Übersetzer refused).
 - **Entity-space `$apply=compute(...)`** (compute ohne vorheriges Grouping) — seit
@@ -512,6 +529,33 @@ Query nicht bei jeder Ausführung zurückgeschrieben wird. Zwei Andockpunkte, be
   `fix/metamodel-refresh-dynamic-types` (Metamodel-Sichtbarkeit dynamischer Typen,
   `EBigDecimal`-Scale-Verlust) liegt lokal, je Fix ein Test — PR-Weg klären (nie pushen
   ohne User).
+
+### Issue-Set an die Persistence (2026-08-24) — geschlossen eingekippt, nicht kleckerweise
+
+Nach dem Muster des #76–#84-Pakets vom 2026-08-03: einmal durchgekehrt, was OData heute NICHT
+pushen kann und upstream gehört, als zusammenhängendes Set mit Priorität statt als Einzelmeldungen.
+
+| Prio | Upstream | Inhalt |
+|---|---|---|
+| 1 | **#238** | `$expand`-Optionen (`Expand` als Klasse) — größter Conformance-Brocken, ohne IR-Unterstützung unerreichbar |
+| 2 | **#240** | `date()`/`time()` in `TemporalFunctionKind` — zwei Literale, billigster 501 |
+| 3 | **#239** | zwei `GroupByStage`s je Pipeline — Legalitäts-/Capability-Frage, JPA lehnt heute ab |
+| 4 | **#241** | `$root`-Vergleich als `RootReference`-Wert-Ausdruck (resolve-then-inline) |
+| — | **#242** | **kein neues Konstrukt**: die `$delta`-Anforderung an das Tracking/Stream-Paket (#208/#209) — Tombstones, dauerhafte Position, nur Keys |
+| — | **#237** | Mongos Range-only-Grenze bei `GeoDistance` ist dokumentiert, aber nicht validiert (→ bei uns 500 statt 501) |
+
+**Bewusst NICHT gefordert** (damit die Grenze auf beiden Seiten dieselbe ist): `rollup`-Grouping-
+Sets, `aggregate … from`, Custom-Aggregate-Methoden, die Rekursiv-Hierarchie-Familie
+(`ancestors`/`descendants`/`traverse`/`rolluprecursive`), `nest`/`addnested`, `join`/`outerjoin`,
+`$these`, Geo jenseits von #101 (persistence-jpa#233 zu), `fractionalseconds`,
+`totaloffsetminutes`, `now`/`mindatetime`/`maxdatetime` (Konstanten, falten wir selbst).
+
+**Nicht upstream, sondern unsere Baustellen** — dieselbe Kehrung, andere Seite:
+`emf.odata#44` (entity-space `$apply=compute` über `PROJECTION_EXPRESSION`), `#47` (Geo-`$filter`),
+`#51` (Lesepfad klassifiziert Backend-Ablehnungen grober als der Schreibpfad → 500 statt 400/501),
+strukturelle Vergleiche (`complexProp eq {…}` ließe sich als Konjunktion über die Member selbst
+zerlegen, braucht kein IR-Konstrukt) und tieferes `$expand`-Pushdown über die
+Multi-Segment-Fetch-Hints aus dem geschlossenen persistence-jpa#95.
 
 ## 9. Ideen / Später (kein Commitment)
 
