@@ -77,8 +77,12 @@ public class CommandReadServiceTest {
 		personFriend = ecore.createEReference();
 		personFriend.setName("friend");
 		personFriend.setEType(personClass);
+		EReference personFriends = ecore.createEReference();
+		personFriends.setName("friends");
+		personFriends.setEType(personClass);
+		personFriends.setUpperBound(-1);
 		personClass.getEStructuralFeatures().addAll(List.of(personId, personName, personAge,
-				personFriend));
+				personFriend, personFriends));
 		shopPackage.getEClassifiers().add(personClass);
 
 		backend = new FakeCommandBackend();
@@ -164,9 +168,11 @@ public class CommandReadServiceTest {
 
 	@Test
 	void unsupportedFilterConstructsAreRefusedAs501() {
-		// date() is deliberately outside the bridge's blessed subset (evaluator-only)
+		// the parameterless any() (OCL notEmpty) is outside the bridge's blessed subset:
+		// the parser accepts it and the reference evaluator answers it, the command
+		// engine refuses it — the refusal must surface as 501, not as a plausible answer
 		assertThatThrownBy(() -> service.execute(new EntityQuery(personClass, null,
-				parser.parseFilter("date(born) eq 1990-01-01", personClass), List.of(), 0, -1,
+				parser.parseFilter("friends/any()", personClass), List.of(), 0, -1,
 				false)))
 				.isInstanceOf(UnsupportedOperationException.class);
 	}
