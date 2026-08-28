@@ -38,6 +38,6 @@ property-level writes (replace-based), and deep inserts of containments.
   the [server guide](/guides/02-server#change-tracking).
 
 The full clause-by-clause analysis (with per-item evidence and the spec references) lives
-in [`docs/odata-conformance-status.md`](../odata-conformance-status.md); the
+in `docs/odata-conformance-status.md`; the
 [feature matrix](/guides/06-feature-matrix) maps individual features to their spec
 sections.
