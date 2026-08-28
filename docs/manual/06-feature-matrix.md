@@ -166,5 +166,5 @@ server for behaviour-parity and value-fidelity checks — see
 [Live Interop Findings](/guides/odata-live-interop-findings).
 
 See [Conformance Levels](/guides/05-conformance) for the roll-up and
-[`docs/odata-conformance-status.md`](../odata-conformance-status.md) for the full
+`docs/odata-conformance-status.md` for the full
 clause-by-clause evidence.
