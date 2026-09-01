@@ -172,9 +172,9 @@ class CommandApplyServiceTest {
 
 	@Test
 	@DisplayName("transformations outside the stage model are honest 501s")
+	// topcount/bottomcount left this list with #63 — see ApplyWindowDifferentialTest for what
+	// they map to and which of their siblings stayed behind
 	void refusals() {
-		assertThatThrownBy(() -> apply("topcount(2,price)"))
-				.isInstanceOf(UnsupportedOperationException.class);
 		assertThatThrownBy(() -> apply(
 				"concat(groupby((category/name),aggregate(price with sum as t)),aggregate(price with sum as t))"))
 				.isInstanceOf(UnsupportedOperationException.class);
