@@ -94,7 +94,8 @@ Spec documents (OASIS OData **v4.01**):
 | `aggregate` (`sum min max average countdistinct $count`) | ✅ | §3.1.2 |
 | `compute` | ✅ (JPA pushdown; not after groupby) | §3.4 |
 | `filter` (before/after pipeline) | ✅ | §3.5 |
-| `topcount`/`topsum`/`toppercent` + `bottom*`, `concat`, `top`/`skip`, `orderby`, `identity`, `rollup` (grouping sets) | ✅ (in-memory; JPA → 501) | §3 |
+| `topcount`/`bottomcount` | ✅ (pushed down as an ordered window, entity space and after a grouping) | §3.6 |
+| `topsum`/`toppercent` + `bottomsum`/`bottompercent`, `concat`, `top`/`skip`, `orderby`, `identity`, `rollup` (grouping sets) | ✅ (in-memory; command backend → 501) | §3 |
 | `from`, custom aggregates, `$these`, structure trafos (`nest`/`join`/`traverse`/`rolluprecursive`/…) | ◑ parse → 501 | §3/§6 |
 
 ## Data modification (Updatable Service)
