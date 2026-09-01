@@ -25,6 +25,9 @@ import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
 import org.eclipse.fennec.model.expression.Expression;
+import org.eclipse.fennec.model.expression.ExpressionFactory;
+import org.eclipse.fennec.model.expression.IntegerLiteral;
+import org.eclipse.fennec.model.expression.IsNull;
 import org.eclipse.fennec.model.expression.PropertyPath;
 import org.eclipse.fennec.model.query.Aggregate;
 import org.eclipse.fennec.model.query.ComputeStage;
@@ -42,6 +45,8 @@ import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.query.apply.AggregateExpression;
 import org.eclipse.fennec.odata.query.apply.AggregateTransformation;
+import org.eclipse.fennec.odata.query.apply.BottomTopMethod;
+import org.eclipse.fennec.odata.query.apply.BottomTopTransformation;
 import org.eclipse.fennec.odata.query.apply.ApplyTransformation;
 import org.eclipse.fennec.odata.query.apply.ComputeTransformation;
 import org.eclipse.fennec.odata.query.apply.FilterTransformation;
@@ -60,10 +65,11 @@ import org.eclipse.fennec.persistence.query.api.QueryResultRow;
  * {@code WHERE} predicate (no PIPELINE capability needed for them), a terminal
  * {@code groupby} without aggregates becomes a DISTINCT projection, and a pipeline
  * without any shape-changing transformation stays an OBJECTS query whose entities are
- * row-flattened by the caller. Transformations the stage model cannot express
- * ({@code concat}, {@code bottom*}/{@code top*}, {@code rollup}, custom aggregates,
- * {@code from}) are refused with {@link UnsupportedOperationException} — the servlet
- * maps that to an honest 501.
+ * row-flattened by the caller. {@code topcount}/{@code bottomcount} fold into
+ * the query's sort window (see {@link #bottomTop}). Transformations the stage model cannot
+ * express ({@code concat}, {@code rollup}, custom aggregates, {@code from}) — and the
+ * running-total members of the {@code bottom*}/{@code top*} family — are refused with
+ * {@link UnsupportedOperationException}, which the servlet maps to an honest 501.
  */
 final class ApplyQueries {
 
@@ -99,6 +105,8 @@ final class ApplyQueries {
 		List<Column> columns = new ArrayList<>();
 		Set<String> aliases = new LinkedHashSet<>();
 		Pipeline pipeline = QueryFactory.eINSTANCE.createPipeline();
+		/** Set by a terminal topcount/bottomcount: the sort window that selects its rows. */
+		SortWindow window = null;
 
 		List<ApplyTransformation> transformations = query.pipeline().getTransformations();
 		for (int i = 0; i < transformations.size(); i++) {
@@ -185,6 +193,10 @@ final class ApplyQueries {
 					}
 					pipeline.getStages().add(stage);
 				}
+				case BottomTopTransformation bottomTop -> {
+					window = bottomTop(bottomTop, last, query, entityType, aliases, columns,
+							irQuery, pipeline);
+				}
 				default -> throw new UnsupportedOperationException("the command backend cannot apply '"
 						+ transformation.eClass().getName() + "'");
 			}
@@ -209,13 +221,19 @@ final class ApplyQueries {
 		for (OrderBySegment segment : query.orderBy()) {
 			irQuery.getOrderBy().add(orderBy(segment, entityType, aliases, columns));
 		}
+		if (window != null) {
+			irQuery.getOrderBy().add(window.orderBy());
+		}
 		if (query.skip() > 0) {
 			irQuery.setSkip(query.skip());
 		}
-		if (query.top() > 0) {
-			irQuery.setTop(query.top());
-		} else if (maxPageSize > 0) {
-			irQuery.setTop(maxPageSize);
+		int cap = query.top() > 0 ? query.top() : maxPageSize;
+		if (window != null) {
+			// both windows read the SAME order, so the narrower one wins — $top after a
+			// topcount is the first m of the n, never a different n rows
+			irQuery.setTop(cap > 0 ? Math.min(window.count(), cap) : window.count());
+		} else if (cap > 0) {
+			irQuery.setTop(cap);
 		}
 		return new Plan(irQuery, List.copyOf(columns));
 	}
@@ -261,6 +279,103 @@ final class ApplyQueries {
 	}
 
 	/** Entity-shaped context bridges like a $filter; row-shaped context binds aliases. */
+	/** A terminal {@code topcount}/{@code bottomcount} expressed as an ordered window. */
+	private record SortWindow(OrderBy orderBy, int count) {
+	}
+
+	/**
+	 * {@code topcount(n, expr)} and {@code bottomcount(n, expr)} are an ordered window, not a
+	 * new row shape: order the current set by {@code expr} and keep the first {@code n}. That
+	 * is the query's own {@code ORDER BY} plus {@code top} — no window function, no new
+	 * capability, and it works in entity space and after a grouping alike (persistence-jpa#259
+	 * turned out not to be needed for this: its representatives are top-N PER GROUP, which is
+	 * a different question and a different result shape).
+	 *
+	 * <p>Refused, each for its own reason:
+	 * <ul>
+	 * <li>{@code topsum}/{@code toppercent} and their {@code bottom*} mirrors — these select
+	 * the smallest prefix whose RUNNING SUM reaches a threshold, and the IR has no windowed
+	 * running aggregate to express it with;
+	 * <li>a non-terminal position — the engines defer the sort window to the end of the
+	 * pipeline, so a later stage would see the unlimited set;
+	 * <li>a post-{@code $apply} {@code $filter} — same reason, it would run before the window
+	 * rather than on the rows the window selected;
+	 * <li>a post-{@code $apply} {@code $orderby} — one {@code ORDER BY} list cannot both pick
+	 * the top rows and sort the answer;
+	 * <li>a post-{@code $apply} {@code $skip} — it would page the underlying set, not the
+	 * window ({@code $top} composes, because it reads the same order);
+	 * <li>{@code $count} — the count is taken before the window, so it would report the
+	 * untruncated set.
+	 * </ul>
+	 * All of them are honest 501s rather than a plausible wrong answer.
+	 */
+	private static SortWindow bottomTop(BottomTopTransformation transformation, boolean last,
+			ApplyQuery query, EClass entityType, Set<String> aliases, List<Column> columns,
+			Query irQuery, Pipeline pipeline) {
+		BottomTopMethod method = transformation.getMethod();
+		boolean descending = switch (method) {
+			case TOP_COUNT -> true;
+			case BOTTOM_COUNT -> false;
+			default -> throw new UnsupportedOperationException("the command backend cannot apply '"
+					+ label(method) + "': it selects the smallest prefix whose running sum reaches "
+					+ "the threshold, and the query model has no windowed running aggregate");
+		};
+		if (!last) {
+			throw new UnsupportedOperationException("the command backend supports '" + label(method)
+					+ "' only as the final transformation — the sort window is applied at the end "
+					+ "of the pipeline, so a later transformation would see the unlimited set");
+		}
+		if (query.rowFilter() != null || !query.orderBy().isEmpty() || query.skip() > 0
+				|| query.count()) {
+			throw new UnsupportedOperationException("the command backend cannot combine '"
+					+ label(method) + "' with a post-$apply $filter, $orderby, $skip or $count — "
+					+ "each of them would address the set the window was taken from, not the "
+					+ "window ($top composes and is supported)");
+		}
+		int count = windowCount(transformation, entityType, aliases, columns, method);
+
+		OrderBy orderBy = QueryFactory.eINSTANCE.createOrderBy();
+		orderBy.setDirection(descending ? SortDirection.DESC : SortDirection.ASC);
+		OclExpression value = transformation.getValue();
+		if (value instanceof PropertyCallExp property && isPlainChain(property)) {
+			orderBy.setPath(propertyPath(property));
+		} else {
+			orderBy.setKey(rowOrEntityExpression(value, entityType, aliases, columns));
+		}
+
+		// the reference executor drops rows whose value is null before ordering — they
+		// contribute no rank, so they must not fill the window either
+		IsNull notNull = ExpressionFactory.eINSTANCE.createIsNull();
+		notNull.setSource(rowOrEntityExpression(value, entityType, aliases, columns));
+		notNull.setNegated(true);
+		if (pipeline.getStages().isEmpty()) {
+			irQuery.setPredicate(irQuery.getPredicate() == null ? notNull
+					: Expressions.and(irQuery.getPredicate(), notNull));
+		} else {
+			FilterStage stage = QueryFactory.eINSTANCE.createFilterStage();
+			stage.setPredicate(notNull);
+			pipeline.getStages().add(stage);
+		}
+		return new SortWindow(orderBy, count);
+	}
+
+	/** The threshold must be a positive integer constant — the window size is not a per-row value. */
+	private static int windowCount(BottomTopTransformation transformation, EClass entityType,
+			Set<String> aliases, List<Column> columns, BottomTopMethod method) {
+		Expression threshold = rowOrEntityExpression(transformation.getThreshold(), entityType,
+				aliases, columns);
+		if (!(threshold instanceof IntegerLiteral literal) || literal.getValue() <= 0) {
+			throw new UnsupportedOperationException("the command backend needs a positive integer "
+					+ "constant as the '" + label(method) + "' count");
+		}
+		return (int) Math.min(literal.getValue(), Integer.MAX_VALUE);
+	}
+
+	/** The OData spelling of a method, for refusal messages. */
+	private static String label(BottomTopMethod method) {
+		return method.getName().toLowerCase().replace("_", "");
+	}
+
 	private static Expression rowOrEntityExpression(OclExpression ocl, EClass entityType,
 			Set<String> aliases, List<Column> columns) {
 		return columns.isEmpty() && aliases.isEmpty()
