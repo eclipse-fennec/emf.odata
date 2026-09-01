@@ -12,6 +12,8 @@
  */
 package org.eclipse.fennec.odata.query;
 
+import java.time.LocalTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -844,9 +846,22 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		return typedString(ctx.getText(), "DateTimeOffset");
 	}
 
+	/**
+	 * Canonicalised to {@link LocalTime#toString()}, unlike its sibling literals, which keep
+	 * their lexical form. {@code Edm.TimeOfDay} is the one Edm temporal type with two spellings
+	 * for the same value — {@code 23:59} and {@code 23:59:00} — and the OCL evaluator renders
+	 * {@code time(x)} through {@code LocalTime#toString}, which drops a zero seconds field. A
+	 * literal left as written would therefore never compare equal to it (#62); both sides now
+	 * speak the same canonical text, and the IR-side {@code TemporalLiteral} parses either form.
+	 */
 	@Override
 	public OclExpression visitTimeOfDayLiteral(ODataFilterParser.TimeOfDayLiteralContext ctx) {
-		return typedString(ctx.getText(), "TimeOfDay");
+		String lexical = ctx.getText();
+		try {
+			return typedString(LocalTime.parse(lexical).toString(), "TimeOfDay");
+		} catch (DateTimeParseException e) {
+			throw new ODataQueryParseException("invalid Edm.TimeOfDay literal '" + lexical + "'", e);
+		}
 	}
 
 	@Override
