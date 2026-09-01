@@ -21,6 +21,7 @@ Bundle-Description: Backend-neutral WriteService over the Fennec Persistence Com
 # without docker/podman or -Dmongo.uri) — wiring mirrors the upstream persistence TCK.
 # The differential suite compares the IR engines against the neutral OCL reference evaluator.
 -testpath: \
+	assertj-core;version=latest,\
 	org.eclipse.fennec.odata.ocl.evaluator;version=project,\
 	org.antlr.antlr4-runtime;version=latest,\
 	org.eclipse.fennec.persistence.mongo;version=latest,\

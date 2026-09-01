@@ -12,17 +12,15 @@
  */
 package org.eclipse.fennec.odata.csdl;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.function.Consumer;
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
 
-import org.eclipse.emf.ecore.EAttribute;
-import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.odata.csdl.profile.ODataAnnotation;
@@ -43,23 +41,23 @@ import org.open.oasis.docs.odata.ns.edm.SchemaType;
 import org.open.oasis.docs.odata.ns.edm.TAction;
 import org.open.oasis.docs.odata.ns.edm.TActionFunctionParameter;
 import org.open.oasis.docs.odata.ns.edm.TActionFunctionReturnType;
+import org.open.oasis.docs.odata.ns.edm.TActionImport;
 import org.open.oasis.docs.odata.ns.edm.TComplexType;
 import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
-import org.open.oasis.docs.odata.ns.edm.TSingleton;
 import org.open.oasis.docs.odata.ns.edm.TEntityKeyElement;
 import org.open.oasis.docs.odata.ns.edm.TEntitySet;
 import org.open.oasis.docs.odata.ns.edm.TEntityType;
 import org.open.oasis.docs.odata.ns.edm.TEnumType;
 import org.open.oasis.docs.odata.ns.edm.TEnumTypeMember;
-import org.open.oasis.docs.odata.ns.edm.TActionImport;
 import org.open.oasis.docs.odata.ns.edm.TFunction;
 import org.open.oasis.docs.odata.ns.edm.TFunctionImport;
 import org.open.oasis.docs.odata.ns.edm.TNavigationProperty;
 import org.open.oasis.docs.odata.ns.edm.TNavigationPropertyBinding;
 import org.open.oasis.docs.odata.ns.edm.TProperty;
-import org.open.oasis.docs.odata.ns.edm.TVariable;
 import org.open.oasis.docs.odata.ns.edm.TPropertyRef;
 import org.open.oasis.docs.odata.ns.edm.TReferentialConstraint;
+import org.open.oasis.docs.odata.ns.edm.TSingleton;
+import org.open.oasis.docs.odata.ns.edm.TVariable;
 import org.open.oasis.docs.odata.ns.edmx.EdmxFactory;
 import org.open.oasis.docs.odata.ns.edmx.EdmxRoot;
 import org.open.oasis.docs.odata.ns.edmx.TDataServices;
