@@ -43,12 +43,12 @@ import org.eclipse.fennec.odata.query.OrderBySegment;
  *                   entity (N+1) nor yield unresolved proxies; never null (may be empty)
  */
 public record EntityQuery(EClass entityType, EClass castType, OclExpression filter,
-		List<OrderBySegment> orderBy, int skip, int top, boolean count, Set<String> expand) {
+		List<OrderBySegment> orderBy, int skip, int top, boolean count, List<ExpandSpec> expand) {
 
 	public EntityQuery {
 		Objects.requireNonNull(entityType, "entityType must not be null");
 		orderBy = orderBy == null ? List.of() : List.copyOf(orderBy);
-		expand = expand == null ? Set.of() : Set.copyOf(expand);
+		expand = expand == null ? List.of() : List.copyOf(expand);
 		if (skip < 0) {
 			throw new IllegalArgumentException("skip must be >= 0, was: " + skip);
 		}
@@ -60,7 +60,20 @@ public record EntityQuery(EClass entityType, EClass castType, OclExpression filt
 	/** Query without expanded navigations. */
 	public EntityQuery(EClass entityType, EClass castType, OclExpression filter,
 			List<OrderBySegment> orderBy, int skip, int top, boolean count) {
-		this(entityType, castType, filter, orderBy, skip, top, count, Set.of());
+		this(entityType, castType, filter, orderBy, skip, top, count, List.of());
+	}
+
+	/** Query with plain expansions — paths only, no nested options (ADR-0008). */
+	public EntityQuery(EClass entityType, EClass castType, OclExpression filter,
+			List<OrderBySegment> orderBy, int skip, int top, boolean count, Set<String> expand) {
+		this(entityType, castType, filter, orderBy, skip, top, count,
+				expand == null ? List.<ExpandSpec>of()
+						: expand.stream().map(ExpandSpec::of).toList());
+	}
+
+	/** The expanded paths, in request order — for callers that need the shape, not the options. */
+	public List<String> expandPaths() {
+		return expand.stream().map(ExpandSpec::path).toList();
 	}
 
 	/** Query without a derived-type cast (the common case). */
