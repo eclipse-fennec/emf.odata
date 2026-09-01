@@ -68,6 +68,13 @@ final class FakeCommandBackend implements Resource.Factory {
 	/** What the next query throws instead of running, if anything — see the two setters. */
 	private IOException queryFailure;
 
+	/** The query this backend last received — the pushed-down shape, for assertions. */
+	private Query lastQuery;
+
+	/** The last translated query, for asserting what was ASKED rather than what came back. */
+	Query lastQuery() {
+		return lastQuery;
+	}
 	/**
 	 * Makes the next query refuse in the shape both real backends use: an
 	 * {@code IOException} whose message says "rejected" and whose cause is a
@@ -186,6 +193,16 @@ final class FakeCommandBackend implements Resource.Factory {
 				backend.queryFailure = null;
 				throw failure;
 			}
+			// the ask is what a consumer test asserts on; the reference engine deliberately
+			// serves no expand options (it has no proxies to select), so the copy it runs is
+			// stripped of them — this double stands in for a store that hands out proxies
+			backend.lastQuery = EcoreUtil.copy(query);
+			query.getExpand().forEach(expand -> {
+				expand.setFilter(null);
+				expand.getOrderBy().clear();
+				expand.setTop(0);
+				expand.setSkip(0);
+			});
 			try {
 				return MemoryQueries.execute(query,
 						List.copyOf(backend.storeFor(query.getFrom().getName()).values()),
