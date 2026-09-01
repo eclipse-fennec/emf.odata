@@ -550,7 +550,7 @@ class ODataServletTest {
 		assertTrue(filtered.body().contains("\"great\""), filtered.body());
 		assertFalse(filtered.body().contains("\"poor\""),
 				"filtered out of the expanded collection: " + filtered.body());
-		assertEquals(Set.of("reviews"), lastQuery.get().expand(),
+		assertEquals(List.of("reviews"), lastQuery.get().expandPaths(),
 				"the backend still prefetches the plain navigation");
 		assertEquals(2, ((List<?>) milk.eGet(reviewsFeature)).size(),
 				"the nested filter never mutates backend objects");
@@ -1692,15 +1692,15 @@ class ODataServletTest {
 		backendResult = List.of(product("p1", "Milk", "1.20", dairy));
 
 		assertEquals(200, get("/Product('p1')/category/name", Map.of()).status());
-		assertEquals(Set.of("category"), lastQuery.get().expand(),
+		assertEquals(List.of("category"), lastQuery.get().expandPaths(),
 				"the walked navigation prefix is a prefetch hint for the backend");
 
 		assertEquals(200, get("/Product('p1')/name", Map.of()).status());
-		assertEquals(Set.of(), lastQuery.get().expand(),
+		assertEquals(List.of(), lastQuery.get().expandPaths(),
 				"attribute-only walks need no prefetch");
 
 		assertEquals(200, get("/Product('p1')", Map.of("$expand", "category")).status());
-		assertEquals(Set.of("category"), lastQuery.get().expand(),
+		assertEquals(List.of("category"), lastQuery.get().expandPaths(),
 				"$expand on a single entity is a prefetch hint too");
 	}
 
@@ -2677,7 +2677,7 @@ class ODataServletTest {
 		assertTrue(delta.body().contains("\"Cable\""),
 				"upserts carry the FULL expanded representation: " + delta.body());
 		assertNotNull(lastDeltaQuery.get());
-		assertEquals(Set.of("accessories"), lastDeltaQuery.get().expand(),
+		assertEquals(List.of("accessories"), lastDeltaQuery.get().expandPaths(),
 				"the defining query hands the expanded navigations to the backend");
 
 		Response old = call("GET", "/Product",

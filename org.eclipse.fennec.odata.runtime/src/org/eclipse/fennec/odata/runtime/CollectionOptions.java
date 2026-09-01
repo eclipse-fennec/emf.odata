@@ -50,6 +50,17 @@ public record CollectionOptions(OclExpression filter, List<OrderBySegment> order
 		return new CollectionOptions(filter, List.of(), 0, -1, false);
 	}
 
+	/** The same options minus the item predicate — the backend already applied it (ADR-0008). */
+	public CollectionOptions withoutFilter() {
+		return filter == null ? this : new CollectionOptions(null, orderBy, skip, top, count);
+	}
+
+	/** The same options minus paging — the backend already applied it (ADR-0008). */
+	public CollectionOptions withoutPaging() {
+		return skip == 0 && top < 0 ? this
+				: new CollectionOptions(filter, orderBy, 0, -1, count);
+	}
+
 	public boolean isNone() {
 		return filter == null && orderBy.isEmpty() && skip == 0 && top < 0 && !count;
 	}

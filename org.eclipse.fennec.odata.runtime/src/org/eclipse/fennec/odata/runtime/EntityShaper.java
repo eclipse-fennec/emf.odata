@@ -14,6 +14,7 @@ package org.eclipse.fennec.odata.runtime;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,6 +26,8 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.emf.ecore.util.InternalEList;
+import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
 import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 
@@ -73,10 +76,29 @@ public class EntityShaper {
 	 */
 	public EObject shape(EObject entity, EClass entityType, SelectTree select, Set<String> expand,
 			List<EObject> expandedRoots, Map<String, Long> selectCounts) {
+		return shape(entity, entityType, select, expand, expandedRoots, selectCounts, Map.of());
+	}
+
+	/**
+	 * {@link #shape} knowing which expanded navigations the BACKEND already narrowed
+	 * (ADR-0008). For those the copy takes exactly the resolved entries: the options selected
+	 * which proxies got resolved, so {@code eIsProxy()} is the selection and the untouched
+	 * remainder must stay untouched — reading it would resolve it, which is both the N+1 we
+	 * pushed down to avoid and the loss of the very information we are reading.
+	 */
+	public EObject shape(EObject entity, EClass entityType, SelectTree select, Set<String> expand,
+			List<EObject> expandedRoots, Map<String, Long> selectCounts,
+			Map<String, ExpandPushdown> narrowed) {
 		// useOriginalReferences=false: a reference to an object that was NOT co-copied is
 		// DROPPED, never resolved to the original — that enforces "every reference in the
-		// payload is internal" AND is the recursion cutoff for $levels chains
-		EcoreUtil.Copier copier = new EcoreUtil.Copier(true, false);
+		// payload is internal" AND is the recursion cutoff for $levels chains.
+		// resolveProxies follows the backend's report (ADR-0008): the copier reads every
+		// reference of every copied object, so leaving it on would resolve exactly the
+		// proxies whose unresolved state IS the selection — before this method ever looks
+		// at them. Nothing narrowed, nothing to protect: then it stays on, and the walk
+		// below resolves lazily as it always did.
+		boolean anyNarrowed = narrowed.values().stream().anyMatch(pushed -> !pushed.isNone());
+		EcoreUtil.Copier copier = new EcoreUtil.Copier(!anyNarrowed, false);
 		EObject copy = copier.copy(entity);
 		// expand entries may be slash PATHS (walk prefixes, $levels chains): co-copy the
 		// targets level by level
@@ -84,22 +106,36 @@ public class EntityShaper {
 		for (String path : expand) {
 			List<EObject> frontier = List.of(entity);
 			boolean first = true;
-			for (String segment : path.split("/")) {
+			String[] segments = path.split("/");
+			// only the LAST segment carries the narrowed collection; the prefix navigates
+			boolean selective = !narrowed.getOrDefault(path, ExpandPushdown.NONE).isNone();
+			for (int depth = 0; depth < segments.length; depth++) {
+				String segment = segments[depth];
 				if (first) {
 					firstSegments.add(segment);
 					first = false;
 				}
+				boolean pickResolved = selective && depth == segments.length - 1;
 				List<EObject> next = new ArrayList<>();
 				for (EObject source : frontier) {
 					if (source.eClass().getEStructuralFeature(segment) instanceof EReference reference
 							&& !reference.isContainment()) {
-						Object value = source.eGet(reference);
+						Object value = source.eGet(reference, !pickResolved);
 						if (value instanceof List<?> targets) {
-							for (Object target : targets) {
-								copier.copy((EObject) target);
-								next.add((EObject) target);
+							Iterator<?> items = pickResolved
+									&& targets instanceof InternalEList<?> internal
+											? internal.basicIterator()
+											: targets.iterator();
+							while (items.hasNext()) {
+								EObject target = (EObject) items.next();
+								if (pickResolved && target.eIsProxy()) {
+									continue; // the backend did not select this one
+								}
+								copier.copy(target);
+								next.add(target);
 							}
-						} else if (value instanceof EObject target) {
+						} else if (value instanceof EObject target
+								&& !(pickResolved && target.eIsProxy())) {
 							copier.copy(target);
 							next.add(target);
 						}
@@ -246,10 +282,16 @@ public class EntityShaper {
 	/** All shaped copies plus the expanded targets as extra roots (self-contained document). */
 	public List<EObject> shapeAll(List<EObject> entities, EClass entityType, SelectTree select,
 			Set<String> expand) {
+		return shapeAll(entities, entityType, select, expand, Map.of());
+	}
+
+	/** {@link #shapeAll} carrying the backend's expand report (ADR-0008). */
+	public List<EObject> shapeAll(List<EObject> entities, EClass entityType, SelectTree select,
+			Set<String> expand, Map<String, ExpandPushdown> narrowed) {
 		List<EObject> roots = new ArrayList<>();
 		List<EObject> expandedRoots = new ArrayList<>();
 		for (EObject entity : entities) {
-			roots.add(shape(entity, entityType, select, expand, expandedRoots, null));
+			roots.add(shape(entity, entityType, select, expand, expandedRoots, null, narrowed));
 		}
 		roots.addAll(expandedRoots);
 		return roots;

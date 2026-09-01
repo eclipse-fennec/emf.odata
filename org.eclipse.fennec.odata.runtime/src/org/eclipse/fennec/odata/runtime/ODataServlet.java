@@ -74,6 +74,7 @@ import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
+import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
@@ -947,7 +948,9 @@ public class ODataServlet extends HttpServlet {
 				orderBy == null ? List.of() : orderBy,
 				skip, top + 1,
 				"true".equals(option(request, "$count")),
-				ResponseFormatter.shapePaths(expand)); // backends prefetch expanded navigations (no N+1, no lazy proxies)
+				// backends prefetch expanded navigations (no N+1, no lazy proxies) and narrow
+				// them where they can — what they actually applied comes back on the result
+				ResponseFormatter.expandSpecs(expand));
 
 		// change tracking ([OData-Protocol] 11.3): a preference, applied only when the backend
 		// can track this type. Expanding defining queries additionally need an expand-capable
@@ -963,12 +966,14 @@ public class ODataServlet extends HttpServlet {
 				: deltaService.trackingToken(target.entityType());
 
 		QueryResult result = target.queryService().execute(query);
+		Map<String, ExpandPushdown> narrowed = result.pushedExpands();
 		boolean hasMore = result.entities().size() > top;
 		List<EObject> page = hasMore ? result.entities().subList(0, top) : result.entities();
 
 		if (xml) { // XMI is a non-OData projection — trimmed, but without an embedded link
-			List<EObject> copies = shaper.shapeAll(page, context, select, ResponseFormatter.shapePaths(expand));
-			copies.forEach(copy -> formats.applyNestedFilters(copy, expand));
+			List<EObject> copies = shaper.shapeAll(page, context, select,
+					ResponseFormatter.shapePaths(expand), narrowed);
+			copies.forEach(copy -> formats.applyNestedFilters(copy, expand, narrowed));
 			formats.writeXmi(response, copies);
 			return;
 		}
@@ -983,7 +988,8 @@ public class ODataServlet extends HttpServlet {
 			if (i > 0) {
 				json.append(',');
 			}
-			json.append(withComputed(formats.entityJson(page.get(i), context, select, expand),
+			json.append(withComputed(
+					formats.entityJson(page.get(i), context, select, expand, narrowed),
 					page.get(i), computes));
 		}
 		json.append(']');

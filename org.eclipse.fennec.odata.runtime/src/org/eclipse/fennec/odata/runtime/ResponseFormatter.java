@@ -28,6 +28,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.eclipse.emf.common.util.URI;
+import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
+import org.eclipse.fennec.odata.persistence.api.ExpandSpec;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
@@ -256,6 +258,34 @@ static Set<String> inlineNavs(Map<String, ExpandItem> expand) {
  * The paths the SHAPER co-copies (and backends prefetch): the inline navigation names plus
  * the self-recursive {@code $levels} chains ({@code nav}, {@code nav/nav}, …).
  */
+/**
+ * The same enumeration as {@link #shapePaths}, carrying each item's options as the ASK to the
+ * backend (ADR-0008). Only the first level carries them — deeper {@code $levels} links are
+ * plain, which is what the in-memory pass does today too.
+ *
+ * <p>An item that wants {@code $count} deliberately asks for no paging: the count of matching
+ * children is derivable from a pushed filter only as long as nothing truncated the result, and
+ * a filtered-but-unpaged expansion is exactly that state.
+ */
+static List<ExpandSpec> expandSpecs(Map<String, ExpandItem> expand) {
+	List<ExpandSpec> specs = new ArrayList<>();
+	expand.forEach((name, item) -> {
+		if (item.refOnly()) {
+			return;
+		}
+		CollectionOptions options = item.options();
+		boolean countable = options.count();
+		specs.add(new ExpandSpec(name, options.filter(), options.orderBy(),
+				countable ? 0 : options.skip(), countable ? -1 : options.top()));
+		StringBuilder chain = new StringBuilder(name);
+		for (int level = 2; level <= item.levels(); level++) {
+			chain.append('/').append(name);
+			specs.add(ExpandSpec.of(chain.toString()));
+		}
+	});
+	return specs;
+}
+
 static Set<String> shapePaths(Map<String, ExpandItem> expand) {
 	Set<String> paths = new LinkedHashSet<>();
 	expand.forEach((name, item) -> {
@@ -301,10 +331,28 @@ private static List<String> splitExpandItems(String expand) {
  * count) for the {@code name@odata.count} response members.
  */
 Map<String, Long> applyNestedFilters(EObject copy, Map<String, ExpandItem> expand) {
+	return applyNestedFilters(copy, expand, Map.of());
+}
+
+/**
+ * {@link #applyNestedFilters} skipping what the backend already applied (ADR-0008): a filter
+ * pushed down means the shaped list IS the match set, so re-running it here would be a second
+ * pass over the same predicate, and re-paging an already paged list would page the page.
+ */
+Map<String, Long> applyNestedFilters(EObject copy, Map<String, ExpandItem> expand,
+		Map<String, ExpandPushdown> narrowed) {
 	Map<String, Long> counts = new LinkedHashMap<>();
 	for (Map.Entry<String, ExpandItem> entry : expand.entrySet()) {
 		ExpandItem item = entry.getValue();
-		if (item.refOnly() || (item.cast() == null && item.options().isNone())) {
+		ExpandPushdown pushed = narrowed.getOrDefault(entry.getKey(), ExpandPushdown.NONE);
+		CollectionOptions remaining = item.options();
+		if (pushed.filter()) {
+			remaining = remaining.withoutFilter();
+		}
+		if (pushed.paging()) {
+			remaining = remaining.withoutPaging();
+		}
+		if (item.refOnly() || (item.cast() == null && remaining.isNone())) {
 			continue;
 		}
 		EStructuralFeature feature = copy.eClass().getEStructuralFeature(entry.getKey());
@@ -315,8 +363,8 @@ Map<String, Long> applyNestedFilters(EObject copy, Map<String, ExpandItem> expan
 			if (item.cast() != null) { // cast-in-expand: only derived instances stay (5.1.3.2)
 				children.removeIf(child -> !item.cast().isInstance(child));
 			}
-			long total = servlet.shaper.applyOptions(children, item.options());
-			if (item.options().count()) {
+			long total = servlet.shaper.applyOptions(children, remaining);
+			if (remaining.count()) {
 				counts.put(entry.getKey(), total);
 			}
 		} else if (item.cast() != null && copy.eGet(feature) instanceof EObject child
@@ -336,10 +384,17 @@ String entityJson(EObject entity, EClass entityType, SelectTree select, Set<Stri
 /** {@link #entityJson} for parsed expand specs: applies nested casts/options after shaping. */
 String entityJson(EObject entity, EClass entityType, SelectTree select,
 		Map<String, ExpandItem> expand) throws IOException {
+	return entityJson(entity, entityType, select, expand, Map.of());
+}
+
+/** {@link #entityJson} knowing which expansions the backend already narrowed (ADR-0008). */
+String entityJson(EObject entity, EClass entityType, SelectTree select,
+		Map<String, ExpandItem> expand, Map<String, ExpandPushdown> narrowed) throws IOException {
 	Set<String> inline = inlineNavs(expand);
 	Map<String, Long> counts = new LinkedHashMap<>();
-	EObject copy = servlet.shaper.shape(entity, entityType, select, shapePaths(expand), null, counts);
-	counts.putAll(applyNestedFilters(copy, expand));
+	EObject copy = servlet.shaper.shape(entity, entityType, select, shapePaths(expand), null,
+			counts, narrowed);
+	counts.putAll(applyNestedFilters(copy, expand, narrowed));
 	return withExpandedRefs(withNestedCounts(
 			serializeEntity(entity, copy, entityType, inline), counts), entity, expand);
 }
