@@ -2,7 +2,8 @@
 
 > Ablage-Regeln für den Fennec-OData-Workspace (entstanden als Begleitdokument der
 > ursprünglichen Anforderungsphase; das Requirements-Doc ist inzwischen in
-> `odata-open-tasks.md` + Git-Historie aufgegangen).
+> `odata-open-tasks.md` + Git-Historie aufgegangen; das Aufgaben-Dokument wird intern
+> gepflegt und liegt nicht in diesem Repo).
 > Zweck: alle technischen und fachlichen Ressourcen so lokal ablegen, dass im Arbeitsalltag **keine Web-Suche** nötig ist – Specs, Schemata, Referenz-Code und Test-Material liegen offline bereit.
 
 ---
@@ -52,7 +53,6 @@ fennec-odata-dev/                      ← Claude-Code-Arbeitsverzeichnis (Works
 │
 ├── docs/                              ← eigene Doku (Read-Write; liegt IM Repo, außen Symlink)
 │   ├── odata-architecture.md            ← Architektur (konsolidierter Ist-Stand)
-│   ├── odata-open-tasks.md              ← DAS Aufgaben-Dokument (alle offenen Punkte)
 │   ├── odata-conformance-status.md      ← Klausel-Nachweis OASIS §13
 │   ├── odata-live-interop-findings.md   ← Live-Findings (publiziert)
 │   ├── manual/                          ← publizierte EN-Doku (GitHub Pages via docs-site/)
