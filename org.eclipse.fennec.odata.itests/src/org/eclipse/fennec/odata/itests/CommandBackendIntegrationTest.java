@@ -25,9 +25,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Iterator;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.emf.ecore.util.InternalEList;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
@@ -42,6 +45,7 @@ import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
+import org.eclipse.fennec.odata.persistence.api.ExpandSpec;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.query.ODataQueryParser;
@@ -102,6 +106,7 @@ public class CommandBackendIntegrationTest {
 	private Configuration dataSourceConfiguration;
 	private Configuration unitConfiguration;
 	private Configuration commandConfiguration;
+	private EClass purchaseClass;
 	private Path workDirectory;
 
 	@BeforeAll
@@ -111,6 +116,7 @@ public class CommandBackendIntegrationTest {
 		pkg = ecoreHelper.loadEcore(ECORE, CommandBackendIntegrationTest.class);
 		pkg.eResource().setURI(URI.createURI(pkg.getNsURI()));
 		itemClass = EcoreHelper.getEClass(pkg, "Item");
+		purchaseClass = EcoreHelper.getEClass(pkg, "Purchase");
 		EPackage.Registry.INSTANCE.put(pkg.getNsURI(), pkg);
 
 		workDirectory = Files.createTempDirectory("odata-command-backend");
@@ -318,6 +324,132 @@ public class CommandBackendIntegrationTest {
 		assertEquals(1, gone.removals().size());
 		assertEquals(DeltaService.REASON_DELETED, gone.removals().get(0).reason());
 		assertEquals("d1", gone.removals().get(0).keyValues().get("id"));
+	}
+
+	@Test
+	@DisplayName("$expand round trip: EXPAND_FILTER narrows the expansion in the database (#64)")
+	void expandOptionsPushDownOnTheJpaUnit(
+			@InjectService(cardinality = 0, filter = "(osgi.unit.name=" + UNIT_NAME + ")")
+			ServiceAware<EntityManagerFactory> factoryAware,
+			@InjectService(cardinality = 0, filter = "(fennec.odata.backend=command)")
+			ServiceAware<QueryService> queryAware) throws Exception {
+		assertNotNull(factoryAware.waitForService(20_000),
+				"the persistence unit must be up before commands can execute");
+		QueryService queryService = queryAware.waitForService(5_000);
+		WriteService writeService = (WriteService) queryService;
+
+		EStructuralFeature purchaseId = purchaseClass.getEStructuralFeature("purchaseId");
+		EStructuralFeature purchases = itemClass.getEStructuralFeature("purchases");
+		for (int i = 1; i <= 3; i++) {
+			EObject purchase = pkg.getEFactoryInstance().create(purchaseClass);
+			purchase.eSet(purchaseId, "o" + i);
+			purchase.eSet(purchaseClass.getEStructuralFeature("amount"), new BigDecimal(i * 100));
+			writeService.create(purchaseClass, purchase);
+		}
+		EObject item = pkg.getEFactoryInstance().create(itemClass);
+		item.eSet(itemClass.getEStructuralFeature("id"), "e1");
+		item.eSet(itemClass.getEStructuralFeature("name"), "expandable");
+		writeService.create(itemClass, item);
+		for (int i = 1; i <= 3; i++) {
+			writeService.link(itemClass, "'e1'", "purchases", "'o" + i + "'");
+		}
+		try {
+			QueryResult result = queryService.execute(new EntityQuery(itemClass, null, null,
+					List.of(), 0, -1, false,
+					List.of(new ExpandSpec("purchases",
+							new ODataQueryParser().parseFilter("amount gt 150", purchaseClass),
+							List.of(), 0, -1))));
+
+			assertTrue(result.pushedFor("purchases").filter(),
+					"the JPA flavor declares EXPAND_FILTER, so the predicate belongs in the database");
+			assertFalse(result.pushedFor("purchases").paging(), "nothing asked for a page");
+			assertEquals(1, result.entities().size());
+
+			// reading the list the ordinary way would resolve what we are here to observe
+			@SuppressWarnings("unchecked")
+			InternalEList<EObject> members = (InternalEList<EObject>) result.entities().get(0)
+					.eGet(purchases);
+			List<String> resolved = new ArrayList<>();
+			int proxies = 0;
+			for (Iterator<EObject> items = members.basicIterator(); items.hasNext();) {
+				EObject member = items.next();
+				if (member.eIsProxy()) {
+					proxies++;
+				} else {
+					resolved.add(String.valueOf(member.eGet(purchaseId)));
+				}
+			}
+			assertEquals(List.of("o2", "o3"), resolved.stream().sorted().toList(),
+					"exactly the matching purchases come back resolved");
+			assertEquals(1, proxies,
+					"the unmatched one stays a proxy — that is what the payload leaves out");
+		} finally {
+			writeService.delete(itemClass, "'e1'");
+			for (int i = 1; i <= 3; i++) {
+				writeService.delete(purchaseClass, "'o" + i + "'");
+			}
+		}
+	}
+
+	@Test
+	@DisplayName("$expand round trip: EXPAND_PAGE takes the window per parent, in the database (#64)")
+	void expandPagingPushesDownOnTheJpaUnit(
+			@InjectService(cardinality = 0, filter = "(osgi.unit.name=" + UNIT_NAME + ")")
+			ServiceAware<EntityManagerFactory> factoryAware,
+			@InjectService(cardinality = 0, filter = "(fennec.odata.backend=command)")
+			ServiceAware<QueryService> queryAware) throws Exception {
+		assertNotNull(factoryAware.waitForService(20_000),
+				"the persistence unit must be up before commands can execute");
+		QueryService queryService = queryAware.waitForService(5_000);
+		WriteService writeService = (WriteService) queryService;
+
+		EStructuralFeature purchaseId = purchaseClass.getEStructuralFeature("purchaseId");
+		EStructuralFeature purchases = itemClass.getEStructuralFeature("purchases");
+		for (int i = 1; i <= 3; i++) {
+			EObject purchase = pkg.getEFactoryInstance().create(purchaseClass);
+			purchase.eSet(purchaseId, "p" + i);
+			purchase.eSet(purchaseClass.getEStructuralFeature("amount"), new BigDecimal(i * 100));
+			writeService.create(purchaseClass, purchase);
+		}
+		EObject item = pkg.getEFactoryInstance().create(itemClass);
+		item.eSet(itemClass.getEStructuralFeature("id"), "e2");
+		writeService.create(itemClass, item);
+		for (int i = 1; i <= 3; i++) {
+			writeService.link(itemClass, "'e2'", "purchases", "'p" + i + "'");
+		}
+		try {
+			ODataQueryParser parser = new ODataQueryParser();
+			QueryResult result = queryService.execute(new EntityQuery(itemClass, null, null,
+					List.of(), 0, -1, false,
+					List.of(new ExpandSpec("purchases", null,
+							parser.parseOrderBy("amount desc", purchaseClass), 0, 1))));
+
+			assertTrue(result.pushedFor("purchases").paging(),
+					"the JPA flavor declares EXPAND_PAGE — the window is a database window");
+			assertFalse(result.pushedFor("purchases").filter(), "there was no predicate to push");
+
+			@SuppressWarnings("unchecked")
+			InternalEList<EObject> members = (InternalEList<EObject>) result.entities().get(0)
+					.eGet(purchases);
+			List<String> resolved = new ArrayList<>();
+			int proxies = 0;
+			for (Iterator<EObject> items = members.basicIterator(); items.hasNext();) {
+				EObject member = items.next();
+				if (member.eIsProxy()) {
+					proxies++;
+				} else {
+					resolved.add(String.valueOf(member.eGet(purchaseId)));
+				}
+			}
+			assertEquals(List.of("p3"), resolved,
+					"top 1 by amount desc is the dearest purchase, and only that one");
+			assertEquals(2, proxies, "the rest of the collection is untouched, not gone");
+		} finally {
+			writeService.delete(itemClass, "'e2'");
+			for (int i = 1; i <= 3; i++) {
+				writeService.delete(purchaseClass, "'p" + i + "'");
+			}
+		}
 	}
 
 	private Path writeMappingFile() throws Exception {
