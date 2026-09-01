@@ -608,7 +608,7 @@ public class MemoryWriteRepository
 				candidates = new ArrayList<>(entry.getValue().values());
 			}
 			for (EObject owner : candidates) {
-				if (expandedMemberChanged(owner, query.expand(), changes)) {
+				if (expandedMemberChanged(owner, query.expandPaths(), changes)) {
 					owners.add(owner);
 				}
 			}
@@ -617,7 +617,7 @@ public class MemoryWriteRepository
 	}
 
 	/** Whether any (first-segment) expanded navigation of the owner holds a changed entity. */
-	private boolean expandedMemberChanged(EObject owner, Set<String> expand,
+	private boolean expandedMemberChanged(EObject owner, java.util.Collection<String> expand,
 			List<ChangeJournal.Change> changes) {
 		for (String path : expand) {
 			int slash = path.indexOf('/');

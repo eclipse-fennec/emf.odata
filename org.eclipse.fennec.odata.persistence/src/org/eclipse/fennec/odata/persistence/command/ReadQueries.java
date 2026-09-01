@@ -35,6 +35,9 @@ import org.eclipse.fennec.model.expression.NullLiteral;
 import org.eclipse.fennec.model.expression.PropertyPath;
 import org.eclipse.fennec.model.expression.Variable;
 import org.eclipse.fennec.model.expression.VariableRef;
+import org.eclipse.fennec.model.query.OrderBy;
+import org.eclipse.fennec.model.query.QueryFactory;
+import org.eclipse.fennec.model.query.SortDirection;
 import org.eclipse.fennec.model.query.builder.Expressions;
 import org.eclipse.fennec.model.query.builder.QueryBuilder;
 import org.eclipse.fennec.odata.query.OrderBySegment;
@@ -74,24 +77,45 @@ final class ReadQueries {
 	/** Bridges one {@code $orderby} key and appends it to the builder. */
 	static void applyOrderBy(QueryBuilder builder, List<OrderBySegment> orderBy, EClass entityType,
 			EClass castType) {
-		for (OrderBySegment segment : orderBy) {
-			Expression key = bridge(segment.expression(), entityType, castType);
-			if (key instanceof PropertyPath path && path.getBase() == null
-					&& path.getCastBase() == null) {
-				// keep plain paths as OrderBy.path — SORT_EXPRESSION is a scarcer capability
-				EStructuralFeature[] segments = path.getSegments()
+		for (OrderBy sort : orderByList(orderBy, entityType, castType)) {
+			boolean ascending = sort.getDirection() == SortDirection.ASC;
+			if (sort.getPath() != null) {
+				EStructuralFeature[] segments = sort.getPath().getSegments()
 						.toArray(EStructuralFeature[]::new);
-				if (segment.ascending()) {
+				if (ascending) {
 					builder.orderByAsc(segments);
 				} else {
 					builder.orderByDesc(segments);
 				}
-			} else if (segment.ascending()) {
-				builder.orderByAsc(key);
+			} else if (ascending) {
+				builder.orderByAsc(sort.getKey());
 			} else {
-				builder.orderByDesc(key);
+				builder.orderByDesc(sort.getKey());
 			}
 		}
+	}
+
+	/**
+	 * The same translation as {@link #applyOrderBy}, detached from the envelope — an
+	 * {@code Expand} carries its own {@code OrderBy} list (ADR-0008).
+	 */
+	static List<OrderBy> orderByList(List<OrderBySegment> orderBy, EClass entityType,
+			EClass castType) {
+		List<OrderBy> sorts = new ArrayList<>(orderBy.size());
+		for (OrderBySegment segment : orderBy) {
+			Expression key = bridge(segment.expression(), entityType, castType);
+			OrderBy sort = QueryFactory.eINSTANCE.createOrderBy();
+			sort.setDirection(segment.ascending() ? SortDirection.ASC : SortDirection.DESC);
+			if (key instanceof PropertyPath path && path.getBase() == null
+					&& path.getCastBase() == null) {
+				// keep plain paths as OrderBy.path — SORT_EXPRESSION is a scarcer capability
+				sort.setPath(path);
+			} else {
+				sort.setKey(key);
+			}
+			sorts.add(sort);
+		}
+		return sorts;
 	}
 
 	/**

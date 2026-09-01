@@ -47,6 +47,8 @@ import org.eclipse.fennec.model.command.InsertCommand;
 import org.eclipse.fennec.model.command.UpdateCommand;
 import org.eclipse.fennec.model.expression.Expression;
 import org.eclipse.fennec.model.query.Query;
+import org.eclipse.fennec.model.query.Expand;
+import org.eclipse.fennec.model.query.QueryFactory;
 import org.eclipse.fennec.model.query.builder.Expressions;
 import org.eclipse.fennec.model.query.builder.QueryBuilder;
 import org.eclipse.fennec.model.stream.ChangeEntry;
@@ -58,6 +60,8 @@ import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
+import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
+import org.eclipse.fennec.odata.persistence.api.ExpandSpec;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
@@ -199,8 +203,11 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	public QueryResult execute(EntityQuery query) {
 		EClass entityType = query.entityType();
 		long total = query.count() ? executeCount(query, entityType) : -1;
-		List<EObject> entities = query.top() == 0 ? List.of() : executePage(query, entityType);
-		return new QueryResult(entities, total);
+		if (query.top() == 0) {
+			return new QueryResult(List.of(), total);
+		}
+		Page page = executePage(query, entityType);
+		return new QueryResult(page.entities(), total, page.pushedExpands());
 	}
 
 	/** {@code $count} is total-before-paging: a separate countOnly query, no order, no page. */
@@ -221,9 +228,9 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		}
 	}
 
-	private List<EObject> executePage(EntityQuery query, EClass entityType) {
+	private Page executePage(EntityQuery query, EClass entityType) {
 		Expression predicate = ReadQueries.predicate(query.filter(), entityType, query.castType());
-		return fetchMatching(query, entityType, predicate, true);
+		return fetchPage(query, entityType, predicate, true);
 	}
 
 	/**
@@ -231,7 +238,16 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	 * ordering and paging (a delta re-query must stay complete — its bound is the journal
 	 * window, not a page cap).
 	 */
+	/** One page plus what the backend applied to the expanded navigations (ADR-0008). */
+	private record Page(List<EObject> entities, Map<String, ExpandPushdown> pushedExpands) {
+	}
+
 	private List<EObject> fetchMatching(EntityQuery query, EClass entityType, Expression predicate,
+			boolean paged) {
+		return fetchPage(query, entityType, predicate, paged).entities();
+	}
+
+	private Page fetchPage(EntityQuery query, EClass entityType, Expression predicate,
 			boolean paged) {
 		QueryBuilder builder = QueryBuilder.from(entityType);
 		if (predicate != null) {
@@ -251,17 +267,27 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		}
 		EClass context = query.castType() != null ? query.castType() : entityType;
 		List<List<EReference>> chains = new ArrayList<>();
+		Map<String, ExpandPushdown> pushedExpands = new LinkedHashMap<>();
 		boolean pushExpand = supportsFeature(QueryFeature.EXPAND);
-		for (String path : query.expand()) {
-			List<EReference> chain = ReadQueries.referenceChain(context, path);
+		boolean pushFilters = pushExpand && supportsFeature(QueryFeature.EXPAND_FILTER);
+		boolean pushPaging = pushExpand && supportsFeature(QueryFeature.EXPAND_PAGE);
+		for (ExpandSpec spec : query.expand()) {
+			List<EReference> chain = ReadQueries.referenceChain(context, spec.path());
 			if (chain.isEmpty()) {
 				continue;
 			}
-			chains.add(chain);
+			ExpandPushdown pushed = ExpandPushdown.NONE;
 			if (pushExpand) {
 				// full multi-segment fetch hint (persistence-jpa#95: nested JOIN FETCH /
-				// batch hints); the proxy walk below stays as the backend-neutral safety net
-				builder.expand(chain.toArray(EReference[]::new));
+				// batch hints), narrowed by whatever this backend declares (ADR-0008)
+				pushed = expand(builder, spec, chain, pushFilters, pushPaging);
+			}
+			pushedExpands.put(spec.path(), pushed);
+			if (pushed.isNone()) {
+				// nothing was narrowed: the proxy walk stays as the backend-neutral safety
+				// net. Where something WAS narrowed it must not run — it would resolve the
+				// proxies whose unresolved state is the selection (D1b).
+				chains.add(chain);
 			}
 		}
 		Query irQuery = builder.build();
@@ -276,7 +302,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			}
 			// resolve inside the try: the backend session dies with close()
 			materialize(entities, chains, resourceSet);
-			return entities;
+			return new Page(entities, pushedExpands);
 		} catch (IOException e) {
 			throw refused(entityType, resource, errorsBefore, e, Phase.READ);
 		}
@@ -331,6 +357,46 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			row.put(attribute.getName(), entity.eGet(attribute));
 		}
 		return row;
+	}
+
+	/**
+	 * Builds one {@code Expand} and reports what of the ask survived (ADR-0008).
+	 *
+	 * <p>The one composition rule that is not symmetric: paging is pushed only when the
+	 * filter is pushed too (or there is none). Filter down there and page up here is sound —
+	 * the resolved entries already ARE the match set and the store order is untouched. The
+	 * other way round would page first and filter an already truncated set.
+	 *
+	 * <p>{@code $top=0} is never pushed: {@code Expand.top} spells "unlimited" as 0, so the
+	 * empty page has no representation down there. The in-memory pass serves it exactly.
+	 */
+	private ExpandPushdown expand(QueryBuilder builder, ExpandSpec spec, List<EReference> chain,
+			boolean pushFilters, boolean pushPaging) {
+		if (spec.isPlain()) {
+			builder.expand(chain.toArray(EReference[]::new));
+			return ExpandPushdown.NONE;
+		}
+		boolean filter = spec.filter() != null && pushFilters;
+		boolean paging = spec.pages() && spec.top() != 0 && pushPaging
+				&& (spec.filter() == null || filter);
+		if (!filter && !paging) {
+			builder.expand(chain.toArray(EReference[]::new));
+			return ExpandPushdown.NONE;
+		}
+		EClass target = chain.get(chain.size() - 1).getEReferenceType();
+		Expand expand = QueryFactory.eINSTANCE.createExpand();
+		expand.setPath(Expressions.propertyPath(chain.toArray(EStructuralFeature[]::new)));
+		if (filter) {
+			expand.setFilter(ReadQueries.predicate(spec.filter(), target, null));
+		}
+		if (paging) {
+			// orderBy is selector input for the window, never a delivered order (D3)
+			expand.getOrderBy().addAll(ReadQueries.orderByList(spec.orderBy(), target, null));
+			expand.setSkip(spec.skip());
+			expand.setTop(spec.top() < 0 ? 0 : spec.top());
+		}
+		builder.expand(expand);
+		return new ExpandPushdown(filter, paging);
 	}
 
 	/**
@@ -625,7 +691,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			long maxSpan) {
 		List<ChangeJournal.Change> owners = new ArrayList<>();
 		EClass entityType = query.entityType();
-		for (String path : query.expand()) {
+		for (String path : query.expandPaths()) {
 			int slash = path.indexOf('/');
 			String navigation = slash < 0 ? path : path.substring(0, slash);
 			if (!(entityType.getEStructuralFeature(navigation) instanceof EReference reference)
