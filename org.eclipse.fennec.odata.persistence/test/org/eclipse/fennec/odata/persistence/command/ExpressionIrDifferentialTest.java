@@ -273,6 +273,7 @@ public class ExpressionIrDifferentialTest {
 	}
 
 	/** The legacy path: OclEvaluator filter + evaluator-keyed sort — the oracle. */
+	@SuppressWarnings("unchecked")
 	private List<Integer> referenceKeys(OclExpression filter, List<OrderBySegment> orderBy) {
 		List<EObject> matches = new ArrayList<>();
 		for (EObject product : seed) {
@@ -295,7 +296,7 @@ public class ExpressionIrDifferentialTest {
 		return matches.stream().map(entity -> (Integer) entity.eGet(productId)).toList();
 	}
 
-	@SuppressWarnings({ "unchecked", "rawtypes" })
+	@SuppressWarnings( "rawtypes" )
 	private static Comparable asComparable(Object value) {
 		if (value instanceof Number number) {
 			return new BigDecimal(number.toString());
