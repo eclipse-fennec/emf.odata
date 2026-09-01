@@ -3,7 +3,8 @@
 Status: 2026-07-15, konsolidierter Ist-Stand (die frühere Änderungs-Chronik liegt in der
 Git-Historie dieses Dokuments). Publizierte EN-Doku: `manual/` (GitHub Pages, u. a.
 `06-feature-matrix.md`). Conformance-Nachweis: `odata-conformance-status.md`.
-Offene Punkte: `odata-open-tasks.md`. Entscheidungen: `decisions/` (ADRs).
+Offene Punkte: `odata-open-tasks.md` (intern gepflegt, nicht in diesem Repo).
+Entscheidungen: `decisions/` (ADRs).
 Beispiel/Einstieg: `org.eclipse.fennec.odata.example` (startbarer `example.bndrun`, Port 8080).
 
 Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig beansprucht**
@@ -81,7 +82,9 @@ Gehaltene ADRs in `decisions/`: **0002** CSDL über das OASIS-EDM/EDMX-EMF-Model
 **0003** Konversionslogik vollständig im Converter, der Metadata-Handler nur
 dünner Kompositions-Adapter · **0004** Type-Resolution standalone im Query-Bundle ·
 **0006** JPA-Backend als Criteria-Eigenbau hier im Repo · **0007** Client-Schema-Registry
-als SPI (Fetch/Convert ↔ Persistenz/Lookup entkoppelt).
+als SPI (Fetch/Convert ↔ Persistenz/Lookup entkoppelt) · **0008** `$expand`-Optionen:
+Pushdown, wo das Backend die Capability deklariert; In-Memory auf geshapten Kopien als
+benannte Rückfallebene.
 
 Als Fakt (frühere Gegen-ADRs 0001/0005 entfernt): Transport ist ein **planes Jakarta-Servlet
 am OSGi HTTP Whiteboard** (kein Jakarta REST — bei einer selbst parsenden Catch-All-Ressource
@@ -165,7 +168,7 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
   destruktiv getestet (Injection-Strings, Parser-Bomben, Exhaustion, Leak-Freiheit).
 - **OASIS-ABNF-Harnesses** (3 Suiten, `@TestFactory` über vendorte offizielle Testfälle):
   710 Fälle, 697 verifiziert / 13 Skips — jeder Skip ist benanntes Backlog
-  (`odata-open-tasks.md` §2). Skip-Semantik: `OUT_OF_SCOPE` wird gar nicht generiert
+  (im internen Aufgaben-Dokument geführt). Skip-Semantik: `OUT_OF_SCOPE` wird gar nicht generiert
   (dokumentierte Auslassung), `BACKLOG` = Assumption-Skip als Regressions-Radar.
 - **Differenzial-Backend-Harness**: EIN Edge-Case-Datensatz in JPA (H2) und In-Memory, ein
   Query-Corpus über beide, Ergebnis-Parität asserted (fand den 3-wertige-Null-Logik-Bug).
@@ -249,7 +252,7 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
   Subtyp einzuschränken — eine Nicht-Subtyp-Zeile, die den anderen OR-Zweig erfüllt, überlebt
   also korrekt. Per OR-Probe im Cast-Test abgesichert (sonst wäre der Cast-Pushdown unsicher).
 - Lokale `emf.persistence-jpa`-Fixes (Metamodel-Sichtbarkeit dynamischer Typen,
-  `EBigDecimal`-Scale) liegen auf Feature-Branch — s. `odata-open-tasks.md` §8.
+  `EBigDecimal`-Scale) liegen auf Feature-Branch — im internen Aufgaben-Dokument geführt.
 
 **Speicher:**
 - `ODataJsonResourceImpl.RESOLVED` ist eine WeakHashMap (Profile referenzieren das EPackage

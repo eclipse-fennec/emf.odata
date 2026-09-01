@@ -14,7 +14,7 @@ CSDL model. Both server and client decode payloads through the same
 ## Design decisions
 
 The load-bearing decisions are captured as ADRs (in
-[`docs/decisions/`](https://github.com/eclipse-fennec/emf.odata/tree/main/docs/decisions)):
+[`docs/decisions/`](https://github.com/eclipse-fennec/emf.odata/tree/snapshot/docs/decisions)):
 
 | ADR | Decision |
 |---|---|
@@ -23,6 +23,7 @@ The load-bearing decisions are captured as ADRs (in
 | 0004 | **OCL type resolution is standalone** — it does not depend on an external type checker. |
 | 0006 | The **JPA backend hand-writes Criteria queries** (no ORM query abstraction leaks into the mapping). |
 | 0007 | The **client schema registry** decouples fetch/convert, persistence/lookup and the data path behind an SPI. |
+| 0008 | **`$expand` options push down** where the backend declares the capability; in-memory evaluation on shaped copies is the named fallback. |
 
 Two further choices are architecture facts rather than ADRs: the transport is a **plain
 Jakarta servlet** on the OSGi HTTP Whiteboard (no Jakarta REST / Jersey), and there is
