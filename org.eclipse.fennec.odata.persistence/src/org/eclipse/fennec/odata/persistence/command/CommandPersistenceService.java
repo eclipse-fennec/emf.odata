@@ -267,6 +267,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		}
 		EClass context = query.castType() != null ? query.castType() : entityType;
 		List<List<EReference>> chains = new ArrayList<>();
+		Map<String, List<EReference>> narrowedChains = new LinkedHashMap<>();
 		Map<String, ExpandPushdown> pushedExpands = new LinkedHashMap<>();
 		boolean pushExpand = supportsFeature(QueryFeature.EXPAND);
 		boolean pushFilters = pushExpand && supportsFeature(QueryFeature.EXPAND_FILTER);
@@ -288,10 +289,32 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 				// net. Where something WAS narrowed it must not run — it would resolve the
 				// proxies whose unresolved state is the selection (D1b).
 				chains.add(chain);
+			} else {
+				narrowedChains.put(spec.path(), chain);
 			}
 		}
 		Query irQuery = builder.build();
-		validate(irQuery, entityType);
+		try {
+			validate(irQuery, entityType);
+		} catch (UnsupportedOperationException refused) {
+			if (narrowedChains.isEmpty()) {
+				throw refused;
+			}
+			// A declared capability is not a promise for every query: JPA declares
+			// EXPAND_PAGE and still refuses a window whose root and expanded type share an
+			// id attribute NAME, because it cannot address the two apart. Under ADR-0008
+			// that is not a 501 — we can still serve it from the in-memory pass. Strip the
+			// narrowing, put the proxy walk back, and only then let a refusal stand.
+			irQuery.getExpand().forEach(expand -> {
+				expand.setFilter(null);
+				expand.getOrderBy().clear();
+				expand.setTop(0);
+				expand.setSkip(0);
+			});
+			chains.addAll(narrowedChains.values());
+			narrowedChains.keySet().forEach(path -> pushedExpands.put(path, ExpandPushdown.NONE));
+			validate(irQuery, entityType);
+		}
 		ResourceSet resourceSet = resourceSetFactory.createResourceSet();
 		Resource resource = resource(resourceSet, entityType);
 		int errorsBefore = resource.getErrors().size();

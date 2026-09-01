@@ -36,6 +36,7 @@ import org.eclipse.fennec.persistence.capabilities.QueryCapabilities;
 import org.eclipse.fennec.persistence.capabilities.QueryCapabilitiesBuilder;
 import org.eclipse.fennec.persistence.capabilities.QueryFeature;
 import org.eclipse.fennec.persistence.query.QueryConstants;
+import org.eclipse.fennec.persistence.query.support.QueryValidator;
 import org.eclipse.fennec.persistence.query.memory.MemoryQueryProcessor;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
@@ -78,7 +79,7 @@ class ExpandPushdownTest {
 	 * that declares them. The memory engine deliberately declares neither (it is handed
 	 * resolved objects and has nothing to select), which is exactly the "no capability" case.
 	 */
-	private static final class FakeProcessor extends MemoryQueryProcessor {
+	private static class FakeProcessor extends MemoryQueryProcessor {
 
 		private final QueryCapabilities capabilities;
 
@@ -125,6 +126,41 @@ class ExpandPushdownTest {
 	private void register(QueryFeature... extra) {
 		service.addQueryProcessor(new FakeProcessor(extra),
 				Map.of(QueryConstants.BACKEND_PROPERTY, "fake"));
+	}
+
+	/** Declares the capability and still refuses the concrete query — JPA does exactly this. */
+	private void registerRefusing(QueryFeature... extra) {
+		service.addQueryProcessor(new FakeProcessor(extra) {
+			@Override
+			public Diagnostic validate(Query query, EClass rootEClass) {
+				if (query.getExpand().stream().anyMatch(expand -> expand.getFilter() != null
+						|| expand.getTop() > 0 || expand.getSkip() > 0)) {
+					BasicDiagnostic refusal = new BasicDiagnostic(Diagnostic.ERROR, "test", 0,
+							"Query validation", null);
+					// the code is what separates "cannot serve this" (501, degradable) from
+					// "this query is wrong" (400, not degradable)
+					refusal.add(new BasicDiagnostic(Diagnostic.ERROR, "test",
+							QueryValidator.CODE_UNSUPPORTED_FEATURE,
+							"Per-parent paging of expand 'orders' is not served", null));
+					return refusal;
+				}
+				return super.validate(query, rootEClass);
+			}
+		}, Map.of(QueryConstants.BACKEND_PROPERTY, "fake"));
+	}
+
+	@Test
+	@DisplayName("a capability is not a promise: a refused narrowing falls back, it does not 501")
+	void aRefusedNarrowingDegradesToTheInMemoryPass() {
+		registerRefusing(QueryFeature.EXPAND, QueryFeature.EXPAND_FILTER,
+				QueryFeature.EXPAND_PAGE);
+
+		QueryResult result = run(spec("amount gt 100", 0, 5));
+
+		assertThat(result.pushedFor("orders")).as("the report must not claim what was withdrawn")
+				.isEqualTo(ExpandPushdown.NONE);
+		assertThat(pushedExpand().getFilter()).as("the ask was stripped, not re-sent").isNull();
+		assertThat(pushedExpand().getTop()).isZero();
 	}
 
 	@BeforeEach
