@@ -23,5 +23,16 @@
 		// origin. The production default is "" (CORS OFF). Do NOT ship "*" — restrict to an
 		// explicit space-separated origin allowlist for anything reachable off localhost.
 		"odata.cors.origin": "*"
+
+		// --- service root & published model (defaults shown; see docs/manual/04-configuration.md) ---
+		// This singleton configuration keeps the ONE default root at /odata/* describing every
+		// registered EPackage. A factory configuration ("org.eclipse.fennec.odata.servlet~shop")
+		// mounts an additional/alternative root instead — and replaces the default one:
+		//   "osgi.http.whiteboard.servlet.pattern": "/shop/*",
+		//   "osgi.http.whiteboard.target": "(id=shopHttp)",           // one named HTTP runtime
+		//   "odata.model.packages": ["http://example.org/webshop"],  // schemas of this root
+		//   "odata.model.entitysets": ["Products=http://example.org/webshop#Product", "Category"]
+		// The request-limits filter follows suit under "org.eclipse.fennec.odata.request.filter~shop"
+		// with "osgi.http.whiteboard.filter.pattern" and the same target.
 	}
 }

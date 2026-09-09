@@ -1,7 +1,10 @@
 # Server
 
-The server is a single catch-all servlet (`ODataServlet`) registered on the OSGi HTTP
-Whiteboard under `/odata/*`. It turns Ecore `EPackage`s into an OData v4.01 service.
+The server is a catch-all servlet (`ODataServlet`) registered on the OSGi HTTP Whiteboard.
+It turns Ecore `EPackage`s into an OData v4.01 service. Unconfigured it serves one service
+root at `/odata/*` describing every registered package; a configuration mounts a root at
+its own pattern, on one named HTTP runtime, publishing one selected model — several roots
+per runtime are the ordinary shape (see [Service roots](/guides/04-configuration#service-roots--published-model)).
 
 ## Running
 
@@ -22,6 +25,25 @@ A minimal wiring needs three things in the OSGi runtime:
 
 The servlet binds them via Declarative Services; the JPA backend advertises the service
 property `fennec.odata.backend=jpa`.
+
+## Service roots
+
+One servlet configuration is one OData service root ([OData-Protocol] §3: any URL the
+provider chooses). Without configuration a single root serves at `/odata/*` on every HTTP
+whiteboard runtime and its `$metadata` has one schema per registered `EPackage`. A **factory
+configuration** of PID `org.eclipse.fennec.odata.servlet` creates one root per configuration:
+
+- `osgi.http.whiteboard.servlet.pattern` — where it is mounted (replaces `/odata/*`);
+- `osgi.http.whiteboard.target` / `osgi.http.whiteboard.context.select` — which HTTP runtime
+  and servlet context it binds to (standard whiteboard properties, passed through);
+- `odata.model.packages` / `odata.model.entitysets` — the model it publishes: only the listed
+  nsURIs become schemas, only the listed classes become entity sets (renamed on request),
+  and a set outside the list is a 404, not a leak of the wider runtime.
+
+As soon as factory configurations exist, the unconfigured default root is gone — a runtime
+that configures its roots gets exactly those. The request-limits filter follows the same
+pattern under `org.eclipse.fennec.odata.request.filter`. Keys and an example are in
+[Configuration & Security](/guides/04-configuration#service-roots--published-model).
 
 ## Endpoints
 
