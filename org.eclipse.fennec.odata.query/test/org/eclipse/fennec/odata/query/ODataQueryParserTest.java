@@ -30,7 +30,6 @@ import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
-import org.eclipse.fennec.m2x.model.ocl.ClassifierType;
 import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.IntegerLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
@@ -254,8 +253,8 @@ class ODataQueryParserTest {
 
 		OperationCallExp catEq = (OperationCallExp) parser.parseFilter("category/name eq 'x'", productClass);
 		PropertyCallExp name = (PropertyCallExp) catEq.getOwnedSource();
-		ClassifierType category = assertInstanceOf(ClassifierType.class, name.getOwnedSource().getType());
-		assertEquals("Category", category.getReferredClassifier().getName(), "reference → ClassifierType");
+		EClass category = assertInstanceOf(EClass.class, name.getOwnedSource().getType());
+		assertEquals("Category", category.getName(), "reference → the referenced EClass itself");
 
 		OperationCallExp size = (OperationCallExp) ((OperationCallExp) parser
 				.parseFilter("length(name) gt 3", productClass)).getOwnedSource();
@@ -413,8 +412,7 @@ class ODataQueryParserTest {
 		assertEquals("oclIsKindOf", isof.getName());
 		assertEquals("Boolean", isof.getType().getName());
 		TypeExp typeArg = assertInstanceOf(TypeExp.class, isof.getOwnedArguments().get(0));
-		assertEquals("Category",
-				((ClassifierType) typeArg.getReferredType()).getReferredClassifier().getName());
+		assertEquals("Category", typeArg.getReferredType().getName());
 
 		OperationCallExp cast = assertInstanceOf(OperationCallExp.class,
 				parser.parseFilter("cast(price, Edm.String)", productClass));
