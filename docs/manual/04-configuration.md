@@ -21,6 +21,51 @@ the default. The defaults above were reviewed and **confirmed as the shipped bas
 2026-07-17**; they are starting values validated by the test corpus, expected to be tuned
 per deployment as production experience accrues.
 
+## Service roots & published model
+
+Both PIDs — servlet `org.eclipse.fennec.odata.servlet` and request-limits filter
+`org.eclipse.fennec.odata.request.filter` — are `configurationPolicy = optional` components
+that accept **factory configurations**: one configuration is one instance. Every property of
+a configuration becomes a service property, so the standard HTTP-whiteboard keys select where
+an instance lives; the `odata.model.*` keys select what it publishes.
+
+| Setting | Key | Default |
+|---|---|---|
+| Whiteboard pattern of the servlet instance | `osgi.http.whiteboard.servlet.pattern` | `/odata/*` |
+| Whiteboard pattern of the filter instance | `osgi.http.whiteboard.filter.pattern` | `/odata/*` |
+| The HTTP runtime to bind to (filter on the `HttpServiceRuntime` properties) | `osgi.http.whiteboard.target` | all runtimes |
+| The servlet context to bind to | `osgi.http.whiteboard.context.select` | the default context |
+| Packages (nsURIs) published as schemas | `odata.model.packages` | every bound `EPackage` |
+| Entity sets published: `[SetName=]nsURI#EClass` or `[SetName=]EClass` | `odata.model.entitysets` | every concrete class, named by type (or its `@OData` rename annotation) |
+
+Multi-valued keys take a `String[]`, a collection, or one comma/whitespace-separated string.
+Both allowlists apply consistently to `$metadata` (schemas, container sets, navigation
+bindings), the service document, entity-set routing (an unlisted set is a **404**), cast and
+operation resolution — so `QueryService`/`WriteService` selection only ever sees published
+types. An `odata.model.entitysets` entry whose package is not (yet) bound is skipped with a
+warning and picked up when the package arrives. Entity **types** stay in their schema even
+when their set is not published: navigation properties still reference them.
+
+While factory configurations exist there is no unconfigured default root; deleting the last
+one brings `/odata/*` back. A singleton configuration of the PID (as in the example bundle)
+configures that single default instance. Independently of the allowlist, the DS reference
+filters `EPackage.target` and `QueryService.target` (e.g. `(emf.nsURI=…)`, `(fennec.odata.backend=jpa)`)
+narrow what an instance binds in the first place.
+
+```json
+"org.eclipse.fennec.odata.servlet~shop": {
+    "osgi.http.whiteboard.servlet.pattern": "/atlas/shop/*",
+    "osgi.http.whiteboard.target": "(id=dataAtlasHttp)",
+    "odata.model.packages": ["http://example.org/webshop"],
+    "odata.model.entitysets": ["Products=http://example.org/webshop#Product", "Category"]
+},
+"org.eclipse.fennec.odata.request.filter~shop": {
+    "osgi.http.whiteboard.filter.pattern": "/atlas/shop/*",
+    "osgi.http.whiteboard.target": "(id=dataAtlasHttp)",
+    "odata.max.expression.length": 1024
+}
+```
+
 ## Backend / repository
 
 | Setting | PID / key | Default |

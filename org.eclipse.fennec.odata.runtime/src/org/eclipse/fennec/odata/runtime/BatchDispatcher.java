@@ -100,7 +100,8 @@ void execute(HttpServletRequest request, HttpServletResponse response) throws IO
 			return;
 		}
 		try {
-			requests = parseMultipartBatch(new String(body, StandardCharsets.UTF_8), boundary);
+			requests = parseMultipartBatch(new String(body, StandardCharsets.UTF_8), boundary,
+					ODataServlet.contextRoot(request));
 		} catch (IllegalArgumentException e) {
 			servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed multipart batch");
 			return;
@@ -216,7 +217,7 @@ private static String multipartBoundary(String contentType) {
  * node (change-set members share an {@code atomicityGroup}, {@code Content-ID} → id); relative
  * and absolute request URLs both reduce to service-root-relative form.
  */
-private ArrayNode parseMultipartBatch(String body, String boundary) {
+private ArrayNode parseMultipartBatch(String body, String boundary, String serviceRoot) {
 	ArrayNode requests = ODataServlet.JSON.createArrayNode();
 	int changeset = 0;
 	int generated = 0;
@@ -243,11 +244,12 @@ private ArrayNode parseMultipartBatch(String body, String boundary) {
 					continue;
 				}
 				requests.add(httpPartRequest(member.substring(0, memberHeaderEnd),
-						member.substring(memberHeaderEnd).stripLeading(), group, "g" + generated++));
+						member.substring(memberHeaderEnd).stripLeading(), group, "g" + generated++,
+						serviceRoot));
 			}
 			continue;
 		}
-		requests.add(httpPartRequest(partHeaders, partBody, null, "g" + generated++));
+		requests.add(httpPartRequest(partHeaders, partBody, null, "g" + generated++, serviceRoot));
 	}
 	return requests;
 }
@@ -259,7 +261,7 @@ private static int headerEnd(String part) {
 
 /** One {@code application/http} part → a request node (method, relative url, id, body). */
 private ObjectNode httpPartRequest(String partHeaders, String content, String group,
-		String fallbackId) {
+		String fallbackId, String serviceRoot) {
 	ObjectNode node = ODataServlet.JSON.createObjectNode();
 	String id = null;
 	for (String line : partHeaders.split("\\r?\\n")) {
@@ -294,9 +296,15 @@ private ObjectNode httpPartRequest(String partHeaders, String content, String gr
 		// absolute-form request lines: reduce to service-root-relative (keep the query!)
 		URI absolute = URI.create(url);
 		String path = absolute.getRawPath() == null ? "" : absolute.getRawPath();
-		int secondSlash = path.indexOf('/', 1); // "/odata/People" → "People"
-		url = (secondSlash >= 0 ? path.substring(secondSlash + 1) : path)
-				+ (absolute.getRawQuery() != null ? "?" + absolute.getRawQuery() : "");
+		String relative;
+		if (!serviceRoot.isEmpty() && path.startsWith(serviceRoot + "/")) {
+			// this root's own URL, whatever depth it is mounted at ("/sap/opu/odata/shop/People")
+			relative = path.substring(serviceRoot.length() + 1);
+		} else {
+			int secondSlash = path.indexOf('/', 1); // legacy one-segment root: "/odata/People" → "People"
+			relative = secondSlash >= 0 ? path.substring(secondSlash + 1) : path;
+		}
+		url = relative + (absolute.getRawQuery() != null ? "?" + absolute.getRawQuery() : "");
 	}
 	node.put("id", id != null ? id : fallbackId);
 	node.put("method", method);

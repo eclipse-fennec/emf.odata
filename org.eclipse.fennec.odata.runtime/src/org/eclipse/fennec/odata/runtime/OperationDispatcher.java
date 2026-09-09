@@ -273,7 +273,7 @@ private record UnboundOperation(EOperation operation, String qualifiedName) {
 
 /** Finds an unbound ({@code @OData.Bound=false}) operation with the given name across the models. */
 UnboundOperation resolveUnboundFunction(String name) {
-	for (EPackage pkg : servlet.packages) {
+	for (EPackage pkg : servlet.model().packages()) {
 		ODataPackageProfile profile = servlet.profiles.computeIfAbsent(pkg,
 				p -> new OdataResolver().resolve(p));
 		for (EClassifier classifier : pkg.getEClassifiers()) {

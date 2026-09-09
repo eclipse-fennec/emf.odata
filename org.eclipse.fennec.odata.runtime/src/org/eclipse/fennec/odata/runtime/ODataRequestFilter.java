@@ -21,6 +21,7 @@ import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataResourceParser;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.ConfigurationPolicy;
 
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -39,10 +40,18 @@ import jakarta.servlet.http.HttpServletResponse;
  *
  * <p>The servlet keeps its own front-door checks (defence in depth and coverage for setups
  * that deploy the servlet without the whiteboard filter); this filter moves the rejection to
- * the earliest possible point of the pipeline. Configured via the same PID properties as the
- * servlet limits ({@code odata.max.expression.length}, {@code odata.max.nesting.depth}).
+ * the earliest possible point of the pipeline. Configured via the same limit keys as the servlet
+ * ({@code odata.max.expression.length}, {@code odata.max.nesting.depth}) under its own PID.
+ *
+ * <p>Like the servlet, one configuration is one filter instance: the default (unconfigured) filter
+ * guards {@code /odata/*} on every whiteboard runtime; a (factory) configuration under
+ * {@link #PID} sets {@code osgi.http.whiteboard.filter.pattern} to the service root it guards
+ * and, where needed, {@code osgi.http.whiteboard.context.select} and
+ * {@code osgi.http.whiteboard.target} — the same three properties the matching servlet
+ * configuration carries. Factory configurations replace the unconfigured default filter.
  */
-@Component(service = Filter.class, configurationPid = ODataRequestFilter.PID, property = {
+@Component(service = Filter.class, configurationPid = ODataRequestFilter.PID,
+		configurationPolicy = ConfigurationPolicy.OPTIONAL, property = {
 		"osgi.http.whiteboard.filter.pattern=/odata/*",
 		"osgi.http.whiteboard.filter.name=Fennec OData Request Limits"
 })

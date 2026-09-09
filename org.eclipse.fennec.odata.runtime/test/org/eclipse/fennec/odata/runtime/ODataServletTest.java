@@ -84,6 +84,8 @@ class ODataServletTest {
 	private EClass productClass;
 
 	private ODataServlet servlet;
+	/** The service root the mocked requests arrive under (the whiteboard pattern minus "/*"). */
+	private String servletRoot = "/odata";
 	private final AtomicReference<EntityQuery> lastQuery = new AtomicReference<>();
 	private final AtomicReference<RuntimeException> backendFailure = new AtomicReference<>();
 	private final AtomicReference<CountDownLatch> backendGate = new AtomicReference<>();
@@ -112,6 +114,7 @@ class ODataServletTest {
 		pkg = ecoreHelper.loadEcore(findResource("testdata/webshop.ecore",
 				"org.eclipse.fennec.odata.runtime/testdata/webshop.ecore"));
 		productClass = EcoreHelper.getEClass(pkg, "Product");
+		servletRoot = "/odata";
 
 		servlet = new ODataServlet();
 		servlet.activate(Map.of("odata.max.top", "50",
@@ -236,6 +239,12 @@ class ODataServletTest {
 		ecoreHelper.releaseAll();
 	}
 
+	/** Re-binds a package whose annotations were changed after binding (DS would re-bind on re-registration). */
+	private void rebind(EPackage ePackage) {
+		servlet.removeEPackage(ePackage);
+		servlet.addEPackage(ePackage);
+	}
+
 	private record Response(int status, String body, Map<String, String> headers) {
 	}
 
@@ -288,7 +297,7 @@ class ODataServletTest {
 		when(request.getHeader("Accept")).thenReturn(accept);
 		when(request.getHeader("OData-MaxVersion")).thenReturn(maxVersion);
 		requestHeaders.forEach((name, value) -> when(request.getHeader(name)).thenReturn(value));
-		when(request.getRequestURI()).thenReturn("/odata" + path);
+		when(request.getRequestURI()).thenReturn(servletRoot + path);
 		when(request.getParameterNames())
 				.thenAnswer(i -> java.util.Collections.enumeration(parameters.keySet()));
 		java.util.Map<String, String[]> parameterMap = new HashMap<>();
@@ -890,6 +899,7 @@ class ODataServletTest {
 		ann.setSource(ODataAnnotationConstants.SINGLETONS_SOURCE);
 		ann.getDetails().put("Me", "Product");
 		pkg.getEAnnotations().add(ann);
+		rebind(pkg); // the published model is captured when the package binds
 
 		Response me = get("/Me", Map.of());
 		assertEquals(200, me.status(), me.body());
@@ -1120,6 +1130,7 @@ class ODataServletTest {
 		sets.setSource(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
 		sets.getDetails().put("Items", "Product"); // the set's name differs from its type's
 		pkg.getEAnnotations().add(sets);
+		rebind(pkg); // the published model is captured when the package binds
 
 		Response collection = get("/Items", Map.of());
 		assertEquals(200, collection.status(), collection.body());
@@ -1135,6 +1146,91 @@ class ODataServletTest {
 		Response metadata = get("/$metadata", Map.of());
 		assertTrue(metadata.body().contains("Name=\"Items\""),
 				"$metadata emits the renamed set: " + metadata.body());
+	}
+
+	@Test
+	@DisplayName("odata.model.packages: a root publishes its model, not the runtime's package registry")
+	void packageAllowlist() throws Exception {
+		EPackage other = EcoreFactory.eINSTANCE.createEPackage();
+		other.setName("other");
+		other.setNsPrefix("other");
+		other.setNsURI("http://example.org/other");
+		EClass widget = EcoreFactory.eINSTANCE.createEClass();
+		widget.setName("Widget");
+		other.getEClassifiers().add(widget);
+		servlet.addEPackage(other);
+
+		Response everything = get("/$metadata", Map.of());
+		assertTrue(everything.body().contains("Namespace=\"other\"") && everything.body().contains("Widget"),
+				"unconfigured, every bound package is a schema: " + everything.body());
+		assertTrue(get("/", Map.of()).body().contains("\"Widget\""));
+
+		servlet.activate(Map.of("odata.model.packages", pkg.getNsURI()));
+
+		Response metadata = get("/$metadata", Map.of());
+		assertEquals(200, metadata.status());
+		assertTrue(metadata.body().contains("Namespace=\"webshop\""), metadata.body());
+		assertFalse(metadata.body().contains("Widget"),
+				"the foreign package is no schema of this root: " + metadata.body());
+		Response serviceDoc = get("/", Map.of());
+		assertTrue(serviceDoc.body().contains("\"Product\"") && !serviceDoc.body().contains("Widget"),
+				serviceDoc.body());
+		Response widgets = get("/Widget", Map.of());
+		assertEquals(404, widgets.status(), "outside the allowlist is unknown, not a leak: " + widgets.body());
+		assertTrue(widgets.body().contains("unknown entity set"), widgets.body());
+
+		servlet.removeEPackage(other);
+		servlet.activate(Map.of());
+	}
+
+	@Test
+	@DisplayName("odata.model.entitysets: only the listed sets exist, under their configured names")
+	void entitySetAllowlist() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		servlet.activate(Map.of("odata.model.entitysets",
+				new String[] { "Products=" + pkg.getNsURI() + "#Product" }));
+
+		Response collection = get("/Products", Map.of());
+		assertEquals(200, collection.status(), collection.body());
+		assertTrue(collection.body().contains("\"name\":\"Milk\""), collection.body());
+		assertTrue(collection.body().contains("$metadata#Products\""),
+				"the context URL names the configured set: " + collection.body());
+		assertEquals(404, get("/Product", Map.of()).status(), "the type name is no set name any more");
+		assertEquals(404, get("/Category", Map.of()).status(), "an unlisted set is a 404");
+
+		Response serviceDoc = get("/", Map.of());
+		assertTrue(serviceDoc.body().contains("\"name\":\"Products\""), serviceDoc.body());
+		assertFalse(serviceDoc.body().contains("\"name\":\"Category\""),
+				"the service document lists only the published sets: " + serviceDoc.body());
+
+		Response metadata = get("/$metadata", Map.of());
+		assertTrue(metadata.body().contains("EntitySet EntityType=\"webshop.Product\" Name=\"Products\""), metadata.body());
+		assertFalse(metadata.body().contains("EntityType=\"webshop.Category\" Name=\"Category\""),
+				"the container describes only the published sets: " + metadata.body());
+		assertTrue(metadata.body().contains("EntityType Name=\"Category\""),
+				"types stay in the schema — navigation properties reference them: " + metadata.body());
+		assertFalse(metadata.body().contains("Target=\"Category\""),
+				"no navigation binding onto a set that does not exist: " + metadata.body());
+
+		servlet.activate(Map.of());
+		assertEquals(200, get("/Product", Map.of()).status(), "unconfigured again: every set is back");
+	}
+
+	@Test
+	@DisplayName("multipart $batch reduces absolute URLs against the root it is mounted at, whatever its depth")
+	void multipartBatchUnderDeepServiceRoot() throws Exception {
+		servlet.activate(Map.of()); // default limits — the multipart envelope exceeds the tiny test cap
+		servletRoot = "/sap/opu/odata/shop";
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		String body = "--b\r\n"
+				+ "Content-Type: application/http\r\n\r\n"
+				+ "GET http://host:8080/sap/opu/odata/shop/Product('p1')?$select=name HTTP/1.1\r\n"
+				+ "Accept: application/json\r\n\r\n\r\n"
+				+ "--b--\r\n";
+		Response result = callWrite("POST", "/$batch", body, "multipart/mixed; boundary=b");
+		assertEquals(200, result.status(), result.body());
+		assertTrue(result.body().contains("HTTP/1.1 200"), "the part resolved to Product('p1'): " + result.body());
+		assertTrue(result.body().contains("\"name\":\"Milk\""), result.body());
 	}
 
 	@Test

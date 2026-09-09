@@ -92,6 +92,7 @@ import org.open.oasis.docs.odata.ns.edm.EdmFactory;
 import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
 import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
+import org.open.oasis.docs.odata.ns.edm.TEntitySet;
 import org.open.oasis.docs.odata.ns.edm.TPropertyValue;
 import org.open.oasis.docs.odata.ns.edm.TRecordExpression;
 import org.open.oasis.docs.odata.ns.edmx.EdmxFactory;
@@ -104,6 +105,7 @@ import org.open.oasis.docs.odata.ns.edmx.TReference;
 import org.open.oasis.docs.odata.ns.edmx.TVersion;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.ConfigurationPolicy;
 import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
@@ -137,11 +139,25 @@ import tools.jackson.databind.ObjectMapper;
  * string concatenation into any backend — the ONLY query path is the typed OCL IR, unknown
  * properties/functions fail the parse (400). Error responses carry sanitized messages, never stack
  * traces or exception class names; unexpected failures answer with a generic 500.
+ *
+ * <p><b>Service roots:</b> one component configuration is one OData service root ([OData-Protocol]
+ * §3 — any URL the provider chooses). Without configuration a single root serves at
+ * {@code /odata/*} on every HTTP whiteboard runtime. Every property of a (factory) configuration
+ * under {@link #PID} becomes a service property, so a configuration mounts its instance where it
+ * wants: {@code osgi.http.whiteboard.servlet.pattern} replaces the default pattern,
+ * {@code osgi.http.whiteboard.context.select} picks the servlet context and
+ * {@code osgi.http.whiteboard.target} binds the instance to ONE named whiteboard runtime. Factory
+ * configurations ({@code org.eclipse.fennec.odata.servlet~<name>}) create one root each — and
+ * replace the unconfigured default root, so a runtime that configures its roots gets exactly
+ * those. What a root publishes is its {@link ServiceModel} ({@code odata.model.packages},
+ * {@code odata.model.entitysets}); the {@code EPackage.target}/{@code QueryService.target}
+ * reference filters narrow what is bound in the first place.
  */
 @RequireHttpWhiteboard
 @HttpWhiteboardServletPattern("/odata/*")
 @HttpWhiteboardServletName("Fennec OData")
-@Component(service = Servlet.class, configurationPid = ODataServlet.PID)
+@Component(service = Servlet.class, configurationPid = ODataServlet.PID,
+		configurationPolicy = ConfigurationPolicy.OPTIONAL)
 public class ODataServlet extends HttpServlet {
 
 	public static final String PID = "org.eclipse.fennec.odata.servlet";
@@ -157,7 +173,12 @@ public class ODataServlet extends HttpServlet {
 
 	final ODataResourceParser resourceParser = new ODataResourceParser();
 
+	/** Every EPackage bound to this instance — the published subset is {@link #model}. */
 	final List<EPackage> packages = new CopyOnWriteArrayList<>();
+	/** The allowlist from configuration ({@link ServiceModel}); everything bound when unset. */
+	private volatile ServiceModel.Selection selection = ServiceModel.Selection.ALL;
+	/** The model this root publishes; rebuilt on every package bind/unbind and on activation. */
+	private volatile ServiceModel model = ServiceModel.of(List.of());
 	final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
 	private final List<MediaService> mediaServices = new CopyOnWriteArrayList<>();
@@ -200,6 +221,8 @@ public class ODataServlet extends HttpServlet {
 
 	@Activate
 	void activate(Map<String, Object> configuration) {
+		selection = ServiceModel.Selection.fromConfiguration(configuration);
+		rebuildModel();
 		limits = RequestLimits.fromConfiguration(configuration);
 		Object origin = configuration.get("odata.cors.origin");
 		corsOrigin = origin == null ? "" : String.valueOf(origin).trim();
@@ -231,10 +254,24 @@ public class ODataServlet extends HttpServlet {
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
 	void addEPackage(EPackage ePackage) {
 		packages.add(ePackage);
+		rebuildModel();
+	}
+
+	/** Recomputes the published model from the bound packages and the instance's allowlist. */
+	private void rebuildModel() {
+		synchronized (packages) {
+			model = ServiceModel.of(packages, selection);
+		}
+	}
+
+	/** The entity data model this root publishes — the single source for every consumer. */
+	ServiceModel model() {
+		return model;
 	}
 
 	void removeEPackage(EPackage ePackage) {
 		packages.remove(ePackage);
+		rebuildModel();
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
@@ -689,28 +726,14 @@ public class ODataServlet extends HttpServlet {
 		response.getWriter().write(json.toString());
 	}
 
-	/** Names of the container singletons declared across the registered packages ([OData-CSDL] 13.5). */
+	/** Names of the container singletons this root publishes ([OData-CSDL] 13.5). */
 	private List<String> singletonNames() {
-		List<String> names = new ArrayList<>();
-		for (EPackage pkg : packages) {
-			EAnnotation annotation = pkg.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
-			if (annotation != null) {
-				names.addAll(annotation.getDetails().keySet());
-			}
-		}
-		return names;
+		return new ArrayList<>(model.singletons().keySet());
 	}
 
-	/** The entity type of a declared container singleton by name, or null. */
+	/** The entity type of a published container singleton by name, or null. */
 	private EClass resolveSingleton(String name) {
-		for (EPackage pkg : packages) {
-			EAnnotation annotation = pkg.getEAnnotation(ODataAnnotationConstants.SINGLETONS_SOURCE);
-			if (annotation != null && annotation.getDetails().containsKey(name)
-					&& pkg.getEClassifier(annotation.getDetails().get(name)) instanceof EClass type) {
-				return type;
-			}
-		}
-		return null;
+		return model.singletons().get(name);
 	}
 
 	/**
@@ -781,13 +804,14 @@ public class ODataServlet extends HttpServlet {
 		edmx.getReference().add(vocabularyReference("Org.OData.Core.V1", "Core"));
 		edmx.getReference().add(vocabularyReference("Org.OData.Capabilities.V1", "Capabilities"));
 		TDataServices dataServices = EdmxFactory.eINSTANCE.createTDataServices();
-		// set renames are declared per package but the container may live in ANOTHER schema than
-		// its types (Northwind) — collect the renames of all packages and apply them everywhere
-		Map<String, String> setNames = new HashMap<>();
-		packages.forEach(pkg -> setNames.putAll(EcoreToEdmConverter.entitySetNames(pkg)));
-		for (EPackage pkg : packages) { // one Schema per registered package (req §3.3 composition)
+		// set renames are declared per package (or configured) but the container may live in
+		// ANOTHER schema than its types (Northwind) — the model's rename map applies everywhere
+		ServiceModel published = model;
+		Map<String, String> setNames = published.typeToSetNames();
+		for (EPackage pkg : published.packages()) { // one Schema per PUBLISHED package (§3.3 composition)
 			SchemaType schema = converter.toSchema(pkg);
 			converter.applyEntitySetNames(setNames, schema);
+			pruneUnpublishedSets(published, schema);
 			for (TEntityContainer container : schema.getEntityContainer()) {
 				AnnotationType versions = EdmFactory.eINSTANCE.createAnnotationType();
 				versions.setTerm("Org.OData.Core.V1.ODataVersions");
@@ -1079,20 +1103,44 @@ public class ODataServlet extends HttpServlet {
 		return setNameOf(entity.eClass()) + "(" + keyLiteral(keyValues) + ")";
 	}
 
-	/** The container set name serving the given type — honours per-package set renames. */
+	/** The container set name serving the given type — honours annotated and configured renames. */
 	private String setNameOf(EClass entityType) {
-		for (EPackage pkg : packages) {
-			EAnnotation sets = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
-			if (sets == null) {
+		return model.setNameOf(entityType);
+	}
+
+	/**
+	 * Drops the container entity sets (and the navigation bindings onto them) whose type this root
+	 * does not publish: with an {@code odata.model.entitysets} allowlist the converter's
+	 * one-set-per-concrete-class container describes more than the service serves. The entity
+	 * TYPES stay in the schema — navigation properties still reference them.
+	 */
+	private void pruneUnpublishedSets(ServiceModel published, SchemaType schema) {
+		for (TEntityContainer container : schema.getEntityContainer()) {
+			Set<String> removed = new HashSet<>();
+			container.getEntitySet().removeIf(set -> {
+				EClass type = published.entityType(set.getName());
+				boolean unpublished = type == null
+						|| !qualifiedTypeName(type).equals(String.valueOf(set.getEntityType()));
+				if (unpublished) {
+					removed.add(set.getName());
+				}
+				return unpublished;
+			});
+			if (removed.isEmpty()) {
 				continue;
 			}
-			for (Map.Entry<String, String> entry : sets.getDetails()) {
-				if (entry.getValue().equals(entityType.getName())) {
-					return entry.getKey(); // set name -> type name, inverted
-				}
+			for (TEntitySet set : container.getEntitySet()) {
+				set.getNavigationPropertyBinding()
+						.removeIf(binding -> removed.contains(String.valueOf(binding.getTarget())));
 			}
 		}
-		return entityType.getName();
+	}
+
+	/** {@code Namespace.Type} as $metadata emits it — the schema namespace comes from the profile. */
+	private String qualifiedTypeName(EClass type) {
+		ODataPackageProfile profile = profiles.computeIfAbsent(type.getEPackage(),
+				p -> new OdataResolver().resolve(p));
+		return profile.getNamespace() + "." + type.getName();
 	}
 
 	static String keyLiteral(Map<String, Object> keyValues) {
@@ -1511,7 +1559,7 @@ public class ODataServlet extends HttpServlet {
 		}
 		String namespace = qualifiedName.substring(0, dot);
 		String localName = qualifiedName.substring(dot + 1);
-		for (EPackage pkg : packages) {
+		for (EPackage pkg : model.packages()) {
 			ODataPackageProfile profile = profiles.computeIfAbsent(pkg,
 					p -> new OdataResolver().resolve(p));
 			if (!namespace.equals(profile.getNamespace()) && !namespace.equals(profile.getAlias())) {
@@ -2311,42 +2359,17 @@ public class ODataServlet extends HttpServlet {
 		return parse.apply(expression);
 	}
 
+	/**
+	 * The entity type behind a PUBLISHED set name, or null. Container set names may differ from
+	 * their types (TripPin People -> Person, annotated or configured), and a set outside this
+	 * root's allowlist is as unknown as a misspelt one — 404, not a leak of the wider runtime.
+	 */
 	EClass resolveEntityType(String setName) {
-		// container set names may differ from their types (TripPin People -> Person): the read
-		// path captures them as an EPackage annotation the runtime honours. The container can
-		// live in a DIFFERENT schema than the types (Northwind), so mapping and type resolve
-		// across all packages independently.
-		String typeName = setName;
-		for (EPackage pkg : packages) {
-			EAnnotation sets = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
-			if (sets != null && sets.getDetails().containsKey(setName)) {
-				typeName = sets.getDetails().get(setName);
-				break;
-			}
-		}
-		for (EPackage pkg : packages) {
-			if (pkg.getEClassifier(typeName) instanceof EClass eClass && !eClass.isAbstract()) {
-				return eClass;
-			}
-		}
-		return null;
+		return model.entityType(setName);
 	}
 
 	private List<String> entitySetNames() {
-		List<String> names = new ArrayList<>();
-		for (EPackage pkg : packages) {
-			EAnnotation sets = pkg.getEAnnotation(ODataAnnotationConstants.ENTITY_SETS_SOURCE);
-			Map<String, String> renamed = new HashMap<>(); // type name -> set name
-			if (sets != null) {
-				sets.getDetails().forEach(entry -> renamed.put(entry.getValue(), entry.getKey()));
-			}
-			pkg.getEClassifiers().stream()
-					.filter(EClass.class::isInstance).map(EClass.class::cast)
-					.filter(c -> !c.isAbstract())
-					.map(c -> renamed.getOrDefault(c.getName(), c.getName()))
-					.forEach(names::add);
-		}
-		return names.stream().sorted().toList();
+		return model.entitySetNames();
 	}
 
 	/** The service root: the request URI without the resource path (not just its last segment). */
