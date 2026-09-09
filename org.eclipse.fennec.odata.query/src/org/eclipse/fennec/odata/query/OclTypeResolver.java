@@ -87,14 +87,14 @@ public class OclTypeResolver {
 		return expression;
 	}
 
-	private OclType type(OclExpression exp) {
+	private EClassifier type(OclExpression exp) {
 		if (exp == null) {
 			return null;
 		}
 		if (exp.getType() != null) {
 			return exp.getType();
 		}
-		OclType resolved = switch (exp) {
+		EClassifier resolved = switch (exp) {
 			case OperationCallExp op -> operationType(op);
 			case PropertyCallExp property -> propertyType(property);
 			case IteratorExp iterator -> iteratorType(iterator);
@@ -112,8 +112,8 @@ public class OclTypeResolver {
 		return resolved;
 	}
 
-	private OclType operationType(OperationCallExp op) {
-		OclType sourceType = type(op.getOwnedSource());
+	private EClassifier operationType(OperationCallExp op) {
+		EClassifier sourceType = type(op.getOwnedSource());
 		op.getOwnedArguments().forEach(this::type);
 
 		String name = op.getName();
@@ -144,7 +144,7 @@ public class OclTypeResolver {
 		return null; // unknown op: leave untyped, best-effort
 	}
 
-	private OclType iteratorType(IteratorExp iterator) {
+	private EClassifier iteratorType(IteratorExp iterator) {
 		type(iterator.getOwnedSource());
 		type(iterator.getOwnedBody());
 		String name = iterator.getName();
@@ -154,7 +154,7 @@ public class OclTypeResolver {
 		return null;
 	}
 
-	private OclType propertyType(PropertyCallExp property) {
+	private EClassifier propertyType(PropertyCallExp property) {
 		type(property.getOwnedSource());
 		EStructuralFeature feature = property.getReferredProperty();
 		if (feature == null) {
@@ -166,11 +166,11 @@ public class OclTypeResolver {
 		return classifierOrPrimitive(feature.getEType());
 	}
 
-	private OclType collectionType(CollectionLiteralExp collection) {
-		OclType elementType = null;
+	private EClassifier collectionType(CollectionLiteralExp collection) {
+		EClassifier elementType = null;
 		for (CollectionLiteralPart part : collection.getOwnedParts()) {
 			if (part instanceof CollectionItem item) {
-				OclType itemType = type(item.getOwnedItem());
+				EClassifier itemType = type(item.getOwnedItem());
 				if (elementType == null) {
 					elementType = itemType;
 				}
@@ -185,7 +185,7 @@ public class OclTypeResolver {
 	// --- type construction (fresh instances per node — type is a plain reference) ---
 
 	/** EMF list semantics → OCL collection kind, mirroring the m2x parser's feature mapping. */
-	private OclType collectionTypeFor(EStructuralFeature feature) {
+	private EClassifier collectionTypeFor(EStructuralFeature feature) {
 		CollectionType type = FACTORY.createCollectionType();
 		if (feature instanceof EReference reference) {
 			type.setKind(reference.isOrdered()
@@ -199,7 +199,7 @@ public class OclTypeResolver {
 	}
 
 	/** EDataTypes with a primitive-ish instance class → OCL primitive, everything else → classifier. */
-	private OclType classifierOrPrimitive(EClassifier classifier) {
+	private EClassifier classifierOrPrimitive(EClassifier classifier) {
 		if (classifier == null) {
 			return null;
 		}
@@ -209,26 +209,24 @@ public class OclTypeResolver {
 				return primitive(primitive);
 			}
 		}
-		var type = FACTORY.createClassifierType();
-		type.setReferredClassifier(classifier);
-		type.setName(classifier.getName());
-		return type;
+		return classifier; // model types ARE the Ecore classifier (m2x 0.1.1: no ClassifierType wrapper)
 	}
 
-	private OclType primitive(String name) {
+	private EClassifier primitive(String name) {
 		var type = FACTORY.createPrimitiveType();
 		type.setName(name);
 		return type;
 	}
 
-	private boolean isReal(OclType type) {
+	private boolean isReal(EClassifier type) {
 		return type != null && "Real".equals(type.getName());
 	}
 
-	private OclType copy(OclType type) {
-		if (type == null) {
-			return null;
-		}
-		return EcoreUtil.copy(type);
+	/**
+	 * OCL types (primitives, collections) are free-standing instances — one fresh copy per node.
+	 * A MODEL classifier is the Ecore object itself and is shared, never copied.
+	 */
+	private EClassifier copy(EClassifier type) {
+		return type instanceof OclType oclType ? EcoreUtil.copy(oclType) : type;
 	}
 }

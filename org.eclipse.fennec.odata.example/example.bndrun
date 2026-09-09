@@ -32,7 +32,7 @@
 	org.eclipse.fennec.codec;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.codec.api;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.codec.metadata;version='[0.1.0,0.1.1)',\
-	org.eclipse.fennec.m2x.ocl.model;version='[0.1.0,0.1.1)',\
+	org.eclipse.fennec.m2x.ocl.model;version='[0.1.1,0.1.2)',\
 	org.eclipse.fennec.odata.codec.json;version=snapshot,\
 	org.eclipse.fennec.odata.csdl;version=snapshot,\
 	org.eclipse.fennec.odata.example;version=snapshot,\

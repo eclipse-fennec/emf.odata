@@ -34,7 +34,6 @@ import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
-import org.eclipse.fennec.m2x.model.ocl.ClassifierType;
 import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
 import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.EnumLiteralExp;
@@ -46,6 +45,7 @@ import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
+import org.eclipse.fennec.m2x.model.ocl.OclType;
 import org.eclipse.fennec.m2x.model.ocl.TypeExp;
 import org.eclipse.fennec.m2x.model.ocl.Variable;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
@@ -331,6 +331,16 @@ public class OclEvaluator {
 		};
 	}
 
+	/**
+	 * The Ecore classifier a type expression names when it names a MODEL type (EClass, EEnum, a
+	 * model EDataType) — the structured-cast/type-test path — or null for an OCL primitive
+	 * ({@code Edm.*} → {@code PrimitiveType}), which is dispatched by name instead.
+	 */
+	private static EClassifier modelClassifier(TypeExp typeExp) {
+		EClassifier referred = typeExp.getReferredType();
+		return referred == null || referred instanceof OclType ? null : referred;
+	}
+
 	private Object typeOperation(String name, Object value, List<OclExpression> args) {
 		if (!(args.get(0) instanceof TypeExp typeExp)) {
 			throw new IllegalArgumentException(name + " expects a type argument");
@@ -338,17 +348,18 @@ public class OclEvaluator {
 		if ("oclAsType".equals(name)) {
 			// a failed structured cast yields null ([OData-URL] 5.1.1.10.1) — 3VL exclusion;
 			// primitive casts stay representation-preserving assertions
-			if (typeExp.getReferredType() instanceof ClassifierType classifierType
-					&& classifierType.getReferredClassifier() != null) {
-				return classifierType.getReferredClassifier().isInstance(value) ? value : null;
+			if (modelClassifier(typeExp) instanceof EClassifier classifier) {
+				return classifier.isInstance(value) ? value : null;
 			}
 			return value;
 		}
-		if (typeExp.getReferredType() instanceof ClassifierType classifierType) {
-			EClassifier classifier = classifierType.getReferredClassifier();
-			return classifier != null && classifier.isInstance(value);
+		if (modelClassifier(typeExp) instanceof EClassifier classifier) {
+			return classifier.isInstance(value);
 		}
 		String primitive = typeExp.getReferredType() == null ? null : typeExp.getReferredType().getName();
+		if (primitive == null) {
+			return false;
+		}
 		return switch (primitive) {
 			case "String" -> value instanceof String;
 			case "Boolean" -> value instanceof Boolean;

@@ -59,7 +59,7 @@
 	org.eclipse.fennec.emf.osgi.metadata;version='[1.1.0,1.1.1)',\
 	org.eclipse.fennec.expression.model;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.expression.ocl;version='[0.1.0,0.1.1)',\
-	org.eclipse.fennec.m2x.ocl.model;version='[0.1.0,0.1.1)',\
+	org.eclipse.fennec.m2x.ocl.model;version='[0.1.1,0.1.2)',\
 	org.eclipse.fennec.odata.client;version=snapshot,\
 	org.eclipse.fennec.odata.codec.json;version=snapshot,\
 	org.eclipse.fennec.odata.csdl;version=snapshot,\

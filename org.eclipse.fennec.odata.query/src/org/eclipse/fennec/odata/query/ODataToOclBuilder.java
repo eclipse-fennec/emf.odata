@@ -33,7 +33,6 @@ import org.eclipse.emf.ecore.EOperation;
 import org.eclipse.emf.ecore.EParameter;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
-import org.eclipse.fennec.m2x.model.ocl.ClassifierType;
 import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
 import org.eclipse.fennec.m2x.model.ocl.CollectionKind;
 import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
@@ -42,7 +41,6 @@ import org.eclipse.fennec.m2x.model.ocl.IntegerLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.IteratorExp;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.OclFactory;
-import org.eclipse.fennec.m2x.model.ocl.OclType;
 import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
@@ -243,7 +241,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	}
 
 	/** {@code Edm.*} → OCL primitive; model types resolve against the context package. */
-	private OclType resolveTypeName(String qualifiedName) {
+	private EClassifier resolveTypeName(String qualifiedName) {
 		String simple = qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1);
 		if (qualifiedName.startsWith("Edm.")) {
 			var primitive = FACTORY.createPrimitiveType();
@@ -259,10 +257,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 			throw new ODataQueryParseException(
 					"unknown type '" + qualifiedName + "' in package " + context.getEPackage().getName());
 		}
-		var type = FACTORY.createClassifierType();
-		type.setReferredClassifier(classifier);
-		type.setName(classifier.getName());
-		return type;
+		return classifier; // model types ARE the Ecore classifier (m2x 0.1.1: no ClassifierType wrapper)
 	}
 
 	// --- instance references + JSON literals ---
@@ -551,10 +546,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 			ODataFilterParser.SearchExprContext searchExpr) {
 		Variable variable = FACTORY.createVariable();
 		variable.setName("$e");
-		var variableType = FACTORY.createClassifierType();
-		variableType.setReferredClassifier(elementClass);
-		variableType.setName(elementClass.getName());
-		variable.setType(variableType);
+		variable.setType(elementClass);
 		IteratorExp select = FACTORY.createIteratorExp();
 		select.setName("select");
 		select.setOwnedSource(source);
@@ -632,10 +624,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 			ODataFilterParser.ExprContext bodyExpr) {
 		Variable variable = FACTORY.createVariable();
 		variable.setName("$e");
-		var variableType = FACTORY.createClassifierType();
-		variableType.setReferredClassifier(elementClass);
-		variableType.setName(elementClass.getName());
-		variable.setType(variableType);
+		variable.setType(elementClass);
 		implicitScopes.push(new ImplicitScope(variable, elementClass));
 		OclExpression body;
 		try {
@@ -653,8 +642,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 
 	/** Resolves a cast-segment name to an EClass RELATED to the current context type. */
 	private EClass resolveCastClass(String qualifiedName, EClass current) {
-		if (!(resolveTypeName(qualifiedName) instanceof ClassifierType classifierType)
-				|| !(classifierType.getReferredClassifier() instanceof EClass castClass)) {
+		if (!(resolveTypeName(qualifiedName) instanceof EClass castClass)) {
 			throw new ODataQueryParseException(
 					"'" + qualifiedName + "' is not a structured type");
 		}
@@ -754,10 +742,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 
 		Variable variable = FACTORY.createVariable();
 		variable.setName(ctx.IDENT().getText());
-		var variableType = FACTORY.createClassifierType();
-		variableType.setReferredClassifier(elementType);
-		variableType.setName(elementType.getName());
-		variable.setType(variableType);
+		variable.setType(elementType);
 
 		scopes.push(new LambdaScope(variable.getName(), variable,
 				elementType instanceof EClass structured ? structured : null));
