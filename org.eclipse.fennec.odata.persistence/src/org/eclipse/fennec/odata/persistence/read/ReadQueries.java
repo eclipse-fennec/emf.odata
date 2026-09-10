@@ -10,7 +10,7 @@
  * Contributors:
  *   Data In Motion Consulting - initial implementation
  */
-package org.eclipse.fennec.odata.persistence.command;
+package org.eclipse.fennec.odata.persistence.read;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -56,7 +56,7 @@ import org.eclipse.fennec.persistence.query.QueryException;
  * bridge's subset surface as {@link UnsupportedOperationException} — the servlet
  * maps that to an honest 501.
  */
-final class ReadQueries {
+public final class ReadQueries {
 
 	private ReadQueries() {
 	}
@@ -65,7 +65,7 @@ final class ReadQueries {
 	 * Bridges the parsed {@code $filter} and folds the URL cast in: the result is
 	 * {@code isof(castType) [and <filter>]}, or {@code null} for an unrestricted read.
 	 */
-	static Expression predicate(OclExpression filter, EClass entityType, EClass castType) {
+	public static Expression predicate(OclExpression filter, EClass entityType, EClass castType) {
 		Expression bridged = filter == null ? null : bridge(filter, entityType, castType);
 		if (castType == null) {
 			return bridged;
@@ -75,7 +75,7 @@ final class ReadQueries {
 	}
 
 	/** Bridges one {@code $orderby} key and appends it to the builder. */
-	static void applyOrderBy(QueryBuilder builder, List<OrderBySegment> orderBy, EClass entityType,
+	public static void applyOrderBy(QueryBuilder builder, List<OrderBySegment> orderBy, EClass entityType,
 			EClass castType) {
 		for (OrderBy sort : orderByList(orderBy, entityType, castType)) {
 			boolean ascending = sort.getDirection() == SortDirection.ASC;
@@ -99,7 +99,7 @@ final class ReadQueries {
 	 * The same translation as {@link #applyOrderBy}, detached from the envelope — an
 	 * {@code Expand} carries its own {@code OrderBy} list (ADR-0008).
 	 */
-	static List<OrderBy> orderByList(List<OrderBySegment> orderBy, EClass entityType,
+	public static List<OrderBy> orderByList(List<OrderBySegment> orderBy, EClass entityType,
 			EClass castType) {
 		List<OrderBy> sorts = new ArrayList<>(orderBy.size());
 		for (OrderBySegment segment : orderBy) {
@@ -123,7 +123,7 @@ final class ReadQueries {
 	 * context type into its navigation chain; the first non-reference segment (an
 	 * attribute or a cast segment) ends the chain.
 	 */
-	static List<EReference> referenceChain(EClass context, String path) {
+	public static List<EReference> referenceChain(EClass context, String path) {
 		List<EReference> chain = new ArrayList<>();
 		EClass current = context;
 		for (String segment : path.split("/")) {
@@ -143,7 +143,7 @@ final class ReadQueries {
 	 * mechanism and come back as {@link AliasRef}s; everything else translates like a
 	 * regular predicate. No cast handling — rows have no entity type.
 	 */
-	static Expression rowExpression(OclExpression ocl, Set<String> aliases) {
+	public static Expression rowExpression(OclExpression ocl, Set<String> aliases) {
 		Map<org.eclipse.fennec.m2x.model.ocl.Variable, Variable> scope = new LinkedHashMap<>();
 		bindAliasVariable(ocl, aliases, scope);
 		ocl.eAllContents().forEachRemaining(candidate -> bindAliasVariable(candidate, aliases, scope));

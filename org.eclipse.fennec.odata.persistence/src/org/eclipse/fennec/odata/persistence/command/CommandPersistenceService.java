@@ -15,12 +15,10 @@ package org.eclipse.fennec.odata.persistence.command;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.ListIterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -35,7 +33,6 @@ import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
-import org.eclipse.emf.ecore.InternalEObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.util.EcoreUtil;
@@ -47,8 +44,6 @@ import org.eclipse.fennec.model.command.InsertCommand;
 import org.eclipse.fennec.model.command.UpdateCommand;
 import org.eclipse.fennec.model.expression.Expression;
 import org.eclipse.fennec.model.query.Query;
-import org.eclipse.fennec.model.query.Expand;
-import org.eclipse.fennec.model.query.QueryFactory;
 import org.eclipse.fennec.model.query.builder.Expressions;
 import org.eclipse.fennec.model.query.builder.QueryBuilder;
 import org.eclipse.fennec.model.stream.ChangeEntry;
@@ -61,11 +56,13 @@ import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
-import org.eclipse.fennec.odata.persistence.api.ExpandSpec;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
+import org.eclipse.fennec.odata.persistence.read.ApplyQueries;
+import org.eclipse.fennec.odata.persistence.read.ReadPlans;
+import org.eclipse.fennec.odata.persistence.read.ReadQueries;
 import org.eclipse.fennec.persistence.capabilities.QueryFeature;
 import org.eclipse.fennec.persistence.capabilities.StoreFeature;
 import org.eclipse.fennec.persistence.helper.CompositeIds;
@@ -77,7 +74,6 @@ import org.eclipse.fennec.persistence.query.api.QueryResultRow;
 import org.eclipse.fennec.persistence.query.api.QueryableResource;
 import org.eclipse.fennec.persistence.diagnostic.PersistenceDiagnostic;
 import org.eclipse.fennec.persistence.query.support.CommandTransaction;
-import org.eclipse.fennec.persistence.query.support.QueryValidator;
 import org.eclipse.fennec.persistence.resource.PersistenceResource;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -212,12 +208,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 
 	/** {@code $count} is total-before-paging: a separate countOnly query, no order, no page. */
 	private long executeCount(EntityQuery query, EClass entityType) {
-		QueryBuilder builder = QueryBuilder.from(entityType).countOnly();
-		Expression predicate = ReadQueries.predicate(query.filter(), entityType, query.castType());
-		if (predicate != null) {
-			builder.where(predicate);
-		}
-		Query irQuery = builder.build();
+		Query irQuery = ReadPlans.count(query);
 		validate(irQuery, entityType);
 		Resource resource = resource(resourceSetFactory.createResourceSet(), entityType);
 		int errorsBefore = resource.getErrors().size();
@@ -249,72 +240,17 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 
 	private Page fetchPage(EntityQuery query, EClass entityType, Expression predicate,
 			boolean paged) {
-		QueryBuilder builder = QueryBuilder.from(entityType);
-		if (predicate != null) {
-			builder.where(predicate);
-		}
-		if (paged) {
-			ReadQueries.applyOrderBy(builder, query.orderBy(), entityType, query.castType());
-			if (query.skip() > 0) {
-				builder.skip(query.skip());
-			}
-			if (query.top() > 0) {
-				builder.top(query.top());
-			} else if (maxPageSize > 0) {
-				// server-driven paging safety net for unbounded reads (top == -1)
-				builder.top(maxPageSize);
-			}
-		}
-		EClass context = query.castType() != null ? query.castType() : entityType;
-		List<List<EReference>> chains = new ArrayList<>();
-		Map<String, List<EReference>> narrowedChains = new LinkedHashMap<>();
-		Map<String, ExpandPushdown> pushedExpands = new LinkedHashMap<>();
-		boolean pushExpand = supportsFeature(QueryFeature.EXPAND);
-		boolean pushFilters = pushExpand && supportsFeature(QueryFeature.EXPAND_FILTER);
-		boolean pushPaging = pushExpand && supportsFeature(QueryFeature.EXPAND_PAGE);
-		for (ExpandSpec spec : query.expand()) {
-			List<EReference> chain = ReadQueries.referenceChain(context, spec.path());
-			if (chain.isEmpty()) {
-				continue;
-			}
-			ExpandPushdown pushed = ExpandPushdown.NONE;
-			if (pushExpand) {
-				// full multi-segment fetch hint (persistence-jpa#95: nested JOIN FETCH /
-				// batch hints), narrowed by whatever this backend declares (ADR-0008)
-				pushed = expand(builder, spec, chain, pushFilters, pushPaging);
-			}
-			pushedExpands.put(spec.path(), pushed);
-			if (pushed.isNone()) {
-				// nothing was narrowed: the proxy walk stays as the backend-neutral safety
-				// net. Where something WAS narrowed it must not run — it would resolve the
-				// proxies whose unresolved state is the selection (D1b).
-				chains.add(chain);
-			} else {
-				narrowedChains.put(spec.path(), chain);
-			}
-		}
-		Query irQuery = builder.build();
-		try {
-			validate(irQuery, entityType);
-		} catch (UnsupportedOperationException refused) {
-			if (narrowedChains.isEmpty()) {
-				throw refused;
-			}
-			// A declared capability is not a promise for every query: JPA declares
-			// EXPAND_PAGE and still refuses a window whose root and expanded type share an
-			// id attribute NAME, because it cannot address the two apart. Under ADR-0008
-			// that is not a 501 — we can still serve it from the in-memory pass. Strip the
-			// narrowing, put the proxy walk back, and only then let a refusal stand.
-			irQuery.getExpand().forEach(expand -> {
-				expand.setFilter(null);
-				expand.getOrderBy().clear();
-				expand.setTop(0);
-				expand.setSkip(0);
-			});
-			chains.addAll(narrowedChains.values());
-			narrowedChains.keySet().forEach(path -> pushedExpands.put(path, ExpandPushdown.NONE));
-			validate(irQuery, entityType);
-		}
+		// The plan pushes each $expand option down where this backend declares the capability
+		// (ADR-0008; full multi-segment fetch hints, persistence-jpa#95) and keeps the proxy
+		// walk for the rest — where something WAS narrowed the walk must not run, it would
+		// resolve the proxies whose unresolved state is the selection (D1b). A declared
+		// capability is not a promise for every query: JPA declares EXPAND_PAGE and still
+		// refuses a window whose root and expanded type share an id attribute NAME. Under
+		// ADR-0008 that is not a 501 — the validated plan falls back to the in-memory pass.
+		ReadPlans.Page plan = ReadPlans.validated(
+				ReadPlans.page(query, predicate, paged, maxPageSize, this::supportsFeature),
+				irQuery -> diagnostic(irQuery, entityType));
+		Query irQuery = plan.query();
 		ResourceSet resourceSet = resourceSetFactory.createResourceSet();
 		Resource resource = resource(resourceSet, entityType);
 		int errorsBefore = resource.getErrors().size();
@@ -324,8 +260,8 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 				entities = new ArrayList<>(objects.toList());
 			}
 			// resolve inside the try: the backend session dies with close()
-			materialize(entities, chains, resourceSet);
-			return new Page(entities, pushedExpands);
+			ReadPlans.materialize(entities, plan.chains(), resourceSet);
+			return new Page(entities, plan.pushedExpands());
 		} catch (IOException e) {
 			throw refused(entityType, resource, errorsBefore, e, Phase.READ);
 		}
@@ -383,136 +319,19 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	}
 
 	/**
-	 * Builds one {@code Expand} and reports what of the ask survived (ADR-0008).
-	 *
-	 * <p>The one composition rule that is not symmetric: paging is pushed only when the
-	 * filter is pushed too (or there is none). Filter down there and page up here is sound —
-	 * the resolved entries already ARE the match set and the store order is untouched. The
-	 * other way round would page first and filter an already truncated set.
-	 *
-	 * <p>{@code $top=0} is never pushed: {@code Expand.top} spells "unlimited" as 0, so the
-	 * empty page has no representation down there. The in-memory pass serves it exactly.
-	 */
-	private ExpandPushdown expand(QueryBuilder builder, ExpandSpec spec, List<EReference> chain,
-			boolean pushFilters, boolean pushPaging) {
-		if (spec.isPlain()) {
-			builder.expand(chain.toArray(EReference[]::new));
-			return ExpandPushdown.NONE;
-		}
-		boolean filter = spec.filter() != null && pushFilters;
-		boolean paging = spec.pages() && spec.top() != 0 && pushPaging
-				&& (spec.filter() == null || filter);
-		if (!filter && !paging) {
-			builder.expand(chain.toArray(EReference[]::new));
-			return ExpandPushdown.NONE;
-		}
-		EClass target = chain.get(chain.size() - 1).getEReferenceType();
-		Expand expand = QueryFactory.eINSTANCE.createExpand();
-		expand.setPath(Expressions.propertyPath(chain.toArray(EStructuralFeature[]::new)));
-		if (filter) {
-			expand.setFilter(ReadQueries.predicate(spec.filter(), target, null));
-		}
-		if (paging) {
-			// orderBy is selector input for the window, never a delivered order (D3)
-			expand.getOrderBy().addAll(ReadQueries.orderByList(spec.orderBy(), target, null));
-			expand.setSkip(spec.skip());
-			expand.setTop(spec.top() < 0 ? 0 : spec.top());
-		}
-		builder.expand(expand);
-		return new ExpandPushdown(filter, paging);
-	}
-
-	/**
-	 * The SPI promises plain readable results — walk every {@code $expand} chain and
-	 * swap proxies for their resolved targets (keyed find through the resource
-	 * factory's {@code getEObject} contract, deduplicated per proxy URI).
-	 */
-	private void materialize(List<EObject> entities, List<List<EReference>> chains,
-			ResourceSet resourceSet) {
-		if (chains.isEmpty() || entities.isEmpty()) {
-			return;
-		}
-		Map<String, EObject> resolved = new HashMap<>();
-		for (List<EReference> chain : chains) {
-			for (EObject entity : entities) {
-				descend(entity, chain, 0, resourceSet, resolved);
-			}
-		}
-	}
-
-	private void descend(EObject object, List<EReference> chain, int index, ResourceSet resourceSet,
-			Map<String, EObject> resolved) {
-		if (object == null || index >= chain.size()) {
-			return;
-		}
-		EReference reference = chain.get(index);
-		if (!reference.getEContainingClass().isInstance(object)) {
-			return; // polymorphic page: this row does not carry the navigation
-		}
-		if (reference.isMany()) {
-			@SuppressWarnings("unchecked")
-			List<EObject> members = (List<EObject>) object.eGet(reference);
-			for (ListIterator<EObject> iterator = members.listIterator(); iterator.hasNext();) {
-				EObject member = iterator.next();
-				EObject target = resolve(member, resourceSet, resolved);
-				if (target != member) {
-					iterator.set(target);
-				}
-				descend(target, chain, index + 1, resourceSet, resolved);
-			}
-		} else if (object.eGet(reference, false) instanceof EObject member) {
-			EObject target = resolve(member, resourceSet, resolved);
-			if (target != member) {
-				object.eSet(reference, target);
-			}
-			descend(target, chain, index + 1, resourceSet, resolved);
-		}
-	}
-
-	private EObject resolve(EObject candidate, ResourceSet resourceSet, Map<String, EObject> resolved) {
-		if (!candidate.eIsProxy()) {
-			return candidate;
-		}
-		String key = ((InternalEObject) candidate).eProxyURI().toString();
-		EObject target = resolved.computeIfAbsent(key,
-				proxyUri -> EcoreUtil.resolve(candidate, resourceSet));
-		if (target.eIsProxy()) {
-			throw new IllegalStateException("the backend returned an unresolvable reference");
-		}
-		return target;
-	}
-
-	/**
 	 * Pre-validation against the backend's declared capabilities turns refusals into
 	 * structured errors: unsupported features → 501, structural violations → 400.
 	 * Without a bound {@link QueryProcessor} the resource-level IOException fallback
 	 * in {@link #refused} applies ({@link Phase#READ}).
 	 */
 	private void validate(Query irQuery, EClass entityType) {
+		ReadPlans.raise(diagnostic(irQuery, entityType));
+	}
+
+	/** The bound processor's verdict on a query, or null without a processor. */
+	private Diagnostic diagnostic(Query irQuery, EClass entityType) {
 		QueryProcessor processor = processor();
-		if (processor == null) {
-			return;
-		}
-		Diagnostic diagnostic = processor.validate(irQuery, entityType);
-		if (diagnostic.getSeverity() < Diagnostic.ERROR) {
-			return;
-		}
-		List<String> unsupported = new ArrayList<>();
-		List<String> invalid = new ArrayList<>();
-		for (Diagnostic child : diagnostic.getChildren()) {
-			if (child.getSeverity() < Diagnostic.ERROR) {
-				continue;
-			}
-			if (child.getCode() == QueryValidator.CODE_UNSUPPORTED_FEATURE) {
-				unsupported.add(child.getMessage());
-			} else {
-				invalid.add(child.getMessage());
-			}
-		}
-		if (!unsupported.isEmpty()) {
-			throw new UnsupportedOperationException(String.join("; ", unsupported));
-		}
-		throw new IllegalArgumentException(String.join("; ", invalid));
+		return processor == null ? null : processor.validate(irQuery, entityType);
 	}
 
 	private boolean supportsFeature(QueryFeature feature) {
