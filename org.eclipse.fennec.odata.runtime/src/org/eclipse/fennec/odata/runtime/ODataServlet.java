@@ -274,40 +274,103 @@ public class ODataServlet extends HttpServlet {
 		rebuildModel();
 	}
 
+	/**
+	 * Backends are consulted in {@code service.ranking} order (highest first, bind order among
+	 * equals): the first one whose {@code supports(type)} answers yes serves the type. A backend
+	 * that claims every keyed class — the in-memory reference does — is therefore overridden
+	 * for a type by ranking a more specific backend above it, not by removing it.
+	 */
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void bindQueryService(QueryService queryService, Map<String, Object> properties) {
+		insertByRanking(queryServices, queryService, properties);
+	}
+
+	void unbindQueryService(QueryService queryService) {
+		queryServices.remove(queryService);
+		rankings.remove(queryService);
+	}
+
+	/** Binds with default ranking (tests and embedders without service properties). */
 	void addQueryService(QueryService queryService) {
-		queryServices.add(queryService);
+		bindQueryService(queryService, Map.of());
 	}
 
 	void removeQueryService(QueryService queryService) {
-		queryServices.remove(queryService);
+		unbindQueryService(queryService);
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void bindWriteService(WriteService writeService, Map<String, Object> properties) {
+		insertByRanking(writeServices, writeService, properties);
+	}
+
+	void unbindWriteService(WriteService writeService) {
+		writeServices.remove(writeService);
+		rankings.remove(writeService);
+	}
+
 	void addWriteService(WriteService writeService) {
-		writeServices.add(writeService);
+		bindWriteService(writeService, Map.of());
 	}
 
 	void removeWriteService(WriteService writeService) {
-		writeServices.remove(writeService);
+		unbindWriteService(writeService);
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void bindMediaService(MediaService mediaService, Map<String, Object> properties) {
+		insertByRanking(mediaServices, mediaService, properties);
+	}
+
+	void unbindMediaService(MediaService mediaService) {
+		mediaServices.remove(mediaService);
+		rankings.remove(mediaService);
+	}
+
 	void addMediaService(MediaService mediaService) {
-		mediaServices.add(mediaService);
+		bindMediaService(mediaService, Map.of());
 	}
 
 	void removeMediaService(MediaService mediaService) {
-		mediaServices.remove(mediaService);
+		unbindMediaService(mediaService);
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void bindDeltaService(DeltaService deltaService, Map<String, Object> properties) {
+		insertByRanking(deltaServices, deltaService, properties);
+	}
+
+	void unbindDeltaService(DeltaService deltaService) {
+		deltaServices.remove(deltaService);
+		rankings.remove(deltaService);
+	}
+
 	void addDeltaService(DeltaService deltaService) {
-		deltaServices.add(deltaService);
+		bindDeltaService(deltaService, Map.of());
 	}
 
 	void removeDeltaService(DeltaService deltaService) {
-		deltaServices.remove(deltaService);
+		unbindDeltaService(deltaService);
+	}
+
+	/** {@code service.ranking} per bound backend, for the ordered insert of later arrivals. */
+	private final Map<Object, Integer> rankings = Collections.synchronizedMap(new java.util.IdentityHashMap<>());
+
+	/** Inserts before the first backend of lower ranking — after all of equal or higher ranking. */
+	private <S> void insertByRanking(List<S> backends, S backend, Map<String, Object> properties) {
+		int ranking = properties != null && properties.get("service.ranking") instanceof Integer value
+				? value : 0;
+		rankings.put(backend, ranking);
+		synchronized (backends) {
+			int position = backends.size();
+			for (int i = 0; i < backends.size(); i++) {
+				if (rankings.getOrDefault(backends.get(i), 0) < ranking) {
+					position = i;
+					break;
+				}
+			}
+			backends.add(position, backend);
+		}
 	}
 
 	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
