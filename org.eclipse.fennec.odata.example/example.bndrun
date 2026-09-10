@@ -14,6 +14,12 @@
 
 -runee: JavaSE-21
 
+# spifly.dynamic.framework.extension 1.3.x embeds an ASM that cannot read the class files of
+# a newer JDK ("Unsupported class file major version 69" -> "Weaving hook failed", Jetty never
+# starts on Java 25). Keep the resolver on the dynamic.bundle variant.
+-runblacklist: \
+	bnd.identity;id='org.apache.aries.spifly.dynamic.framework.extension'
+
 -runproperties: \
 	org.osgi.service.http.port=8080
 -runbundles: \
@@ -59,4 +65,9 @@
 	com.fasterxml.jackson.core.jackson-annotations;version='[2.22.0,2.22.1)',\
 	tools.jackson.core.jackson-core;version='[3.2.2,3.2.3)',\
 	tools.jackson.core.jackson-databind;version='[3.2.2,3.2.3)',\
-	org.apache.aries.spifly.dynamic.framework.extension;version='[1.3.7,1.3.8)'
+	org.apache.aries.spifly.dynamic.bundle;version='[1.3.7,1.3.8)',\
+	org.objectweb.asm;version='[9.9.1,9.9.2)',\
+	org.objectweb.asm.commons;version='[9.9.1,9.9.2)',\
+	org.objectweb.asm.tree;version='[9.9.1,9.9.2)',\
+	org.objectweb.asm.tree.analysis;version='[9.9.1,9.9.2)',\
+	org.objectweb.asm.util;version='[9.9.1,9.9.2)'
