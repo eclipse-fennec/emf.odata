@@ -10,6 +10,7 @@
 	bnd.identity;id='org.eclipse.fennec.odata.schema.api',\
 	bnd.identity;id='org.eclipse.fennec.odata.operation.api',\
 	bnd.identity;id='org.eclipse.fennec.persistence.eclipselink',\
+	bnd.identity;id='org.eclipse.fennec.persistence.repository.jpa',\
 	bnd.identity;id='org.eclipse.persistence.jpa.jpql',\
 	bnd.identity;id='org.eclipse.daanse.jdbc.datasource.h2',\
 	bnd.identity;id='com.h2database',\
@@ -95,6 +96,8 @@
 	org.eclipse.fennec.persistence.eclipselink;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.persistence.orm;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.persistence.query;version='[0.1.0,0.1.1)',\
+	org.eclipse.fennec.persistence.repository;version='[0.1.0,0.1.1)',\
+	org.eclipse.fennec.persistence.repository.jpa;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.query.model;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.stream.model;version='[0.1.0,0.1.1)',\
 	org.eclipse.parsson.jakarta.json;version='[1.1.7,1.1.8)',\
