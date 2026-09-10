@@ -10,7 +10,7 @@
  * Contributors:
  *   Data In Motion Consulting - initial implementation
  */
-package org.eclipse.fennec.odata.persistence.command;
+package org.eclipse.fennec.odata.persistence.read;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -71,13 +71,13 @@ import org.eclipse.fennec.persistence.query.api.QueryResultRow;
  * running-total members of the {@code bottom*}/{@code top*} family — are refused with
  * {@link UnsupportedOperationException}, which the servlet maps to an honest 501.
  */
-final class ApplyQueries {
+public final class ApplyQueries {
 
 	private ApplyQueries() {
 	}
 
 	/** One output column of the transformed set. */
-	record Column(String rowKey, List<String> nestedPath) {
+	public record Column(String rowKey, List<String> nestedPath) {
 
 		/** Grouped property path: derived row key (underscore-joined), nested in the result row. */
 		static Column groupedPath(List<String> segments) {
@@ -94,10 +94,10 @@ final class ApplyQueries {
 	 * The translated query plus the output column layout; {@code columns} is empty when
 	 * the pipeline never left the entity shape (OBJECTS result, caller flattens).
 	 */
-	record Plan(Query query, List<Column> columns) {
+	public record Plan(Query query, List<Column> columns) {
 	}
 
-	static Plan plan(ApplyQuery query, int maxPageSize) {
+	public static Plan plan(ApplyQuery query, int maxPageSize) {
 		EClass entityType = query.entityType();
 		Query irQuery = QueryFactory.eINSTANCE.createQuery();
 		irQuery.setFrom(entityType);
@@ -445,7 +445,7 @@ final class ApplyQueries {
 	}
 
 	/** {@code QueryResultRow} → the ApplyResult row shape: paths nested, aliases flat. */
-	static Map<String, Object> row(QueryResultRow source, List<Column> columns) {
+	public static Map<String, Object> row(QueryResultRow source, List<Column> columns) {
 		Map<String, Object> row = new LinkedHashMap<>();
 		for (Column column : columns) {
 			Object value = source.get(column.rowKey());
