@@ -1234,6 +1234,45 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("backends are consulted by service.ranking: a higher-ranked backend overrides one that claims the type")
+	void backendSelectionHonoursServiceRanking() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		QueryService ranked = new QueryService() {
+			@Override
+			public boolean supports(EClass entityType) {
+				return entityType == productClass;
+			}
+
+			@Override
+			public QueryResult execute(EntityQuery query) {
+				return new QueryResult(List.of(product("r1", "Ranked", "9.99", null)), 1);
+			}
+		};
+		QueryService unranked = new QueryService() {
+			@Override
+			public boolean supports(EClass entityType) {
+				return entityType == productClass;
+			}
+
+			@Override
+			public QueryResult execute(EntityQuery query) {
+				return new QueryResult(List.of(product("u1", "Unranked", "0.01", null)), 1);
+			}
+		};
+		servlet.bindQueryService(unranked, Map.of()); // arrives after the fixture backend: equal ranking, later
+		assertTrue(get("/Product", Map.of()).body().contains("\"Milk\""),
+				"equal ranking: the first bound backend keeps the type");
+
+		servlet.bindQueryService(ranked, Map.of("service.ranking", 10));
+		assertTrue(get("/Product", Map.of()).body().contains("\"Ranked\""),
+				"a higher ranking arriving later takes the type over");
+
+		servlet.unbindQueryService(ranked);
+		assertTrue(get("/Product", Map.of()).body().contains("\"Milk\""), "and hands it back when gone");
+		servlet.unbindQueryService(unranked);
+	}
+
+	@Test
 	@DisplayName("$metadata?$format=json serves CSDL JSON; the default stays CSDL XML")
 	void metadataAsCsdlJson() throws Exception {
 		Response json = get("/$metadata", Map.of("$format", "json"));
