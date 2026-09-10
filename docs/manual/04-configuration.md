@@ -71,7 +71,24 @@ narrow what an instance binds in the first place.
 | Setting | PID / key | Default |
 |---|---|---|
 | File repository directory (read once at activation; never influenced by request input) | `org.eclipse.fennec.odata.repository.file` · `directory` | — |
-| JPA server-driven page size (`<= 0` = unlimited) | `org.eclipse.fennec.odata.persistence.jpa` · `odata.jpa.max.page.size` | 1000 |
+| Command backend (factory): persistence unit, e.g. `jpa://shop` or `mongodb://assets` | `org.eclipse.fennec.odata.persistence.command` · `backend.uri` | — (required) |
+| Command backend: packages served (nsURIs); without it every keyed EClass is claimed | · `emf.nsURIs` | all |
+| Command backend: server-driven page cap for unbounded reads (`<= 0` = unlimited) | · `max.page.size` | 1000 |
+| Repository backend (factory): the emf.persistence-jpa `ReadRepository` to serve, as a DS target on its `persistence.repository.id` | `org.eclipse.fennec.odata.persistence.repository` · `repository.target` | — (required) |
+| Repository backend: packages served (nsURIs) / page cap | · `emf.nsURIs` / `max.page.size` | all / 1000 |
+
+The repository backend reads through the facade only (`find`/`count`, `$apply` as a pipeline
+query); capabilities are gated exactly as the command backend gates them (undeclared feature →
+501, structural violation → 400). Each request takes its own prototype-scoped repository
+instance and releases it afterwards — the facade's `ResourceSet` is not thread-safe.
+
+```json
+"fennec.repository.jpa~shop": { "repositoryId": "shop", "unit.target": "(osgi.unit.name=shop)", "readOnly": true },
+"org.eclipse.fennec.odata.persistence.repository~shop": {
+    "repository.target": "(persistence.repository.id=shop)",
+    "emf.nsURIs": ["http://example.org/webshop"]
+}
+```
 
 ## Security model
 

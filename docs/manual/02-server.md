@@ -21,10 +21,17 @@ A minimal wiring needs three things in the OSGi runtime:
 
 1. one or more **`EPackage` services** (your model),
 2. a **`MetadataService`** (from `emf.osgi.metadata`) plus the `ODataMetadataHandler`,
-3. a **`QueryService`** backend (in-memory or JPA) with an `EntityRepository`/data source.
+3. a **`QueryService`** backend: in-memory (over `EntityRepository` services), the command
+   backend over a Fennec persistence unit, or the repository backend over an
+   emf.persistence-jpa `ReadRepository` facade.
 
-The servlet binds them via Declarative Services; the JPA backend advertises the service
-property `fennec.odata.backend=jpa`.
+The servlet binds them via Declarative Services; the persistence backends advertise the
+service property `fennec.odata.backend=command` / `fennec.odata.backend=repository`. For each
+entity type the servlet asks the bound backends in **`service.ranking` order** (highest first)
+and takes the first whose `supports(type)` answers yes. The in-memory reference backend claims
+every keyed class of every registered `EPackage`, so a persistence backend deployed next to
+it must either be ranked above it (`service.ranking` in its configuration) or the in-memory
+bundle left out of the runtime.
 
 ## Service roots
 
@@ -230,7 +237,8 @@ the result is discarded. Bounded LRU parking (unclaimed monitors age out, cancel
 | Setting | PID | Default |
 |---|---|---|
 | File repository directory | `org.eclipse.fennec.odata.repository.file` (`directory`) | — |
-| JPA server-driven page size | `org.eclipse.fennec.odata.persistence.jpa` (`odata.jpa.max.page.size`) | 1000 |
+| Command backend: persistence unit URI, served packages, page cap | `org.eclipse.fennec.odata.persistence.command` (`backend.uri`, `emf.nsURIs`, `max.page.size`) | —, all, 1000 |
+| Repository backend: the `ReadRepository` to serve, served packages, page cap | `org.eclipse.fennec.odata.persistence.repository` (`repository.target=(persistence.repository.id=…)`, `emf.nsURIs`, `max.page.size`) | —, all, 1000 |
 
 See [Configuration & Security](/guides/04-configuration) for the servlet limits and
 security defaults, and the [feature matrix](/guides/06-feature-matrix) for the full spec

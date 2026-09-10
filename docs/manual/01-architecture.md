@@ -52,7 +52,7 @@ SPI. The client mirrors the server's codec and metadata wiring.
 | `odata.operation.api` | E4 | `ODataOperationHandler` SPI — pluggable function/action implementations |
 | `odata.persistence.api` | E5 | `QueryService` / `ApplyQuery` / `WriteService` / `MediaService` / `DeltaService` SPIs + `EntityRepository` data-source abstraction |
 | `odata.persistence.inmemory` | E5 | Reference backend: in-memory query + `ApplyExecutor`, `FileEntityRepository`, `MemoryWriteRepository` (write + media + change journal) |
-| `odata.persistence.jpa` | E5 | JPA backend: `OclToCriteriaTranslator`, `JpaApplyExecutor`, `WriteService` (Jakarta Criteria, ADR-0006) |
+| `odata.persistence` | E5 | Fennec Persistence backends: the **command** backend (`CommandPersistenceService`: `QueryService`/`WriteService`/`DeltaService` over a persistence unit's `QueryableResource`/`CommandResource`) and the **repository** backend (`RepositoryQueryService`: `QueryService` over the emf.persistence-jpa `ReadRepository` facade, #79); both share the OCL-IR → `Query`/`Expression` translation (`ReadQueries`, `ReadPlans`, `ApplyQueries`) |
 | `odata.runtime` | E6/E7 | `ODataServlet` catch-all + `RequestLimits` / `EntityShaper` / `ODataJson` / resource-path parser |
 | `odata.schema.api` | E8 | Client schema-registry SPI: `ODataSchemaReader` / `Registrar` / `Resolver` / `ODataSchema` / `SchemaScope` (ADR-0007) |
 | `odata.client` | E8 | `ODataClient`, fluent `EntitySetRequest`, `$batch`, CSRF, schema registry impl |
@@ -101,10 +101,11 @@ separate aggregation submodel, not part of the OCL tree.
 ## Backends
 
 - **In-memory** — the reference semantics. `OclEvaluator` interprets the IR directly (three-valued null logic, lambdas, cast, `$count`, typed literals) and never fails silently: type/format errors surface as 400, not 500.
-- **JPA** (ADR-0006) — `OclToCriteriaTranslator` turns the IR into Jakarta Criteria queries; `$apply` becomes a single grouped Criteria query; `$expand` and navigation walks materialize via batched IN-hints / LEFT fetch joins (no N+1). Anything not translatable → `UnsupportedOperationException` → 501 (never silently wrong). Differential tests mirror the in-memory reference against H2.
+- **Command** (Fennec Persistence, JPA or Mongo) — the OCL IR is bridged to the Fennec `Expression`/`Query` IR (`OclToExpr` plus OData-specific rewrites) and executed through a persistence unit's `QueryableResource`; writes become `Insert`/`Update`/`DeleteCommand`s; `$apply` becomes pipeline stages; `$expand` options are pushed down where the backend declares the capability (ADR-0008). Everything is validated against the backend's declared `QueryCapabilities` first — unsupported → `UnsupportedOperationException` → 501 (never silently wrong). Differential tests mirror the in-memory reference against the IR engines.
+- **Repository** (#79) — the same translation, executed through the emf.persistence-jpa **repository facade** (`ReadRepository.find`/`count`) instead of the unit directly, so whatever a repository layers over its backend (bridged inputs, transformations, query-defined data sets) stays in the loop. One factory configuration per repository, selected by `persistence.repository.id`; read-only (`QueryService` incl. `$apply`), capability-gated like the command backend.
 
-Both sit behind the `QueryService`/`WriteService`/`EntityRepository` SPIs, so a new backend
-(e.g. Mongo) is an additive bundle with no core change.
+All sit behind the `QueryService`/`WriteService`/`EntityRepository` SPIs, so a new backend
+is an additive bundle with no core change.
 
 > For the dated implementation history and deeper rationale, see the internal architecture
 > architecture notes at [`docs/odata-architecture.md`](../odata-architecture.md) and the ADRs.

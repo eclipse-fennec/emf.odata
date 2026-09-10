@@ -29,7 +29,8 @@ over real HTTP.
 - **Writes**: POST/PATCH/PUT/DELETE, upserts, `$ref` operations, deep inserts,
   property-level writes, weak ETags with `If-Match` enforcement
 - **Backends** (pluggable `QueryService`/`WriteService` SPI): in-memory/file reference
-  backend and a JPA backend ([Fennec Persistence JPA](https://github.com/eclipse-fennec/emf.persistence-jpa))
+  backend, a command backend over a [Fennec Persistence](https://github.com/eclipse-fennec/emf.persistence-jpa)
+  unit (JPA or Mongo), and a read-only repository backend over its `ReadRepository` facade
   with full SQL pushdown — filters, paging, `TYPE()` casts, grouped aggregation, batched
   prefetch (no N+1)
 - **Security posture**: hard request limits before parsing, typed query IR (no string

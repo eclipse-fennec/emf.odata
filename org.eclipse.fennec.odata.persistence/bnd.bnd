@@ -13,6 +13,8 @@ Bundle-Description: Backend-neutral WriteService over the Fennec Persistence Com
 	org.eclipse.fennec.persistence.query;version=latest,\
 	org.eclipse.fennec.persistence.capabilities;version=latest,\
 	org.eclipse.fennec.persistence;version=latest,\
+	org.eclipse.fennec.persistence.repository;version=latest,\
+	org.osgi.service.component;version=latest,\
 	org.eclipse.fennec.emf.osgi.api;version=latest,\
 	org.eclipse.emf.ecore;version=latest,\
 	org.eclipse.emf.common;version=latest
@@ -24,6 +26,7 @@ Bundle-Description: Backend-neutral WriteService over the Fennec Persistence Com
 # inmemory bundle does not depend on this one, so this adds no cycle).
 -testpath: \
 	assertj-core;version=latest,\
+	org.osgi.framework;version=latest,\
 	org.eclipse.fennec.odata.ocl.evaluator;version=project,\
 	org.eclipse.fennec.odata.persistence.inmemory;version=project,\
 	org.antlr.antlr4-runtime;version=latest,\
