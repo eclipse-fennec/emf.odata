@@ -64,6 +64,7 @@ import org.eclipse.fennec.m2x.model.ocl.Variable;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
 import org.eclipse.fennec.odata.csdl.CsdlJsonWriter;
 import org.eclipse.fennec.odata.csdl.EcoreToEdmConverter;
+import org.eclipse.fennec.odata.csdl.EntityContainers;
 import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 import org.eclipse.fennec.odata.csdl.OdataResolver;
 import org.eclipse.fennec.odata.csdl.profile.ODataPackageProfile;
@@ -875,28 +876,31 @@ public class ODataServlet extends HttpServlet {
 			SchemaType schema = converter.toSchema(pkg);
 			converter.applyEntitySetNames(setNames, schema);
 			pruneUnpublishedSets(published, schema);
-			for (TEntityContainer container : schema.getEntityContainer()) {
-				AnnotationType versions = EdmFactory.eINSTANCE.createAnnotationType();
-				versions.setTerm("Org.OData.Core.V1.ODataVersions");
-				versions.setString1("4.0 4.01");
-				container.getAnnotation().add(versions);
-				// what this v1 read-only service can and cannot do (12/13.2.1 advertisement)
-				AnnotationType conformance = EdmFactory.eINSTANCE.createAnnotationType();
-				conformance.setTerm("Org.OData.Capabilities.V1.ConformanceLevel");
-				// every 4.0 AND 4.01 Advanced MUST is implemented and clause-audited
-				// (docs/odata-conformance-status.md, re-audit 2026-07-14)
-				conformance.setEnumMember1(
-						List.of("Org.OData.Capabilities.V1.ConformanceLevelType/Advanced"));
-				container.getAnnotation().add(conformance);
-				container.getAnnotation().add(
-						boolCapability("Org.OData.Capabilities.V1.BatchSupported", true));
-				container.getAnnotation().add(changeTrackingCapability(!deltaServices.isEmpty()));
-				container.getAnnotation().add(
-						boolCapability("Org.OData.Capabilities.V1.AsynchronousRequestsSupported", true));
-				container.getAnnotation().add(
-						boolCapability("Org.OData.Capabilities.V1.KeyAsSegmentSupported", false));
-			}
 			dataServices.getSchema().add(schema);
+		}
+		// ...but exactly ONE container for the service (CSDL §13 MUST) — the per-package defaults
+		// merge into the first schema's, cross-package navigation bindings included
+		TEntityContainer container = EntityContainers.merge(dataServices.getSchema());
+		if (container != null) {
+			AnnotationType versions = EdmFactory.eINSTANCE.createAnnotationType();
+			versions.setTerm("Org.OData.Core.V1.ODataVersions");
+			versions.setString1("4.0 4.01");
+			container.getAnnotation().add(versions);
+			// what this v1 read-only service can and cannot do (12/13.2.1 advertisement)
+			AnnotationType conformance = EdmFactory.eINSTANCE.createAnnotationType();
+			conformance.setTerm("Org.OData.Capabilities.V1.ConformanceLevel");
+			// every 4.0 AND 4.01 Advanced MUST is implemented and clause-audited
+			// (docs/odata-conformance-status.md, re-audit 2026-07-14)
+			conformance.setEnumMember1(
+					List.of("Org.OData.Capabilities.V1.ConformanceLevelType/Advanced"));
+			container.getAnnotation().add(conformance);
+			container.getAnnotation().add(
+					boolCapability("Org.OData.Capabilities.V1.BatchSupported", true));
+			container.getAnnotation().add(changeTrackingCapability(!deltaServices.isEmpty()));
+			container.getAnnotation().add(
+					boolCapability("Org.OData.Capabilities.V1.AsynchronousRequestsSupported", true));
+			container.getAnnotation().add(
+					boolCapability("Org.OData.Capabilities.V1.KeyAsSegmentSupported", false));
 		}
 		edmx.setDataServices(dataServices);
 		root.setEdmx(edmx);

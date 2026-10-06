@@ -40,10 +40,12 @@ class ServiceModelTest {
 	private final EPackage atlas = pkg("atlas", "http://example.org/atlas", "DataSet", "Endpoint");
 
 	@Test
-	@DisplayName("unconfigured: every bound package, every concrete class, in binding order")
+	@DisplayName("unconfigured: every bound package (by nsURI, not binding order), every concrete class")
 	void everythingBound() {
 		ServiceModel model = ServiceModel.of(List.of(shop, atlas));
-		assertEquals(List.of(shop, atlas), model.packages());
+		assertEquals(List.of(atlas, shop), model.packages());
+		assertEquals(List.of(atlas, shop), ServiceModel.of(List.of(atlas, shop)).packages(),
+				"the first package hosts the entity container — stable whatever binds first (#84)");
 		assertEquals(List.of("Category", "DataSet", "Endpoint", "Product"), model.entitySetNames());
 		assertSame(shop.getEClassifier("Product"), model.entityType("Product"));
 		assertNull(model.entityType("Abstract"), "abstract classes are never sets");
@@ -61,12 +63,20 @@ class ServiceModelTest {
 	}
 
 	@Test
+	@DisplayName("odata.model.packages: the published packages keep the configured order (#84)")
+	void packageAllowlistOrder() {
+		ServiceModel model = ServiceModel.of(List.of(atlas, shop), ServiceModel.Selection.fromConfiguration(
+				Map.of(ServiceModel.PACKAGES_KEY, "http://example.org/shop http://example.org/atlas")));
+		assertEquals(List.of(shop, atlas), model.packages());
+	}
+
+	@Test
 	@DisplayName("odata.model.entitysets: exactly the listed sets, under their configured names")
 	void entitySetAllowlistAndRename() {
 		ServiceModel model = ServiceModel.of(List.of(shop, atlas),
 				ServiceModel.Selection.fromConfiguration(Map.of(ServiceModel.ENTITY_SETS_KEY,
 						new String[] { "Products=http://example.org/shop#Product", "DataSet" })));
-		assertEquals(List.of(shop, atlas), model.packages(), "schemas are not narrowed by the set list");
+		assertEquals(List.of(atlas, shop), model.packages(), "schemas are not narrowed by the set list");
 		assertEquals(List.of("DataSet", "Products"), model.entitySetNames());
 		EClass product = (EClass) shop.getEClassifier("Product");
 		assertSame(product, model.entityType("Products"));

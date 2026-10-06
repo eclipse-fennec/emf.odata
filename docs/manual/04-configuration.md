@@ -46,6 +46,13 @@ types. An `odata.model.entitysets` entry whose package is not (yet) bound is ski
 warning and picked up when the package arrives. Entity **types** stay in their schema even
 when their set is not published: navigation properties still reference them.
 
+A root that publishes **several packages** emits one schema per package but exactly **one**
+`EntityContainer` (as CSDL requires): it holds the sets of all packages, each typed by its
+own namespace, binds navigations across packages, and lives in the schema of the first
+package — the first `odata.model.packages` entry, or the lowest nsURI when the key is unset.
+Two sets of the same name keep the first one and log a warning; rename the other in
+`odata.model.entitysets`.
+
 While factory configurations exist there is no unconfigured default root; deleting the last
 one brings `/odata/*` back. A singleton configuration of the PID (as in the example bundle)
 configures that single default instance. Independently of the allowlist, the DS reference
