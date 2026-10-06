@@ -160,8 +160,15 @@ class ODataJsonRoundTripTest {
 				URI.createURI("test://bad-date.odatajson"), metadataService);
 		Map<Object, Object> options = new HashMap<>();
 		options.put(CodecResource.CODEC_ROOT_TYPE, productClass);
-		assertThrows(IllegalArgumentException.class, () -> resource.load(
+		// emf.codec wraps value-reader failures in an IOWrappedException — the typed error is its cause
+		Exception failure = assertThrows(Exception.class, () -> resource.load(
 				new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), options));
+		Throwable cause = failure;
+		while (cause != null && !(cause instanceof IllegalArgumentException)) {
+			cause = cause.getCause();
+		}
+		assertNotNull(cause, "an IllegalArgumentException in the cause chain: " + failure);
+		assertEquals("invalid Edm.Date value", cause.getMessage());
 	}
 
 	@Test
