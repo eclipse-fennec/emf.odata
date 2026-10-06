@@ -15,6 +15,7 @@ package org.eclipse.fennec.odata.runtime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -126,6 +127,12 @@ final class ServiceModel {
 				published.add(pkg);
 			}
 		}
+		// binding order is arbitrary (dynamic references) — the first package hosts the service's
+		// one entity container, so the order must survive a restart: configured order, else nsURI
+		List<String> configured = List.copyOf(selection.nsUris());
+		published.sort(selection.restrictsPackages()
+				? Comparator.comparingInt(pkg -> configured.indexOf(pkg.getNsURI()))
+				: Comparator.comparing(EPackage::getNsURI, Comparator.nullsLast(String::compareTo)));
 		// the package rename annotations first (set name → type); set renames are declared per
 		// package but the container may live in another schema than its types (Northwind), so the
 		// renames of all published packages apply everywhere
@@ -144,13 +151,13 @@ final class ServiceModel {
 					continue;
 				}
 				String name = configuredName != null ? configuredName : annotatedSetName(type, published);
-				sets.put(name, type);
+				putSet(sets, name, type);
 			}
 		} else {
 			for (EPackage pkg : published) {
 				for (var classifier : pkg.getEClassifiers()) {
 					if (classifier instanceof EClass type && !type.isAbstract()) {
-						sets.put(annotatedSetName(type, published), type);
+						putSet(sets, annotatedSetName(type, published), type);
 					}
 				}
 			}
@@ -172,6 +179,17 @@ final class ServiceModel {
 			});
 		}
 		return new ServiceModel(published, sets, names, singletons);
+	}
+
+	/** Registers a set; a name already serving ANOTHER type keeps its first type, with a warning. */
+	private static void putSet(Map<String, EClass> sets, String name, EClass type) {
+		EClass existing = sets.putIfAbsent(name, type);
+		if (existing != null && existing != type) {
+			LOGGER.log(System.Logger.Level.WARNING, () -> "entity set '" + name + "' would serve both "
+					+ existing.getEPackage().getNsURI() + "#" + existing.getName() + " and "
+					+ type.getEPackage().getNsURI() + "#" + type.getName()
+					+ " — the second is not published; rename it in " + ENTITY_SETS_KEY);
+		}
 	}
 
 	/** {@code nsURI#Name} or a bare {@code Name} → the concrete class among the published packages. */
@@ -206,7 +224,7 @@ final class ServiceModel {
 		return type.getName();
 	}
 
-	/** The published packages — one Schema each — in binding order. */
+	/** The published packages — one Schema each — in configured order, else by nsURI. */
 	List<EPackage> packages() {
 		return packages;
 	}

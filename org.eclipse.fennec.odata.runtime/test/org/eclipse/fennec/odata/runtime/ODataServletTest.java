@@ -37,10 +37,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.emf.ecore.EAnnotation;
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EcoreFactory;
+import org.eclipse.emf.ecore.EcorePackage;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.codec.util.MetadataServiceFactory;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
@@ -1181,6 +1184,58 @@ class ODataServletTest {
 
 		servlet.removeEPackage(other);
 		servlet.activate(Map.of());
+	}
+
+	@Test
+	@DisplayName("a multi-package root declares exactly ONE entity container, cross-package bindings included (#84)")
+	void multiPackageRootHasOneEntityContainer() throws Exception {
+		EPackage other = EcoreFactory.eINSTANCE.createEPackage();
+		other.setName("other");
+		other.setNsPrefix("other");
+		other.setNsURI("http://example.org/other");
+		EClass widget = EcoreFactory.eINSTANCE.createEClass();
+		widget.setName("Widget");
+		EAttribute id = EcoreFactory.eINSTANCE.createEAttribute();
+		id.setName("id");
+		id.setEType(EcorePackage.Literals.ESTRING);
+		id.setID(true);
+		widget.getEStructuralFeatures().add(id);
+		EReference product = EcoreFactory.eINSTANCE.createEReference();
+		product.setName("product");
+		product.setEType(productClass); // navigation INTO the other package's schema
+		widget.getEStructuralFeatures().add(product);
+		other.getEClassifiers().add(widget);
+		servlet.addEPackage(other);
+		// configured order decides which schema hosts the container — not the binding order
+		servlet.activate(Map.of("odata.model.packages", new String[] { other.getNsURI(), pkg.getNsURI() }));
+		try {
+			String xml = get("/$metadata", Map.of()).body();
+			assertEquals(1, occurrences(xml, "EntityContainer Name="), "exactly one container: " + xml);
+			assertEquals(1, occurrences(xml, "Org.OData.Core.V1.ODataVersions"),
+					"the service annotations sit on that one container: " + xml);
+			assertTrue(xml.contains("EntityType=\"other.Widget\" Name=\"Widget\"")
+					&& xml.contains("EntityType=\"webshop.Product\" Name=\"Product\""),
+					"both packages' sets live in it, each typed by its own namespace: " + xml);
+			assertTrue(xml.indexOf("EntityContainer Name=") < xml.indexOf("Namespace=\"webshop\""),
+					"hosted by the first configured package's schema: " + xml);
+			assertTrue(xml.contains("Path=\"product\" Target=\"Product\""),
+					"the cross-package navigation is bound: " + xml);
+
+			String json = get("/$metadata", Map.of("$format", "json")).body().replaceAll("\\s", "");
+			assertEquals(1, occurrences(json, "\"$Kind\":\"EntityContainer\""), json);
+			assertTrue(json.contains("\"$EntityContainer\":\"other.DefaultContainer\""), json);
+		} finally {
+			servlet.removeEPackage(other);
+			servlet.activate(Map.of());
+		}
+	}
+
+	private static int occurrences(String text, String part) {
+		int count = 0;
+		for (int at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + part.length())) {
+			count++;
+		}
+		return count;
 	}
 
 	@Test
