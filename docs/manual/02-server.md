@@ -45,7 +45,9 @@ configuration** of PID `org.eclipse.fennec.odata.servlet` creates one root per c
   and servlet context it binds to (standard whiteboard properties, passed through);
 - `odata.model.packages` / `odata.model.entitysets` — the model it publishes: only the listed
   nsURIs become schemas, only the listed classes become entity sets (renamed on request),
-  and a set outside the list is a 404, not a leak of the wider runtime.
+  and a set outside the list is a 404, not a leak of the wider runtime. With an entity-set
+  list, `$metadata` describes only the types these sets lead to, not the whole package
+  ([what `$metadata` describes](/guides/04-configuration#what-metadata-describes)).
 
 As soon as factory configurations exist, the unconfigured default root is gone — a runtime
 that configures its roots gets exactly those. The request-limits filter follows the same

@@ -12,10 +12,12 @@
  */
 package org.eclipse.fennec.odata.runtime;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,6 +27,10 @@ import java.util.TreeMap;
 
 import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EClassifier;
+import org.eclipse.emf.ecore.EOperation;
+import org.eclipse.emf.ecore.EParameter;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
 
@@ -49,6 +55,12 @@ import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
  * Both keys accept a {@code String[]}, a {@link Collection} or a single comma/whitespace separated
  * string. An entity-set entry that resolves to no (published) class is skipped with a warning:
  * the packages arrive dynamically, so the entry resolves once its package is bound.
+ *
+ * <p>With {@code odata.model.entitysets} the schemas are narrowed as well (emf.odata#91): they
+ * describe the {@linkplain #describes type closure} of the published sets and singletons, not the
+ * whole package. A type no set, navigation, cast or operation leads to is not part of the
+ * service — {@code $metadata} does not mention it, and a cast or operation call cannot reach it.
+ * A published package that contributes no type of the closure contributes no schema.
  */
 final class ServiceModel {
 
@@ -102,14 +114,17 @@ final class ServiceModel {
 	}
 
 	private final List<EPackage> packages;
+	/** The types the schemas describe; {@code null} = every classifier of the published packages. */
+	private final Set<EClassifier> types;
 	/** set name → type, in set-name order (the service document lists them sorted). */
 	private final Map<String, EClass> entitySets;
 	private final Map<EClass, String> setNames;
 	private final Map<String, EClass> singletons;
 
-	private ServiceModel(List<EPackage> packages, Map<String, EClass> entitySets,
-			Map<EClass, String> setNames, Map<String, EClass> singletons) {
+	private ServiceModel(List<EPackage> packages, Set<EClassifier> types,
+			Map<String, EClass> entitySets, Map<EClass, String> setNames, Map<String, EClass> singletons) {
 		this.packages = List.copyOf(packages);
+		this.types = types == null ? null : Collections.unmodifiableSet(types);
 		this.entitySets = Collections.unmodifiableMap(entitySets);
 		this.setNames = Collections.unmodifiableMap(setNames);
 		this.singletons = Collections.unmodifiableMap(singletons);
@@ -178,7 +193,59 @@ final class ServiceModel {
 				}
 			});
 		}
-		return new ServiceModel(published, sets, names, singletons);
+		if (!selection.restrictsEntitySets()) {
+			return new ServiceModel(published, null, sets, names, singletons);
+		}
+		Set<EClassifier> closure = closure(names.keySet(), singletons.values(), published);
+		published.removeIf(pkg -> pkg.getEClassifiers().stream().noneMatch(closure::contains));
+		return new ServiceModel(published, closure, sets, names, singletons);
+	}
+
+	/**
+	 * The types a narrowed root describes: the published entity and singleton types and,
+	 * transitively, everything they lead to — base types, derived types (a set may hold them, a
+	 * cast may name them), property and navigation target types (an expanded navigation serves
+	 * its target), the types of their operations' parameters and results. Only classifiers of the
+	 * published packages count; a type from elsewhere has no schema here anyway.
+	 */
+	private static Set<EClassifier> closure(Collection<EClass> sets, Collection<EClass> singletons,
+			List<EPackage> published) {
+		Set<EClass> classes = new LinkedHashSet<>();
+		for (EPackage pkg : published) {
+			for (EClassifier classifier : pkg.getEClassifiers()) {
+				if (classifier instanceof EClass type) {
+					classes.add(type);
+				}
+			}
+		}
+		Set<EClassifier> closure = new LinkedHashSet<>();
+		Deque<EClassifier> pending = new ArrayDeque<>(sets);
+		pending.addAll(singletons);
+		while (!pending.isEmpty()) {
+			EClassifier next = pending.poll();
+			if (!published.contains(next.getEPackage()) || !closure.add(next)
+					|| !(next instanceof EClass type)) {
+				continue;
+			}
+			pending.addAll(type.getEAllSuperTypes());
+			for (EClass candidate : classes) {
+				if (candidate != type && type.isSuperTypeOf(candidate)) {
+					pending.add(candidate);
+				}
+			}
+			for (EStructuralFeature feature : type.getEAllStructuralFeatures()) {
+				pending.add(feature.getEType());
+			}
+			for (EOperation operation : type.getEAllOperations()) {
+				if (operation.getEType() != null) { // void
+					pending.add(operation.getEType());
+				}
+				for (EParameter parameter : operation.getEParameters()) {
+					pending.add(parameter.getEType());
+				}
+			}
+		}
+		return closure;
 	}
 
 	/** Registers a set; a name already serving ANOTHER type keeps its first type, with a warning. */
@@ -237,6 +304,14 @@ final class ServiceModel {
 	/** The entity type behind a published set name, or null (→ 404, whether unknown or unpublished). */
 	EClass entityType(String setName) {
 		return entitySets.get(setName);
+	}
+
+	/**
+	 * True when the schemas describe the classifier: always on an unnarrowed root (it describes its
+	 * packages whole), else when the classifier is part of the published sets' type closure.
+	 */
+	boolean describes(EClassifier classifier) {
+		return types == null ? packages.contains(classifier.getEPackage()) : types.contains(classifier);
 	}
 
 	/** True when the type is served as an entity set of this root. */

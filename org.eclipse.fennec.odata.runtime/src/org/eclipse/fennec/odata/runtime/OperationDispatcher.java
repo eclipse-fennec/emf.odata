@@ -277,7 +277,8 @@ UnboundOperation resolveUnboundFunction(String name) {
 		ODataPackageProfile profile = servlet.profiles.computeIfAbsent(pkg,
 				p -> new OdataResolver().resolve(p));
 		for (EClassifier classifier : pkg.getEClassifiers()) {
-			if (classifier instanceof EClass eClass) {
+			// a root narrowed to its sets' closure offers only the operations it describes (#91)
+			if (classifier instanceof EClass eClass && servlet.model().describes(eClass)) {
 				for (EOperation operation : eClass.getEAllOperations()) {
 					if (operation.getName().equals(name) && isUnbound(operation)) {
 						return new UnboundOperation(operation, profile.getNamespace() + "." + name);
@@ -289,7 +290,7 @@ UnboundOperation resolveUnboundFunction(String name) {
 	return null;
 }
 
-private static boolean isUnbound(EOperation operation) {
+static boolean isUnbound(EOperation operation) {
 	EAnnotation annotation = operation.getEAnnotation(ODataAnnotationConstants.SOURCE);
 	return annotation != null
 			&& "false".equals(annotation.getDetails().get(ODataAnnotationConstants.BOUND));

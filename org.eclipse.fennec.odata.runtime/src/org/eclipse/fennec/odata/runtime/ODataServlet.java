@@ -42,7 +42,9 @@ import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EOperation;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
@@ -92,6 +94,7 @@ import org.open.oasis.docs.odata.ns.edm.AnnotationType;
 import org.open.oasis.docs.odata.ns.edm.EdmFactory;
 import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
+import org.open.oasis.docs.odata.ns.edm.TActionFunctionParameter;
 import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
 import org.open.oasis.docs.odata.ns.edm.TEntitySet;
 import org.open.oasis.docs.odata.ns.edm.TPropertyValue;
@@ -937,6 +940,7 @@ public class ODataServlet extends HttpServlet {
 			SchemaType schema = converter.toSchema(pkg);
 			converter.applyEntitySetNames(setNames, schema);
 			pruneUnpublishedSets(published, schema);
+			pruneUndescribedTypes(published, pkg, schema);
 			dataServices.getSchema().add(schema);
 		}
 		// ...but exactly ONE container for the service (CSDL §13 MUST) — the per-package defaults
@@ -1260,6 +1264,67 @@ public class ODataServlet extends HttpServlet {
 						.removeIf(binding -> removed.contains(String.valueOf(binding.getTarget())));
 			}
 		}
+	}
+
+	/**
+	 * Narrows a package's schema to the types the root describes ({@link ServiceModel#describes},
+	 * emf.odata#91): types outside the published sets' closure, the operations bound to them and
+	 * the unbound operations they declare leave the schema, and with them their container imports.
+	 * A no-op on an unnarrowed root, which describes its packages whole.
+	 */
+	private static void pruneUndescribedTypes(ServiceModel published, EPackage pkg, SchemaType schema) {
+		Set<String> types = new HashSet<>();
+		Set<String> unbound = new HashSet<>();
+		for (EClassifier classifier : pkg.getEClassifiers()) {
+			if (!published.describes(classifier)) {
+				continue;
+			}
+			types.add(classifier.getName());
+			if (classifier instanceof EClass type) {
+				for (EOperation operation : type.getEOperations()) {
+					if (OperationDispatcher.isUnbound(operation)) {
+						unbound.add(operation.getName());
+					}
+				}
+			}
+		}
+		schema.getEntityType().removeIf(type -> !types.contains(type.getName()));
+		schema.getComplexType().removeIf(type -> !types.contains(type.getName()));
+		schema.getEnumType().removeIf(type -> !types.contains(type.getName()));
+		schema.getAction().removeIf(action -> !keepsOperation(action.isIsBound(), action.getName(),
+				action.getParameter(), types, unbound));
+		schema.getFunction().removeIf(function -> !keepsOperation(function.isIsBound(),
+				function.getName(), function.getParameter(), types, unbound));
+		Set<String> actions = new HashSet<>();
+		schema.getAction().forEach(action -> actions.add(action.getName()));
+		Set<String> functions = new HashSet<>();
+		schema.getFunction().forEach(function -> functions.add(function.getName()));
+		for (TEntityContainer container : schema.getEntityContainer()) {
+			container.getActionImport().removeIf(imp -> !actions.contains(localName(imp.getAction())));
+			container.getFunctionImport()
+					.removeIf(imp -> !functions.contains(localName(imp.getFunction())));
+		}
+	}
+
+	/** A bound operation stays with its binding type, an unbound one with its declaring type. */
+	private static boolean keepsOperation(boolean bound, String name,
+			List<TActionFunctionParameter> parameters, Set<String> types, Set<String> unbound) {
+		if (!bound) {
+			return unbound.contains(name);
+		}
+		if (parameters.isEmpty()) {
+			return false;
+		}
+		String binding = String.valueOf(parameters.get(0).getType());
+		if (binding.startsWith("Collection(") && binding.endsWith(")")) {
+			binding = binding.substring("Collection(".length(), binding.length() - 1);
+		}
+		return types.contains(localName(binding));
+	}
+
+	/** {@code Namespace.Name} → {@code Name}. */
+	private static String localName(String qualifiedName) {
+		return qualifiedName == null ? "" : qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1);
 	}
 
 	/** {@code Namespace.Type} as $metadata emits it — the schema namespace comes from the profile. */
@@ -1691,9 +1756,9 @@ public class ODataServlet extends HttpServlet {
 			if (!namespace.equals(profile.getNamespace()) && !namespace.equals(profile.getAlias())) {
 				continue;
 			}
-			if (pkg.getEClassifier(localName) instanceof EClass cast
+			if (pkg.getEClassifier(localName) instanceof EClass cast && model.describes(cast)
 					&& (baseType == null || baseType.isSuperTypeOf(cast))) {
-				return cast;
+				return cast; // a type outside the root's closure is as unknown as a misspelt one
 			}
 		}
 		return null;
