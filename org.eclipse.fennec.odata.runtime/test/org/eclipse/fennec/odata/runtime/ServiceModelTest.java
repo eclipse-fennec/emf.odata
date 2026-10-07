@@ -76,7 +76,7 @@ class ServiceModelTest {
 		ServiceModel model = ServiceModel.of(List.of(shop, atlas),
 				ServiceModel.Selection.fromConfiguration(Map.of(ServiceModel.ENTITY_SETS_KEY,
 						new String[] { "Products=http://example.org/shop#Product", "DataSet" })));
-		assertEquals(List.of(atlas, shop), model.packages(), "schemas are not narrowed by the set list");
+		assertEquals(List.of(atlas, shop), model.packages(), "both packages hold a published set");
 		assertEquals(List.of("DataSet", "Products"), model.entitySetNames());
 		EClass product = (EClass) shop.getEClassifier("Product");
 		assertSame(product, model.entityType("Products"));
@@ -139,6 +139,40 @@ class ServiceModelTest {
 		assertTrue(ServiceModel.of(List.of(shop), ServiceModel.Selection.fromConfiguration(
 				Map.of(ServiceModel.ENTITY_SETS_KEY, "Category"))).singletons().isEmpty(),
 				"the singleton's type is not among the listed sets");
+	}
+
+	@Test
+	@DisplayName("odata.model.entitysets narrows the schemas to the closure of the published sets (#91)")
+	void entitySetsNarrowTheDescribedTypes() {
+		NarrowedModelFixture fixture = new NarrowedModelFixture();
+		ServiceModel model = ServiceModel.of(List.of(fixture.baeder, fixture.intern),
+				ServiceModel.Selection.fromConfiguration(Map.of(ServiceModel.ENTITY_SETS_KEY,
+						"http://example.org/baeder#Auslastung")));
+
+		for (String described : List.of("Auslastung", "Messung", "AuslastungSchaetzung", "Status",
+				"Zeitraum", "Bad", "Prognose")) {
+			assertTrue(model.describes(fixture.type(described)),
+					described + ": base, derived, enum, complex, navigation target or operation result");
+		}
+		for (String internal : List.of("KarteninhaberBesuch", "Feedback", "FeedbackArt", "Checkin")) {
+			assertFalse(model.describes(fixture.type(internal)), internal + " is reached from nowhere");
+		}
+		assertEquals(List.of(fixture.baeder), model.packages(),
+				"a package without a described type contributes no schema");
+		assertEquals(List.of("Auslastung"), model.entitySetNames());
+	}
+
+	@Test
+	@DisplayName("without odata.model.entitysets every classifier of a published package is described")
+	void unnarrowedRootDescribesWholePackages() {
+		NarrowedModelFixture fixture = new NarrowedModelFixture();
+		ServiceModel model = ServiceModel.of(List.of(fixture.baeder, fixture.intern),
+				ServiceModel.Selection.fromConfiguration(Map.of(ServiceModel.PACKAGES_KEY,
+						NarrowedModelFixture.NS_URI)));
+
+		assertTrue(model.describes(fixture.type("KarteninhaberBesuch")));
+		assertTrue(model.describes(fixture.type("FeedbackArt")));
+		assertFalse(model.describes(fixture.type("Checkin")), "its package is not published");
 	}
 
 	@Test

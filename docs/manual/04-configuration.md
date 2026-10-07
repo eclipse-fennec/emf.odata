@@ -44,8 +44,34 @@ Both allowlists apply consistently to `$metadata` (schemas, container sets, navi
 bindings), the service document, entity-set routing (an unlisted set is a **404**), cast and
 operation resolution — so `QueryService`/`WriteService` selection only ever sees published
 types. An `odata.model.entitysets` entry whose package is not (yet) bound is skipped with a
-warning and picked up when the package arrives. Entity **types** stay in their schema even
-when their set is not published: navigation properties still reference them.
+warning and picked up when the package arrives.
+
+### What `$metadata` describes
+
+Without `odata.model.entitysets`, every concrete class is a set and `$metadata` describes the
+published packages whole.
+
+With `odata.model.entitysets`, the schemas are narrowed to the **type closure** of the
+published sets and singletons (ADR-0009). Starting from their types, `$metadata` describes,
+transitively:
+
+- base types and derived types (a set can return derived instances, a cast can name them);
+- the types of all properties (complex types, enums);
+- the targets of all navigation properties (an expanded navigation returns their data);
+- the parameter and return types of their operations.
+
+Every other type of the package is left out, and so are the operations bound to it and the
+unbound operations it declares. A package with no type in the closure contributes no schema.
+Runtime and metadata agree: a cast to a type outside the closure is a **404**, and so is a
+call to an unbound operation outside it.
+
+So a root can publish two sets out of a package that also holds an internal model, and
+`$metadata` describes exactly what the root can serve. No exclude list is needed, and a type
+added to the package later stays internal until a published type leads to it.
+
+The closure works on types, not on properties. To keep individual properties of a published
+type out of a public root (for example personal data), publish a dedicated type with only
+the wanted properties, for instance in a separate publication package.
 
 A root that publishes **several packages** emits one schema per package but exactly **one**
 `EntityContainer` (as CSDL requires): it holds the sets of all packages, each typed by its

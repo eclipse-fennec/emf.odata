@@ -84,7 +84,8 @@ dünner Kompositions-Adapter · **0004** Type-Resolution standalone im Query-Bun
 **0006** JPA-Backend als Criteria-Eigenbau hier im Repo · **0007** Client-Schema-Registry
 als SPI (Fetch/Convert ↔ Persistenz/Lookup entkoppelt) · **0008** `$expand`-Optionen:
 Pushdown, wo das Backend die Capability deklariert; In-Memory auf geshapten Kopien als
-benannte Rückfallebene.
+benannte Rückfallebene · **0009** eine per `odata.model.entitysets` eingeschränkte Root
+beschreibt in `$metadata` die Typ-Hülle ihrer Sets, keine Exclude-Liste.
 
 Als Fakt (frühere Gegen-ADRs 0001/0005 entfernt): Transport ist ein **planes Jakarta-Servlet
 am OSGi HTTP Whiteboard** (kein Jakarta REST — bei einer selbst parsenden Catch-All-Ressource

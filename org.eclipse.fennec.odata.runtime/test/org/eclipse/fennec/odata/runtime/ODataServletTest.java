@@ -1387,6 +1387,37 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("$metadata of a root narrowed by odata.model.entitysets describes only the sets' type closure (#91)")
+	void metadataDescribesOnlyTheTypeClosure() throws Exception {
+		NarrowedModelFixture fixture = new NarrowedModelFixture();
+		ODataServlet narrowed = new ODataServlet();
+		narrowed.addEPackage(fixture.baeder);
+		narrowed.addEPackage(fixture.intern);
+		narrowed.activate(Map.of("odata.model.entitysets", NarrowedModelFixture.NS_URI + "#Auslastung"));
+		ODataServlet previous = servlet;
+		servlet = narrowed;
+		try {
+			String xml = get("/$metadata", Map.of()).body();
+			for (String described : List.of("\"Auslastung\"", "\"Messung\"", "\"AuslastungSchaetzung\"",
+					"\"Status\"", "\"Zeitraum\"", "\"Bad\"", "\"Prognose\"", "\"prognose\"")) {
+				assertTrue(xml.contains("Name=" + described), described + " missing: " + xml);
+			}
+			for (String internal : List.of("KarteninhaberBesuch", "Feedback", "FeedbackArt",
+					"exportFeedback", "Checkin", "Namespace=\"intern\"")) {
+				assertFalse(xml.contains(internal), internal + " leaks into $metadata: " + xml);
+			}
+			String json = get("/$metadata", Map.of("$format", "json")).body();
+			assertTrue(json.contains("\"Auslastung\""), json);
+			assertFalse(json.contains("KarteninhaberBesuch") || json.contains("exportFeedback"), json);
+
+			assertEquals(404, get("/exportFeedback()", Map.of()).status(),
+					"an operation $metadata does not describe cannot be called either");
+		} finally {
+			servlet = previous;
+		}
+	}
+
+	@Test
 	@DisplayName("a multi-package root declares exactly ONE entity container, cross-package bindings included (#84)")
 	void multiPackageRootHasOneEntityContainer() throws Exception {
 		EPackage other = EcoreFactory.eINSTANCE.createEPackage();
