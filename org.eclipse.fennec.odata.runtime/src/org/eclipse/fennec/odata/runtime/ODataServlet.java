@@ -176,9 +176,13 @@ public class ODataServlet extends HttpServlet {
 
 	/** Every EPackage bound to this instance — the published subset is {@link #model}. */
 	final List<EPackage> packages = new CopyOnWriteArrayList<>();
-	/** The allowlist from configuration ({@link ServiceModel}); everything bound when unset. */
-	private volatile ServiceModel.Selection selection = ServiceModel.Selection.ALL;
-	/** The model this root publishes; rebuilt on every package bind/unbind and on activation. */
+	/**
+	 * The allowlist from configuration ({@link ServiceModel}); {@code null} until {@link #activate}.
+	 * DS binds the packages BEFORE activation — building a model then would apply no allowlist
+	 * and warn about collisions among packages this root never publishes (#89).
+	 */
+	private volatile ServiceModel.Selection selection;
+	/** The model this root publishes; rebuilt on every package bind/unbind once activated. */
 	private volatile ServiceModel model = ServiceModel.of(List.of());
 	final List<QueryService> queryServices = new CopyOnWriteArrayList<>();
 	final List<WriteService> writeServices = new CopyOnWriteArrayList<>();
@@ -258,9 +262,15 @@ public class ODataServlet extends HttpServlet {
 		rebuildModel();
 	}
 
-	/** Recomputes the published model from the bound packages and the instance's allowlist. */
+	/**
+	 * Recomputes the published model from the bound packages and the instance's allowlist —
+	 * not before activation, when the allowlist is still unknown (#89).
+	 */
 	private void rebuildModel() {
 		synchronized (packages) {
+			if (selection == null) {
+				return;
+			}
 			model = ServiceModel.of(packages, selection);
 		}
 	}
@@ -785,7 +795,7 @@ public class ODataServlet extends HttpServlet {
 				.collect(Collectors.joining(","));
 		String value = singletons.isEmpty() ? sets : sets.isEmpty() ? singletons : sets + "," + singletons;
 		response.setContentType("application/json;charset=UTF-8");
-		StringBuilder json = envelopeHead(request.getRequestURI() + "/$metadata");
+		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata");
 		envelopeProperty(json).append("\"value\":[").append(value).append("]}");
 		response.getWriter().write(json.toString());
 	}
@@ -2443,7 +2453,10 @@ public class ODataServlet extends HttpServlet {
 	static String contextRoot(HttpServletRequest request) {
 		String uri = request.getRequestURI();
 		String pathInfo = request.getPathInfo();
-		if (pathInfo != null && !pathInfo.isEmpty() && uri.endsWith(pathInfo)) {
+		if (pathInfo == null || pathInfo.isEmpty()) {
+			return uri.endsWith("/") ? uri.substring(0, uri.length() - 1) : uri; // the root itself
+		}
+		if (uri.endsWith(pathInfo)) {
 			return uri.substring(0, uri.length() - pathInfo.length());
 		}
 		return uri.replaceFirst("/[^/]*$", "");

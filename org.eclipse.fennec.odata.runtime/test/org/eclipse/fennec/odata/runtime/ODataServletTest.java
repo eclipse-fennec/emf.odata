@@ -35,6 +35,11 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EAttribute;
@@ -1184,6 +1189,65 @@ class ODataServletTest {
 
 		servlet.removeEPackage(other);
 		servlet.activate(Map.of());
+	}
+
+	@Test
+	@DisplayName("packages bound before activation build no unfiltered model — no collision warnings (#89)")
+	void noModelBeforeActivation() throws Exception {
+		EPackage other = EcoreFactory.eINSTANCE.createEPackage();
+		other.setName("other");
+		other.setNsPrefix("other");
+		other.setNsURI("http://example.org/other");
+		EClass clash = EcoreFactory.eINSTANCE.createEClass();
+		clash.setName("Product"); // same set name as webshop's Product
+		other.getEClassifiers().add(clash);
+
+		Logger logger = Logger.getLogger(ServiceModel.class.getName());
+		List<String> warnings = new CopyOnWriteArrayList<>();
+		Handler capture = new Handler() {
+			@Override
+			public void publish(LogRecord record) {
+				if (record.getLevel().intValue() >= Level.WARNING.intValue()) {
+					warnings.add(record.getMessage());
+				}
+			}
+
+			@Override
+			public void flush() {
+			}
+
+			@Override
+			public void close() {
+			}
+		};
+		logger.addHandler(capture);
+		try {
+			ODataServlet fresh = new ODataServlet(); // DS order: bind first, activate after
+			fresh.addEPackage(pkg);
+			fresh.addEPackage(other);
+			assertTrue(fresh.model().entitySetNames().isEmpty(), "no model before the allowlist is known");
+			assertTrue(warnings.isEmpty(), "pre-activation binds must not warn: " + warnings);
+
+			fresh.activate(Map.of("odata.model.packages", pkg.getNsURI()));
+			assertTrue(fresh.model().entitySetNames().contains("Product"), fresh.model().entitySetNames().toString());
+			assertTrue(warnings.isEmpty(), "the unpublished package cannot collide: " + warnings);
+		} finally {
+			logger.removeHandler(capture);
+		}
+	}
+
+	@Test
+	@DisplayName("service document: @odata.context is <root>/$metadata, without a double slash (#90)")
+	void serviceDocumentContextUrl() throws Exception {
+		Response serviceDoc = get("/", Map.of());
+		assertEquals(200, serviceDoc.status());
+		assertTrue(serviceDoc.body().contains("\"@odata.context\":\"/odata/$metadata\""), serviceDoc.body());
+
+		HttpServletRequest bareRoot = mock(HttpServletRequest.class); // <root> without trailing slash
+		when(bareRoot.getRequestURI()).thenReturn("/odata/opendata");
+		assertEquals("/odata/opendata", ODataServlet.contextRoot(bareRoot));
+		when(bareRoot.getRequestURI()).thenReturn("/odata/opendata/");
+		assertEquals("/odata/opendata", ODataServlet.contextRoot(bareRoot));
 	}
 
 	@Test
