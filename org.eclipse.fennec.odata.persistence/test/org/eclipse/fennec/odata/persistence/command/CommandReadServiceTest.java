@@ -117,6 +117,26 @@ public class CommandReadServiceTest {
 	}
 
 	/**
+	 * OData orders null below every value: first ascending, last descending ([OData-URL] 5.1.4).
+	 * The stores disagree on their own — PostgreSQL and the memory engine sort null highest — so
+	 * {@code $orderby=x desc&$top=n} returned n rows WITHOUT a value (emf.odata#92).
+	 */
+	@Test
+	void nullSortsBelowEveryValueInBothDirections() {
+		backend.storeFor("Person").get(3).eSet(personName, null);
+
+		QueryResult descending = service.execute(new EntityQuery(personClass, null, null,
+				parser.parseOrderBy("name desc", personClass), 0, 2, false));
+		assertThat(descending.entities()).extracting(entity -> entity.eGet(personId))
+				.as("the top two by name are real values, not the null").containsExactly(5, 4);
+
+		QueryResult ascending = service.execute(new EntityQuery(personClass, null, null,
+				parser.parseOrderBy("name asc", personClass), 0, -1, false));
+		assertThat(ascending.entities()).extracting(entity -> entity.eGet(personId))
+				.containsExactly(3, 1, 2, 4, 5);
+	}
+
+	/**
 	 * A backend refusal that {@code validate()} did not cover is the backend saying it cannot
 	 * serve this query — 501, not an internal error (#51). It used to be the latter, because
 	 * the read path classified on one message fragment and sent everything else to 500 with an

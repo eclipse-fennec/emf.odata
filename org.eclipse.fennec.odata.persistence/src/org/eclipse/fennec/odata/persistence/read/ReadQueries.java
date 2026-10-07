@@ -35,6 +35,7 @@ import org.eclipse.fennec.model.expression.NullLiteral;
 import org.eclipse.fennec.model.expression.PropertyPath;
 import org.eclipse.fennec.model.expression.Variable;
 import org.eclipse.fennec.model.expression.VariableRef;
+import org.eclipse.fennec.model.query.NullPrecedence;
 import org.eclipse.fennec.model.query.OrderBy;
 import org.eclipse.fennec.model.query.QueryFactory;
 import org.eclipse.fennec.model.query.SortDirection;
@@ -78,21 +79,22 @@ public final class ReadQueries {
 	public static void applyOrderBy(QueryBuilder builder, List<OrderBySegment> orderBy, EClass entityType,
 			EClass castType) {
 		for (OrderBy sort : orderByList(orderBy, entityType, castType)) {
-			boolean ascending = sort.getDirection() == SortDirection.ASC;
 			if (sort.getPath() != null) {
-				EStructuralFeature[] segments = sort.getPath().getSegments()
-						.toArray(EStructuralFeature[]::new);
-				if (ascending) {
-					builder.orderByAsc(segments);
-				} else {
-					builder.orderByDesc(segments);
-				}
-			} else if (ascending) {
-				builder.orderByAsc(sort.getKey());
+				builder.orderBy(sort.getDirection(), sort.getNulls(),
+						sort.getPath().getSegments().toArray(EStructuralFeature[]::new));
 			} else {
-				builder.orderByDesc(sort.getKey());
+				builder.orderBy(sort.getDirection(), sort.getNulls(), sort.getKey());
 			}
 		}
+	}
+
+	/**
+	 * Where null goes in an OData ordering: null is less than any value, so it comes first in
+	 * ascending and last in descending order ([OData-URL] 5.1.4, emf.odata#92). Fixed explicitly,
+	 * because the stores disagree on their own (PostgreSQL sorts null highest).
+	 */
+	public static NullPrecedence nullPrecedence(boolean ascending) {
+		return ascending ? NullPrecedence.FIRST : NullPrecedence.LAST;
 	}
 
 	/**
@@ -106,6 +108,7 @@ public final class ReadQueries {
 			Expression key = bridge(segment.expression(), entityType, castType);
 			OrderBy sort = QueryFactory.eINSTANCE.createOrderBy();
 			sort.setDirection(segment.ascending() ? SortDirection.ASC : SortDirection.DESC);
+			sort.setNulls(nullPrecedence(segment.ascending()));
 			if (key instanceof PropertyPath path && path.getBase() == null
 					&& path.getCastBase() == null) {
 				// keep plain paths as OrderBy.path — SORT_EXPRESSION is a scarcer capability
