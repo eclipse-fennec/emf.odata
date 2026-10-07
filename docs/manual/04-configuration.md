@@ -15,6 +15,7 @@ is the typed IR (no string concatenation), and errors never leak internals.
 | Max. concurrent respond-async executions (beyond → 503 + Retry-After) | 16 | `odata.max.async.inflight` |
 | Max. parked async status monitors (LRU) | 100 | `odata.max.async.monitors` |
 | CORS origin(s) for browser clients (`*` or space-separated allowlist; empty = CORS off) | off | `odata.cors.origin` |
+| `Cache-Control` of `$metadata` and the service document (empty = no header) | `no-cache` | `odata.cache.control` |
 
 For every limit, `<= 0` disables the protection — a deliberate, documented foot-gun, never
 the default. The defaults above were reviewed and **confirmed as the shipped baseline on
@@ -72,6 +73,24 @@ narrow what an instance binds in the first place.
     "odata.max.expression.length": 1024
 }
 ```
+
+## Caching of `$metadata` and the service document
+
+Both documents carry a strong `ETag` over their content (one per representation: XML and
+JSON CSDL differ) and, by default, `Cache-Control: no-cache`. A client may keep its copy
+but revalidates it: with `If-None-Match` the server answers `304 Not Modified` without a
+body as long as the published model is unchanged. A changed model, set names or
+annotations produce a new ETag, so the client fetches the new document.
+`odata.cache.control` sets another directive per root (e.g. `max-age=300`); an empty
+value sends none, and the ETag stays either way.
+
+Behind a gateway that sets the CORS headers itself, add `ETag` to its
+`Access-Control-Expose-Headers`, so that browser clients can read the validator. With
+`odata.cors.origin` the servlet already exposes it.
+
+Whether a client honours these headers is up to the client. Excel / Power Query keeps its
+own data cache, so after a model change you may still have to refresh the query there or
+create it again.
 
 ## Backend / repository
 

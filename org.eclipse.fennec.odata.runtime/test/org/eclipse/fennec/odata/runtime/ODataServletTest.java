@@ -1322,6 +1322,71 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("$metadata carries a strong ETag and Cache-Control: no-cache; If-None-Match answers 304 (#98)")
+	void metadataRevalidation() throws Exception {
+		Response first = get("/$metadata", Map.of());
+		assertEquals(200, first.status());
+		String etag = first.headers().get("ETag");
+		assertNotNull(etag, first.headers().toString());
+		assertTrue(etag.startsWith("\"") && etag.endsWith("\""), "strong validator: " + etag);
+		assertEquals("no-cache", first.headers().get("Cache-Control"));
+		assertEquals(etag, get("/$metadata", Map.of()).headers().get("ETag"), "stable while the model is");
+
+		Response unchanged = call("GET", "/$metadata", Map.of(), null, null, Map.of("If-None-Match", etag));
+		assertEquals(304, unchanged.status());
+		assertEquals("", unchanged.body(), "304 has no body");
+		assertEquals(etag, unchanged.headers().get("ETag"));
+		assertEquals(304, call("GET", "/$metadata", Map.of(), null, null,
+				Map.of("If-None-Match", "\"other\", W/" + etag)).status(), "weak comparison, tag list");
+		assertEquals(200, call("GET", "/$metadata", Map.of(), null, null,
+				Map.of("If-None-Match", "\"other\"")).status());
+
+		String jsonTag = get("/$metadata", Map.of("$format", "json")).headers().get("ETag");
+		assertNotNull(jsonTag);
+		assertFalse(etag.equals(jsonTag), "XML and JSON CSDL are different representations");
+	}
+
+	@Test
+	@DisplayName("service document: ETag changes with the published model (#98)")
+	void serviceDocumentEtagFollowsModel() throws Exception {
+		Response before = get("/", Map.of());
+		String etag = before.headers().get("ETag");
+		assertNotNull(etag, before.headers().toString());
+		assertEquals("no-cache", before.headers().get("Cache-Control"));
+		assertEquals(304, call("GET", "/", Map.of(), null, null, Map.of("If-None-Match", etag)).status());
+
+		EPackage other = EcoreFactory.eINSTANCE.createEPackage();
+		other.setName("other");
+		other.setNsPrefix("other");
+		other.setNsURI("http://example.org/other");
+		EClass widget = EcoreFactory.eINSTANCE.createEClass();
+		widget.setName("Widget");
+		other.getEClassifiers().add(widget);
+		servlet.addEPackage(other);
+		try {
+			Response after = call("GET", "/", Map.of(), null, null, Map.of("If-None-Match", etag));
+			assertEquals(200, after.status(), "a model change invalidates the client's copy");
+			assertTrue(after.body().contains("Widget"), after.body());
+			assertFalse(etag.equals(after.headers().get("ETag")));
+		} finally {
+			servlet.removeEPackage(other);
+		}
+	}
+
+	@Test
+	@DisplayName("odata.cache.control: configurable per root, empty sends none — the ETag stays (#98)")
+	void cacheControlConfigurable() throws Exception {
+		servlet.activate(Map.of("odata.cache.control", "max-age=60"));
+		assertEquals("max-age=60", get("/$metadata", Map.of()).headers().get("Cache-Control"));
+
+		servlet.activate(Map.of("odata.cache.control", ""));
+		Response none = get("/$metadata", Map.of());
+		assertNull(none.headers().get("Cache-Control"), none.headers().toString());
+		assertNotNull(none.headers().get("ETag"));
+		servlet.activate(Map.of());
+	}
+
+	@Test
 	@DisplayName("a multi-package root declares exactly ONE entity container, cross-package bindings included (#84)")
 	void multiPackageRootHasOneEntityContainer() throws Exception {
 		EPackage other = EcoreFactory.eINSTANCE.createEPackage();

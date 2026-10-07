@@ -211,6 +211,14 @@ public class ODataServlet extends HttpServlet {
 	 */
 	private volatile String corsOrigin = "";
 
+	/** Default {@code Cache-Control} of the service-describing documents: reuse only after revalidation. */
+	static final String DEFAULT_CACHE_CONTROL = "no-cache";
+	/**
+	 * {@code Cache-Control} of {@code $metadata} and the service document ({@code odata.cache.control});
+	 * EMPTY sends none. Their ETag and the {@code 304} answer stay either way (#98).
+	 */
+	private volatile String cacheControl = DEFAULT_CACHE_CONTROL;
+
 	/** Default maximum of concurrently EXECUTING respond-async requests (secure default). */
 	static final int DEFAULT_MAX_ASYNC_INFLIGHT = 16;
 	/** Default maximum of PARKED async status monitors (LRU; unretrieved results age out). */
@@ -231,6 +239,8 @@ public class ODataServlet extends HttpServlet {
 		limits = RequestLimits.fromConfiguration(configuration);
 		Object origin = configuration.get("odata.cors.origin");
 		corsOrigin = origin == null ? "" : String.valueOf(origin).trim();
+		Object control = configuration.get("odata.cache.control");
+		cacheControl = control == null ? DEFAULT_CACHE_CONTROL : String.valueOf(control).trim();
 		int inflight = intConfig(configuration, "odata.max.async.inflight", DEFAULT_MAX_ASYNC_INFLIGHT);
 		asyncInflight = inflight > 0 ? new Semaphore(inflight) : null;
 		maxAsyncMonitors = intConfig(configuration, "odata.max.async.monitors", DEFAULT_MAX_ASYNC_MONITORS);
@@ -667,7 +677,7 @@ public class ODataServlet extends HttpServlet {
 		if ("OPTIONS".equals(request.getMethod())) {
 			response.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
 			response.setHeader("Access-Control-Allow-Headers",
-					"Content-Type, Accept, If-Match, OData-Version, OData-MaxVersion, Prefer,"
+					"Content-Type, Accept, If-Match, If-None-Match, OData-Version, OData-MaxVersion, Prefer,"
 							+ " Authorization, X-CSRF-Token");
 			response.setHeader("Access-Control-Max-Age", "3600");
 			response.setStatus(HttpServletResponse.SC_NO_CONTENT);
@@ -794,10 +804,51 @@ public class ODataServlet extends HttpServlet {
 				.map(name -> "{\"name\":\"" + name + "\",\"kind\":\"Singleton\",\"url\":\"" + name + "\"}")
 				.collect(Collectors.joining(","));
 		String value = singletons.isEmpty() ? sets : sets.isEmpty() ? singletons : sets + "," + singletons;
-		response.setContentType("application/json;charset=UTF-8");
 		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata");
 		envelopeProperty(json).append("\"value\":[").append(value).append("]}");
-		response.getWriter().write(json.toString());
+		writeDocument(request, response, "application/json;charset=UTF-8", json.toString());
+	}
+
+	/**
+	 * Writes a service-describing document ($metadata, service document) with a strong ETag
+	 * over its content and the configured {@code Cache-Control}, so clients notice a model
+	 * change; a matching {@code If-None-Match} answers {@code 304} without a body (RFC 9110
+	 * 13.1.2, #98). The tag is per representation — XML and JSON CSDL differ.
+	 */
+	private void writeDocument(HttpServletRequest request, HttpServletResponse response,
+			String contentType, String body) throws IOException {
+		String etag;
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256").digest(body.getBytes(StandardCharsets.UTF_8));
+			etag = "\"" + HexFormat.of().formatHex(digest, 0, 16) + "\"";
+		} catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException("SHA-256 unavailable", e);
+		}
+		response.setHeader("ETag", etag);
+		if (!cacheControl.isEmpty()) {
+			response.setHeader("Cache-Control", cacheControl);
+		}
+		response.addHeader("Vary", "Accept"); // $metadata: XML or JSON by Accept / $format
+		if (noneMatch(request.getHeader("If-None-Match"), etag)) {
+			response.setStatus(HttpServletResponse.SC_NOT_MODIFIED);
+			return;
+		}
+		response.setContentType(contentType);
+		response.getWriter().write(body);
+	}
+
+	/** {@code If-None-Match} uses the WEAK comparison: {@code W/"x"} matches {@code "x"} (RFC 9110 8.8.3.2). */
+	static boolean noneMatch(String ifNoneMatch, String etag) {
+		if (ifNoneMatch == null || ifNoneMatch.isBlank()) {
+			return false;
+		}
+		for (String candidate : ifNoneMatch.split(",")) {
+			String tag = candidate.trim();
+			if ("*".equals(tag) || (tag.startsWith("W/") ? tag.substring(2) : tag).equals(etag)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Names of the container singletons this root publishes ([OData-CSDL] 13.5). */
@@ -916,8 +967,7 @@ public class ODataServlet extends HttpServlet {
 		root.setEdmx(edmx);
 
 		if (wantsJsonMetadata(request)) { // CSDL JSON ([OData-CSDL-JSON]) — same tree, second wire form
-			response.setContentType("application/json;charset=UTF-8");
-			response.getWriter().write(CsdlJsonWriter.write(root));
+			writeDocument(request, response, "application/json;charset=UTF-8", CsdlJsonWriter.write(root));
 			return;
 		}
 
@@ -933,8 +983,7 @@ public class ODataServlet extends HttpServlet {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		resource.save(out, options);
 
-		response.setContentType("application/xml;charset=UTF-8");
-		response.getWriter().write(out.toString(StandardCharsets.UTF_8));
+		writeDocument(request, response, "application/xml;charset=UTF-8", out.toString(StandardCharsets.UTF_8));
 	}
 
 	/** {@code edmx:Reference} to an OASIS vocabulary, so its terms are resolvable for clients. */
