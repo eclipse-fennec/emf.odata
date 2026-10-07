@@ -80,6 +80,8 @@ public class ODataJsonResourceImpl extends CodecResource {
 	private final MetadataService odataMetadataService;
 	/** {@code IEEE754Compatible=true} exchanges: Edm.Int64/Edm.Decimal travel as strings. */
 	private boolean ieee754Compatible;
+	/** Writes null, default and empty-collection values too (server responses). */
+	private boolean allValues;
 	/**
 	 * Fallback profiles for packages the MetadataService has no OData profile for. Weakly keyed
 	 * so unregistered/discarded EPackages can be collected — safe because the csdl profile holds
@@ -128,6 +130,18 @@ public class ODataJsonResourceImpl extends CodecResource {
 		return this;
 	}
 
+	/**
+	 * Writes EVERY value, including null, the type's default ({@code 0}, {@code false}) and empty
+	 * collections — a response must carry each selected property ([OData-Protocol] 8.2.8.6: only
+	 * an {@code omit-values} preference lets a service leave them out). Off by default: in a
+	 * PATCH payload an absent property means "unchanged", so request encoders must not set it.
+	 * The caller removes what its shaping excluded ($select, non-expanded navigation).
+	 */
+	public ODataJsonResourceImpl allValues(boolean on) {
+		this.allValues = on;
+		return this;
+	}
+
 	private static ConfigurationResolver createODataResolver(Set<String> expandedReferences,
 			boolean minimalMetadata) {
 		ConfigurationResolver.Builder builder = ConfigurationResolver.builder()
@@ -160,6 +174,11 @@ public class ODataJsonResourceImpl extends CodecResource {
 			options.forEach(effective::put);
 		}
 		mergeValueCodecs(effective, CodecOptions.CODEC_FEATURE_VALUE_WRITER_INSTANCES, contentPackages(), true);
+		if (allValues) {
+			effective.putIfAbsent(CodecOptions.CODEC_SERIALIZE_NULL, Boolean.TRUE);
+			effective.putIfAbsent(CodecOptions.CODEC_SERIALIZE_DEFAULT, Boolean.TRUE);
+			effective.putIfAbsent(CodecOptions.CODEC_SERIALIZE_EMPTY, Boolean.TRUE);
+		}
 		super.doSave(outputStream, effective);
 	}
 

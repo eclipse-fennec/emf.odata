@@ -1191,6 +1191,77 @@ class ODataServletTest {
 		servlet.activate(Map.of());
 	}
 
+	/** A product with only its key and price set: every other property is null, default or empty. */
+	private EObject sparseProduct() {
+		EObject product = pkg.getEFactoryInstance().create(productClass);
+		product.eSet(productClass.getEStructuralFeature("id"), "p1");
+		product.eSet(productClass.getEStructuralFeature("price"), new BigDecimal("1.20"));
+		return product;
+	}
+
+	@Test
+	@DisplayName("null, default (0/false) and empty-collection values are in the payload — only omit-values may drop them")
+	void nullDefaultAndEmptyValuesAreWritten() throws Exception {
+		backendResult = List.of(sparseProduct());
+
+		Response response = get("/Product", Map.of());
+
+		assertEquals(200, response.status());
+		String body = response.body();
+		assertTrue(body.contains("\"name\":null"), body);
+		assertTrue(body.contains("\"released\":null"), body);
+		assertTrue(body.contains("\"rating\":0"), "a real 0 is a value, not an absent property: " + body);
+		assertTrue(body.contains("\"active\":false"), body);
+		assertTrue(body.contains("\"tags\":[]"), "collections can never be omitted (8.2.8.6): " + body);
+		assertTrue(body.contains("\"reviews\":[]"), "complex collection: " + body);
+		assertTrue(body.contains("\"price\":1.20"), "the decimal keeps its scale: " + body);
+		assertFalse(body.contains("\"category\""), "non-expanded navigation stays out: " + body);
+		assertFalse(body.contains("\"accessories\""), "non-expanded navigation stays out: " + body);
+	}
+
+	@Test
+	@DisplayName("$select: a selected null property is written, unselected ones stay out")
+	void selectedNullPropertyIsWritten() throws Exception {
+		backendResult = List.of(sparseProduct());
+
+		String body = get("/Product", Map.of("$select", "name,rating")).body();
+
+		assertTrue(body.contains("\"name\":null") && body.contains("\"rating\":0"), body);
+		assertTrue(body.contains("\"id\":\"p1\""), "the key always stays: " + body);
+		assertFalse(body.contains("\"price\"") || body.contains("\"tags\"") || body.contains("\"active\""),
+				"unselected properties stay out: " + body);
+	}
+
+	@Test
+	@DisplayName("$expand of an empty navigation: null for single-valued, [] for collection-valued")
+	void expandedEmptyNavigation() throws Exception {
+		backendResult = List.of(sparseProduct());
+
+		String body = get("/Product", Map.of("$expand", "category,accessories")).body();
+
+		assertTrue(body.contains("\"category\":null"), body);
+		assertTrue(body.contains("\"accessories\":[]"), body);
+	}
+
+	@Test
+	@DisplayName("$expand: the expanded entity carries its null properties, but not its own navigation")
+	void expandedEntityCarriesNullProperties() throws Exception {
+		EObject product = sparseProduct();
+		EObject accessory = pkg.getEFactoryInstance().create(productClass);
+		accessory.eSet(productClass.getEStructuralFeature("id"), "a1");
+		@SuppressWarnings("unchecked")
+		List<EObject> accessories = (List<EObject>) product.eGet(productClass.getEStructuralFeature("accessories"));
+		accessories.add(accessory);
+		backendResult = List.of(product);
+
+		String body = get("/Product", Map.of("$expand", "accessories")).body();
+
+		String expanded = body.substring(body.indexOf("\"accessories\""));
+		assertTrue(expanded.contains("\"id\":\"a1\"") && expanded.contains("\"name\":null"), body);
+		assertFalse(expanded.contains("\"category\"") || expanded.contains("\"accessories\":["
+				+ "]"), "the expanded entity's own navigation is not expanded: " + body);
+	}
+
 	@Test
 	@DisplayName("packages bound before activation build no unfiltered model — no collision warnings (#89)")
 	void noModelBeforeActivation() throws Exception {
