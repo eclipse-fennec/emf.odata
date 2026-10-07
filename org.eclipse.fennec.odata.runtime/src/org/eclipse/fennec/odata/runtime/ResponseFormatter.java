@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
 import org.eclipse.fennec.odata.persistence.api.ExpandSpec;
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
@@ -43,6 +44,14 @@ import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.OrderBySegment;
+
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.cfg.JsonNodeFeature;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -378,7 +387,7 @@ Map<String, Long> applyNestedFilters(EObject copy, Map<String, ExpandItem> expan
 String entityJson(EObject entity, EClass entityType, SelectTree select, Set<String> expand)
 		throws IOException {
 	return serializeEntity(entity, servlet.shaper.shape(entity, entityType, select, expand, null),
-			entityType, expand);
+			entityType, expand, select, expand);
 }
 
 /** {@link #entityJson} for parsed expand specs: applies nested casts/options after shaping. */
@@ -396,7 +405,8 @@ String entityJson(EObject entity, EClass entityType, SelectTree select,
 			counts, narrowed);
 	counts.putAll(applyNestedFilters(copy, expand, narrowed));
 	return withExpandedRefs(withNestedCounts(
-			serializeEntity(entity, copy, entityType, inline), counts), entity, expand);
+			serializeEntity(entity, copy, entityType, inline, select, shapePaths(expand)), counts),
+			entity, expand);
 }
 
 /**
@@ -457,8 +467,12 @@ private String withExpandedRefs(String entityJson, EObject entity,
 	return "{" + (inner.isEmpty() ? members.substring(1) : inner + members) + "}";
 }
 
+/**
+ * @param select   the {@code $select} tree the copy was shaped with, or null
+ * @param navPaths the navigation paths the copy was shaped with ({@link #shapePaths})
+ */
 private String serializeEntity(EObject entity, EObject copy, EClass entityType,
-		Set<String> expand) throws IOException {
+		Set<String> expand, SelectTree select, Set<String> navPaths) throws IOException {
 	boolean full = "full".equals(ODataServlet.responseMetadataLevel());
 	// full metadata: the default codec profile emits @odata.type/@odata.id per entity;
 	// minimal: control info that is computable from the context URL is left out ([OData-JSON] 3.1)
@@ -466,11 +480,11 @@ private String serializeEntity(EObject entity, EObject copy, EClass entityType,
 			? new ODataJsonResourceImpl(URI.createURI("response.odatajson"), servlet.metadataService, expand)
 			: ODataJsonResourceImpl.minimalMetadata(
 					URI.createURI("response.odatajson"), servlet.metadataService, expand);
-	resource.ieee754Compatible(ODataServlet.ieee754());
+	resource.ieee754Compatible(ODataServlet.ieee754()).allValues(true);
 	resource.getContents().add(copy);
 	ByteArrayOutputStream out = new ByteArrayOutputStream();
 	resource.save(out, null);
-	String json = out.toString(StandardCharsets.UTF_8);
+	String json = retainShaped(out.toString(StandardCharsets.UTF_8), copy, select, navPaths);
 	if (!full && !ODataServlet.omitContext() && entity.eClass() != entityType) {
 		// derived instance under minimal metadata: the type is NOT computable from the context
 		// URL, so transport the single-field discriminator ([OData-JSON] 4.5.8). Full metadata
@@ -479,6 +493,88 @@ private String serializeEntity(EObject entity, EObject copy, EClass entityType,
 				+ (json.length() > 2 ? "," : "") + json.substring(1);
 	}
 	return json;
+}
+
+/**
+ * Exact numbers on the round trip: a re-serialized {@code 1.20} stays {@code 1.20}, an Int64
+ * beyond the double range stays exact.
+ */
+private static final ObjectMapper EXACT_JSON = JsonMapper.builder()
+		.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+		.enable(DeserializationFeature.USE_BIG_INTEGER_FOR_INTS)
+		.enable(JsonNodeFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+		.disable(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES)
+		.enable(JsonNodeFeature.READ_NULL_PROPERTIES)
+		.enable(JsonNodeFeature.WRITE_NULL_PROPERTIES)
+		.build();
+
+/**
+ * The codec writes EVERY value (null, default, empty — a selected property must be in the
+ * payload, [OData-Protocol] 8.2.8.6), so the members the shaping deliberately excluded are
+ * dropped here: unselected structural properties and non-expanded navigation properties.
+ */
+private String retainShaped(String json, EObject copy, SelectTree select, Set<String> navPaths) {
+	if (!(EXACT_JSON.readTree(json) instanceof ObjectNode node)) {
+		return json;
+	}
+	retainShaped(node, copy, select, navPaths);
+	return EXACT_JSON.writeValueAsString(node);
+}
+
+private void retainShaped(ObjectNode node, EObject copy, SelectTree select, Set<String> navPaths) {
+	EClass type = copy.eClass();
+	List<EAttribute> keys = servlet.keyAttributes(type);
+	for (EStructuralFeature feature : type.getEAllStructuralFeatures()) {
+		String name = feature.getName();
+		JsonNode member = node.get(name);
+		if (member == null) {
+			continue;
+		}
+		if (feature instanceof EReference reference && !reference.isContainment()) {
+			Set<String> deeper = subPaths(navPaths, name);
+			if (!navPaths.contains(name) && deeper.isEmpty()) {
+				node.remove(name); // not expanded: navigation stays out of the payload
+				continue;
+			}
+			retainNested(member, copy.eGet(reference), null, deeper); // expanded = whole entity
+			continue;
+		}
+		SelectTree child = select == null ? null : select.child(name);
+		if (select != null && child == null && !keys.contains(feature)) {
+			node.remove(name);
+			continue;
+		}
+		if (feature instanceof EReference) { // complex value: a nested $select prunes it too
+			retainNested(member, copy.eGet(feature),
+					child == null || child.isLeaf() ? null : child, Set.of());
+		}
+	}
+}
+
+/** Pairs the JSON value of a structured member with its EObject value(s), in payload order. */
+private void retainNested(JsonNode member, Object value, SelectTree select, Set<String> navPaths) {
+	if (member instanceof ObjectNode object && value instanceof EObject nested) {
+		retainShaped(object, nested, select, navPaths);
+	} else if (member instanceof ArrayNode array && value instanceof List<?> items
+			&& array.size() == items.size()) {
+		for (int i = 0; i < items.size(); i++) {
+			if (array.get(i) instanceof ObjectNode object && items.get(i) instanceof EObject nested) {
+				retainShaped(object, nested, select, navPaths);
+			}
+		}
+	}
+}
+
+/** The remainders of the paths below {@code name} ({@code nav/next} → {@code next}). */
+private static Set<String> subPaths(Set<String> paths, String name) {
+	String prefix = name + "/";
+	Set<String> deeper = new LinkedHashSet<>();
+	for (String path : paths) {
+		if (path.startsWith(prefix)) {
+			deeper.add(path.substring(prefix.length()));
+		}
+	}
+	return deeper;
 }
 
 /**
