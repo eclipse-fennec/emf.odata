@@ -344,7 +344,8 @@ public final class ApplyQueries {
 		}
 
 		// the reference executor drops rows whose value is null before ordering — they
-		// contribute no rank, so they must not fill the window either
+		// contribute no rank, so they must not fill the window either; with no null left to
+		// place, the window keeps the store's null order (no SORT_NULLS_* capability needed)
 		IsNull notNull = ExpressionFactory.eINSTANCE.createIsNull();
 		notNull.setSource(rowOrEntityExpression(value, entityType, aliases, columns));
 		notNull.setNegated(true);
@@ -387,6 +388,7 @@ public final class ApplyQueries {
 			List<Column> columns) {
 		OrderBy orderBy = QueryFactory.eINSTANCE.createOrderBy();
 		orderBy.setDirection(segment.ascending() ? SortDirection.ASC : SortDirection.DESC);
+		orderBy.setNulls(ReadQueries.nullPrecedence(segment.ascending()));
 		OclExpression expression = segment.expression();
 		if (expression instanceof PropertyCallExp property && isPlainChain(property)) {
 			orderBy.setPath(propertyPath(property));
