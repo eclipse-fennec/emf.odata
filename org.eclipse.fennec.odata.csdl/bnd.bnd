@@ -14,7 +14,7 @@ src=${^src},src-gen
 
 -includeresource.model: model=model
 
-# The OASIS-XSD-generated EDM/EDMX model, consumed from the fennecEMFModels bnd library
+# The OASIS-XSD-generated EDM/EDMX model, consumed from the fennecEMFCommonModels bnd library
 # (external dependency -> version=latest). EMF ecore.xmi is needed for XML (de)serialization;
 # Jackson 3 drives the CSDL-JSON representation (CsdlJsonWriter/CsdlJsonReader).
 -buildpath: \
