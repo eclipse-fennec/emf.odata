@@ -22,7 +22,7 @@
 	fennecEMF,\
 	fennecM2X,\
 	fennecPersistence,\
-	fennecEMFModels,\
+	fennecEMFCommonModels,\
 	fennecCodec
 
 # The fennec library derives the bundle/Maven version from this: workspace.bnd sets
