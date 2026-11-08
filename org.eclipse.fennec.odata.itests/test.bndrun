@@ -99,7 +99,6 @@
 	org.eclipse.fennec.persistence.repository;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.persistence.repository.jpa;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.query.model;version='[0.1.0,0.1.1)',\
-	org.eclipse.fennec.stream.model;version='[0.1.0,0.1.1)',\
 	org.eclipse.parsson.jakarta.json;version='[1.1.7,1.1.8)',\
 	org.eclipse.persistence.core;version='[4.0.9,4.0.10)',\
 	org.eclipse.persistence.jpa;version='[4.0.9,4.0.10)',\
