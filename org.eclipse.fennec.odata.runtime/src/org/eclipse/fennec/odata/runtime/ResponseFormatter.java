@@ -46,6 +46,7 @@ import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.OrderBySegment;
+import org.eclipse.fennec.odata.wire.api.ControlNames;
 
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
@@ -491,7 +492,9 @@ private String serializeEntity(EObject entity, EObject copy, EClass entityType,
 	// the copy carries exactly the requested navigations, linked one way: everything it holds
 	// is to be written inline, bidirectional navigations included
 	Set<String> expand = shape.navigationNames();
-	boolean full = "full".equals(ODataServlet.responseMetadataLevel());
+	Wire wire = Wire.current();
+	// a wire profile writes its own control information — never the full OData metadata
+	boolean full = !wire.profiled() && "full".equals(ODataServlet.responseMetadataLevel());
 	// full metadata: the default codec profile emits @odata.type/@odata.id per entity;
 	// minimal: control info that is computable from the context URL is left out ([OData-JSON] 3.1)
 	ODataJsonResourceImpl resource = full
@@ -503,11 +506,12 @@ private String serializeEntity(EObject entity, EObject copy, EClass entityType,
 	ByteArrayOutputStream out = new ByteArrayOutputStream();
 	resource.save(out, null);
 	String json = retainShaped(out.toString(StandardCharsets.UTF_8), copy, shape, counts);
-	if (!full && !ODataServlet.omitContext() && entity.eClass() != entityType) {
+	String typeName = wire.names().type();
+	if (!full && !ODataServlet.omitContext() && entity.eClass() != entityType && typeName != null) {
 		// derived instance under minimal metadata: the type is NOT computable from the context
 		// URL, so transport the single-field discriminator ([OData-JSON] 4.5.8). Full metadata
 		// already carries @odata.type; metadata=none MUST omit it like all control information.
-		json = "{\"@odata.type\":\"" + resource.typeDiscriminator(entity) + "\""
+		json = "{\"" + typeName + "\":\"" + resource.typeDiscriminator(entity) + "\""
 				+ (json.length() > 2 ? "," : "") + json.substring(1);
 	}
 	return json;
@@ -574,15 +578,75 @@ private void retainShaped(ObjectNode node, EObject copy, EntityShaper.Shape shap
 		}
 	}
 	Map<String, Long> inline = counts.get(copy);
-	if (inline != null) {
+	String countName = Wire.current().names().count();
+	if (inline != null && countName != null) {
 		inline.forEach((name, total) -> {
 			if (ODataServlet.ieee754()) {
-				node.put(name + "@odata.count", String.valueOf(total));
+				node.put(name + countName, String.valueOf(total));
 			} else {
-				node.put(name + "@odata.count", total.longValue());
+				node.put(name + countName, total.longValue());
 			}
 		});
 	}
+	decorate(node, copy, shape);
+}
+
+/**
+ * The per-entity control information of a wire profile (ADR-0010): the key value and the self
+ * link first, then the properties (the key left out when the profile keeps it out of the body),
+ * then one navigation link per navigation property. Only entities served by an entity set get
+ * them; complex values and contained keyless objects stay as they are. Under {@code $select}
+ * the key value and self link come with a selected key, a navigation link with a selected or
+ * expanded navigation.
+ */
+private void decorate(ObjectNode node, EObject copy, EntityShaper.Shape shape) {
+	Wire wire = Wire.current();
+	if (!wire.profiled()) {
+		return;
+	}
+	EClass type = copy.eClass();
+	List<EAttribute> keys = servlet.keyAttributes(type);
+	String path = keys.isEmpty() ? null : servlet.entityPathOf(copy);
+	if (path == null) {
+		return;
+	}
+	ControlNames names = wire.names();
+	SelectTree select = shape.select();
+	String self = wire.baseUrl() + "/" + path;
+	ObjectNode ordered = node.objectNode();
+	boolean keySelected = select == null
+			|| keys.stream().anyMatch(key -> select.child(key.getName()) != null);
+	if (keySelected && names.keyValue() != null) {
+		if (keys.size() == 1) {
+			JsonNode value = node.get(keys.get(0).getName());
+			ordered.set(names.keyValue(), value != null ? value
+					: node.pojoNode(copy.eGet(keys.get(0))));
+		} else {
+			ObjectNode composite = ordered.putObject(names.keyValue());
+			keys.forEach(key -> composite.set(key.getName(), node.get(key.getName())));
+		}
+	}
+	if (keySelected && names.selfLink() != null) {
+		ordered.put(names.selfLink(), self);
+	}
+	boolean keyInBody = wire.profile().keyInBody(type);
+	Set<String> keyNames = keys.stream().map(EAttribute::getName).collect(Collectors.toSet());
+	node.properties().forEach(member -> {
+		if (keyInBody || !keyNames.contains(member.getKey())) {
+			ordered.set(member.getKey(), member.getValue());
+		}
+	});
+	if (names.navigationLink() != null) {
+		for (EReference reference : type.getEAllReferences()) {
+			String name = reference.getName();
+			if (!reference.isContainment() && (select == null || select.child(name) != null
+					|| shape.expand().containsKey(name))) {
+				ordered.put(name + names.navigationLink(), self + "/" + name);
+			}
+		}
+	}
+	node.removeAll();
+	node.setAll(ordered);
 }
 
 /** Pairs the JSON value of a structured member with its EObject value(s), in payload order. */

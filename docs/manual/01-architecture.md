@@ -54,6 +54,7 @@ SPI. The client mirrors the server's codec and metadata wiring.
 | `odata.persistence.inmemory` | E5 | Reference backend: in-memory query + `ApplyExecutor`, `FileEntityRepository`, `MemoryWriteRepository` (write + media + change journal) |
 | `odata.persistence` | E5 | Fennec Persistence backends: the **command** backend (`CommandPersistenceService`: `QueryService`/`WriteService`/`DeltaService` over a persistence unit's `QueryableResource`/`CommandResource`) and the **repository** backend (`RepositoryQueryService`: `QueryService` over the emf.persistence-jpa `ReadRepository` facade, #79); both share the OCL-IR → `Query`/`Expression` translation (`ReadQueries`, `ReadPlans`, `ApplyQueries`) |
 | `odata.runtime` | E6/E7 | `ODataServlet` catch-all + `RequestLimits` / `EntityShaper` / `ODataJson` / resource-path parser |
+| `odata.wire.api` | — | `WireProfile` SPI — the wire format of a root for OData dialects such as SensorThings (ADR-0010) |
 | `odata.schema.api` | E8 | Client schema-registry SPI: `ODataSchemaReader` / `Registrar` / `Resolver` / `ODataSchema` / `SchemaScope` (ADR-0007) |
 | `odata.client` | E8 | `ODataClient`, fluent `EntitySetRequest`, `$batch`, CSRF, schema registry impl |
 | `odata.example` | — | Demo model + data + runnable `example.bndrun` (port 8080) |

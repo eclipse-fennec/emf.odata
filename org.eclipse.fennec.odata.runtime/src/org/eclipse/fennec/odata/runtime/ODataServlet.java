@@ -30,7 +30,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Semaphore;
 import java.util.function.Function;
@@ -56,6 +58,8 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataService;
+import org.eclipse.fennec.odata.wire.api.ServiceRoot;
+import org.eclipse.fennec.odata.wire.api.WireProfile;
 import org.eclipse.fennec.m2x.model.ocl.IntegerLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.OclFactory;
@@ -236,8 +240,23 @@ public class ODataServlet extends HttpServlet {
 			new Semaphore(DEFAULT_MAX_ASYNC_INFLIGHT);
 	volatile int maxAsyncMonitors = DEFAULT_MAX_ASYNC_MONITORS;
 
+	/** The wire profiles in the framework by their {@value WireProfile#PROFILE_PROPERTY} (ADR-0010). */
+	private final Map<String, WireProfile> wireProfiles = new ConcurrentHashMap<>();
+	/** The profile this root speaks ({@value WireProfile#ROOT_PROPERTY}); null = plain OData. */
+	private volatile String wireProfileName;
+	/** The absolute URL of this root for profile links ({@code odata.base.url}); null = derived. */
+	private volatile String baseUrl;
+	/** Whether {@code X-Forwarded-*} may set the base URL ({@code odata.forwarded.trust}). */
+	private volatile boolean trustForwarded;
+
 	@Activate
 	void activate(Map<String, Object> configuration) {
+		Object profile = configuration.get(WireProfile.ROOT_PROPERTY);
+		wireProfileName = profile == null || String.valueOf(profile).isBlank() ? null
+				: String.valueOf(profile).trim();
+		Object base = configuration.get("odata.base.url");
+		baseUrl = base == null || String.valueOf(base).isBlank() ? null : String.valueOf(base).trim();
+		trustForwarded = Boolean.parseBoolean(String.valueOf(configuration.get("odata.forwarded.trust")));
 		selection = ServiceModel.Selection.fromConfiguration(configuration);
 		rebuildModel();
 		limits = RequestLimits.fromConfiguration(configuration);
@@ -407,6 +426,35 @@ public class ODataServlet extends HttpServlet {
 		operationHandlers.remove(handler);
 	}
 
+	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
+	void bindWireProfile(WireProfile profile, Map<String, Object> properties) {
+		Object name = properties.get(WireProfile.PROFILE_PROPERTY);
+		if (name != null) {
+			wireProfiles.put(String.valueOf(name), profile);
+		}
+	}
+
+	void unbindWireProfile(WireProfile profile, Map<String, Object> properties) {
+		Object name = properties.get(WireProfile.PROFILE_PROPERTY);
+		if (name != null) {
+			wireProfiles.remove(String.valueOf(name), profile);
+		}
+	}
+
+	/**
+	 * The wire of a request to this root, or null when the configured profile is not available —
+	 * then the root answers 503 rather than speaking a dialect its clients do not expect.
+	 */
+	private Wire wireOf(HttpServletRequest request) {
+		String name = wireProfileName;
+		if (name == null) {
+			return Wire.ODATA;
+		}
+		WireProfile profile = wireProfiles.get(name);
+		return profile == null ? null
+				: new Wire(profile, profile.controls(), Wire.baseUrl(request, baseUrl, trustForwarded));
+	}
+
 	@Reference
 	void setMetadataService(MetadataService metadataService) {
 		this.metadataService = metadataService;
@@ -509,22 +557,40 @@ public class ODataServlet extends HttpServlet {
 
 	/** Weaves the context annotation into an entity object (single entities have no envelope). */
 	static String withContext(String contextUrl, String entityJson) {
-		if (omitContext()) {
+		String name = Wire.current().names().context();
+		if (omitContext() || name == null) {
 			return entityJson;
 		}
-		return "{\"@odata.context\":\"" + contextUrl + "\"," + entityJson.substring(1);
+		return "{\"" + name + "\":\"" + contextUrl + "\"," + entityJson.substring(1);
 	}
 
 	/** Collection-envelope head: an opening brace plus the context property — context-free under metadata=none. */
 	static StringBuilder envelopeHead(String contextUrl) {
 		StringBuilder head = new StringBuilder("{");
-		if (!omitContext()) {
-			head.append("\"@odata.context\":\"").append(contextUrl).append('"');
+		String name = Wire.current().names().context();
+		if (!omitContext() && name != null) {
+			head.append('"').append(name).append("\":\"").append(contextUrl).append('"');
 		}
 		return head;
 	}
 
 	/** Separates the next top-level envelope property unless it is the first one. */
+	/** Appends the collection count under the wire's name (none when the wire writes no count). */
+	static void envelopeCount(StringBuilder envelope, long count) {
+		String name = Wire.current().names().count();
+		if (name != null) {
+			envelopeProperty(envelope).append('"').append(name).append("\":").append(countValue(count));
+		}
+	}
+
+	/** Appends the next-page link under the wire's name (absolute with a profile). */
+	static void envelopeNextLink(StringBuilder envelope, String link) {
+		String name = Wire.current().names().nextLink();
+		if (name != null) {
+			envelope.append(",\"").append(name).append("\":\"").append(ODataJson.sanitize(link)).append('"');
+		}
+	}
+
 	static StringBuilder envelopeProperty(StringBuilder envelope) {
 		if (envelope.length() > 1) {
 			envelope.append(',');
@@ -617,9 +683,17 @@ public class ODataServlet extends HttpServlet {
 		// which re-enter this method, from clobbering the outer request's level)
 		String previousLevel = METADATA_LEVEL.get();
 		Boolean previousIeee754 = IEEE754.get();
+		Wire previousWire = Wire.CURRENT.get();
+		Wire wire = wireOf(request);
 		METADATA_LEVEL.set(metadataLevel(request));
 		IEEE754.set(ieee754Requested(request));
+		Wire.CURRENT.set(wire == null ? Wire.ODATA : wire);
 		try {
+			if (wire == null) {
+				error(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+						"the wire profile of this service is not available");
+				return;
+			}
 			if ("/$batch".equals(pathInfo)) {
 				batchDispatcher.execute(request, response);
 				return;
@@ -651,6 +725,11 @@ public class ODataServlet extends HttpServlet {
 				IEEE754.remove();
 			} else {
 				IEEE754.set(previousIeee754);
+			}
+			if (previousWire == null) {
+				Wire.CURRENT.remove();
+			} else {
+				Wire.CURRENT.set(previousWire);
 			}
 		}
 	}
@@ -745,8 +824,10 @@ public class ODataServlet extends HttpServlet {
 	private String etagOf(EObject entity, EClass entityType) throws IOException {
 		String requestedLevel = METADATA_LEVEL.get();
 		Boolean requestedIeee754 = IEEE754.get();
+		Wire requestedWire = Wire.CURRENT.get();
 		METADATA_LEVEL.set("minimal");
 		IEEE754.set(Boolean.FALSE);
+		Wire.CURRENT.set(Wire.ODATA); // the tag is over the canonical OData form, whatever the wire
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-256").digest(
 					formats.entityJson(entity, entityType, null, Set.of())
@@ -764,6 +845,11 @@ public class ODataServlet extends HttpServlet {
 				IEEE754.remove();
 			} else {
 				IEEE754.set(requestedIeee754);
+			}
+			if (requestedWire == null) {
+				Wire.CURRENT.remove();
+			} else {
+				Wire.CURRENT.set(requestedWire);
 			}
 		}
 	}
@@ -801,6 +887,17 @@ public class ODataServlet extends HttpServlet {
 	// --- routes ---
 
 	private void serviceDocument(HttpServletRequest request, HttpServletResponse response) throws IOException {
+		Wire wire = Wire.current();
+		if (wire.profiled()) {
+			String base = wire.baseUrl();
+			Optional<String> document = wire.profile().serviceDocument(new ServiceRoot(base,
+					entitySetNames().stream().map(name -> new ServiceRoot.Entry(name, base + "/" + name)).toList(),
+					singletonNames().stream().map(name -> new ServiceRoot.Entry(name, base + "/" + name)).toList()));
+			if (document.isPresent()) {
+				writeDocument(request, response, "application/json;charset=UTF-8", document.get());
+				return;
+			}
+		}
 		String sets = entitySetNames().stream()
 				.map(name -> "{\"name\":\"" + name + "\",\"kind\":\"EntitySet\",\"url\":\"" + name + "\"}")
 				.collect(Collectors.joining(","));
@@ -1130,7 +1227,7 @@ public class ODataServlet extends HttpServlet {
 		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata#" + setName
 				+ (castName != null ? "/" + castName : ""));
 		if (result.totalCount() >= 0) {
-			envelopeProperty(json).append("\"@odata.count\":").append(countValue(result.totalCount()));
+			envelopeCount(json, result.totalCount());
 		}
 		List<ComputeExpression> computes = selectedComputes(computePipeline, request, computeAliases);
 		envelopeProperty(json).append("\"value\":[");
@@ -1144,8 +1241,7 @@ public class ODataServlet extends HttpServlet {
 		}
 		json.append(']');
 		if (hasMore) {
-			json.append(",\"@odata.nextLink\":\"")
-					.append(ODataJson.sanitize(nextLink(request, skip + top))).append('"');
+			envelopeNextLink(json, nextLink(request, skip + top));
 		} else if (deltaToken != null) { // the delta link replaces the next link on the LAST page
 			response.setHeader("Preference-Applied", "odata.track-changes");
 			json.append(",\"@odata.deltaLink\":\"")
@@ -1158,7 +1254,10 @@ public class ODataServlet extends HttpServlet {
 
 	/** The follow-up page URL: same request with {@code $skip} advanced past this page. */
 	private String nextLink(HttpServletRequest request, int nextSkip) {
-		StringBuilder link = new StringBuilder(request.getRequestURI()).append("?$skip=").append(nextSkip);
+		Wire wire = Wire.current();
+		String path = request.getPathInfo() == null ? "" : request.getPathInfo();
+		StringBuilder link = new StringBuilder(wire.profiled() ? wire.baseUrl() + path : request.getRequestURI())
+				.append("?$skip=").append(nextSkip);
 		for (String option : SUPPORTED_OPTIONS) {
 			String value = option(request, option);
 			if (value != null && !"$skip".equals(option)) {
@@ -2220,8 +2319,11 @@ public class ODataServlet extends HttpServlet {
 		return null;
 	}
 
-	/** The canonical {@code Set(key)} path of an entity, or null when no set serves it or it has no key. */
-	private String entityPathOf(EObject entity) {
+	/**
+	 * The canonical {@code Set(key)} path of an entity, or null when no set serves it or it has no
+	 * key. The key literal is the wire profile's (ADR-0010), the OData one without a profile.
+	 */
+	String entityPathOf(EObject entity) {
 		String set = entitySetServing(entity.eClass());
 		List<EAttribute> keys = keyAttributes(entity.eClass());
 		if (set == null || keys.isEmpty()) {
@@ -2232,7 +2334,9 @@ public class ODataServlet extends HttpServlet {
 		for (EAttribute id : keys) {
 			keyValues.put(id.getName(), entity.eGet(id));
 		}
-		return (cast < 0 ? set : set.substring(0, cast)) + "(" + keyLiteral(keyValues) + ")";
+		Wire wire = Wire.current();
+		String literal = wire.profiled() ? wire.profile().keyLiteral(keyValues) : keyLiteral(keyValues);
+		return (cast < 0 ? set : set.substring(0, cast)) + "(" + literal + ")";
 	}
 
 	/** {@code Namespace.Type} as {@code $metadata} names it, or null outside the published packages. */
@@ -2363,7 +2467,7 @@ public class ODataServlet extends HttpServlet {
 		List<Map<String, Object>> rows = hasMore ? result.rows().subList(0, top) : result.rows();
 		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata#" + setName);
 		if (result.totalCount() >= 0) {
-			envelopeProperty(json).append("\"@odata.count\":").append(countValue(result.totalCount()));
+			envelopeCount(json, result.totalCount());
 		}
 		envelopeProperty(json).append("\"value\":[");
 		for (int i = 0; i < rows.size(); i++) {
@@ -2374,8 +2478,7 @@ public class ODataServlet extends HttpServlet {
 		}
 		json.append(']');
 		if (hasMore) {
-			json.append(",\"@odata.nextLink\":\"")
-					.append(ODataJson.sanitize(nextLink(request, skip + top))).append('"');
+			envelopeNextLink(json, nextLink(request, skip + top));
 		}
 		json.append('}');
 		response.setContentType(contentTypeJson());
@@ -2678,6 +2781,8 @@ public class ODataServlet extends HttpServlet {
 	void error(HttpServletResponse response, int status, String message) throws IOException {
 		response.setStatus(status);
 		response.setContentType("application/json;charset=UTF-8");
-		response.getWriter().write(ODataJson.error(status, message));
+		Wire wire = Wire.current();
+		String body = wire.profiled() ? wire.profile().errorBody(status, ODataJson.sanitize(message)).orElse(null) : null;
+		response.getWriter().write(body != null ? body : ODataJson.error(status, message));
 	}
 }
