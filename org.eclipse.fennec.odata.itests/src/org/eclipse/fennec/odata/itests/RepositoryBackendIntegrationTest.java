@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Hashtable;
 import java.util.List;
 
@@ -61,6 +62,10 @@ import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceRegistration;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
+import org.osgi.service.component.runtime.ServiceComponentRuntime;
+import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
+import org.osgi.service.component.runtime.dto.ComponentDescriptionDTO;
+import org.osgi.service.component.runtime.dto.SatisfiedReferenceDTO;
 import org.osgi.test.common.annotation.InjectBundleContext;
 import org.osgi.test.common.annotation.InjectService;
 import org.osgi.test.common.service.ServiceAware;
@@ -260,6 +265,33 @@ public class RepositoryBackendIntegrationTest {
 		HttpResponse<String> total = get("/Article?$apply=" + encode("aggregate(stock with sum as total)"));
 		assertEquals(200, total.statusCode(), total.body());
 		assertTrue(total.body().contains("\"total\":515"), "12 + 3 + 500: " + total.body());
+	}
+
+	@Test
+	@Order(4)
+	@DisplayName("#111: the documented repository.target reaches the reference")
+	void repositoryTargetSelectsTheRepository(
+			@InjectService(cardinality = 0, filter = BACKEND_FILTER) ServiceAware<QueryService> queryAware,
+			@InjectService ServiceComponentRuntime runtime) throws Exception {
+		assertNotNull(queryAware.waitForService(20_000));
+
+		ComponentDescriptionDTO description = runtime.getComponentDescriptionDTOs().stream()
+				.filter(candidate -> candidate.name.endsWith(".RepositoryQueryService"))
+				.findFirst().orElseThrow();
+		assertTrue(Arrays.stream(description.references)
+				.anyMatch(reference -> "repository".equals(reference.name)),
+				"the reference is named 'repository'");
+		String expected = "(persistence.repository.id=" + REPOSITORY_ID + ")";
+		boolean bound = false;
+		for (ComponentConfigurationDTO configuration : runtime.getComponentConfigurationDTOs(description)) {
+			for (SatisfiedReferenceDTO reference : configuration.satisfiedReferences) {
+				if ("repository".equals(reference.name)) {
+					assertEquals(expected, reference.target, "the configured target is in effect");
+					bound = true;
+				}
+			}
+		}
+		assertTrue(bound, "a configuration with the repository reference is satisfied");
 	}
 
 	private Path writeMappingFile() throws Exception {

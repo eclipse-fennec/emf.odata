@@ -95,7 +95,8 @@ public class RepositoryQueryService implements QueryService {
 	private Set<String> nsUris = Set.of();
 	private int maxPageSize = DEFAULT_MAX_PAGE_SIZE;
 
-	@Reference(scope = ReferenceScope.PROTOTYPE_REQUIRED)
+	/** Named explicitly: the documented {@code repository.target} addresses this reference (#111). */
+	@Reference(name = "repository", scope = ReferenceScope.PROTOTYPE_REQUIRED)
 	void setRepository(ComponentServiceObjects<ReadRepository> repositories) {
 		this.repositories = repositories;
 	}
