@@ -70,6 +70,9 @@ import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.query.OrderBySegment;
+import org.eclipse.fennec.odata.wire.api.ControlNames;
+import org.eclipse.fennec.odata.wire.api.ServiceRoot;
+import org.eclipse.fennec.odata.wire.api.WireProfile;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -2600,6 +2603,124 @@ class ODataServletTest {
 	@SuppressWarnings("unchecked")
 	private List<EObject> accessoriesOf(EObject product) {
 		return (List<EObject>) product.eGet(productClass.getEStructuralFeature("accessories"));
+	}
+
+	/** A SensorThings-like dummy profile (ADR-0010): the STA semantics live in emf.streaming. */
+	private static final class TestProfile implements WireProfile {
+
+		@Override
+		public ControlNames controls() {
+			return new ControlNames(null, null, "@iot.id", "@iot.selfLink", "@iot.navigationLink",
+					"@iot.count", "@iot.nextLink");
+		}
+
+		@Override
+		public boolean keyInBody(EClass type) {
+			return false;
+		}
+
+		@Override
+		public Optional<String> serviceDocument(ServiceRoot root) {
+			return Optional.of("{\"value\":[" + root.entitySets().stream()
+					.map(set -> "{\"name\":\"" + set.name() + "\",\"url\":\"" + set.url() + "\"}")
+					.collect(java.util.stream.Collectors.joining(",")) + "]}");
+		}
+
+		@Override
+		public Optional<String> errorBody(int status, String message) {
+			return Optional.of("{\"code\":" + status + ",\"message\":\"" + message + "\"}");
+		}
+	}
+
+	private final TestProfile testProfile = new TestProfile();
+
+	private void speakProfile(boolean bound) {
+		servlet.activate(Map.of("odata.max.top", "50",
+				"odata.max.expression.length", "128", "odata.max.nesting.depth", "8",
+				"odata.max.body.size", "256", WireProfile.ROOT_PROPERTY, "sta",
+				"odata.base.url", "https://h.example/sta/v1.1/"));
+		if (bound) {
+			servlet.bindWireProfile(testProfile, Map.of(WireProfile.PROFILE_PROPERTY, "sta"));
+		}
+	}
+
+	private List<EObject> dairyProducts() {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		dairy.eSet(categoryClass.getEStructuralFeature("name"), "Dairy");
+		return List.of(product("p1", "Milk", "1.20", dairy), product("p2", "Butter", "2.10", dairy));
+	}
+
+	@Test
+	@DisplayName("ADR-0010: a profile renames the control information and links every entity")
+	void wireProfileCollection() throws Exception {
+		speakProfile(true);
+		backendResult = dairyProducts();
+
+		Response page = get("/Product", Map.of("$count", "true", "$top", "1"));
+		assertEquals(200, page.status(), page.body());
+		String body = page.body();
+		assertFalse(body.contains("@odata."), "no OData control information: " + body);
+		assertTrue(body.startsWith("{\"@iot.count\":"), "count first, no context: " + body);
+		assertTrue(body.contains("\"value\":[{\"@iot.id\":\"p1\","
+				+ "\"@iot.selfLink\":\"https://h.example/sta/v1.1/Product('p1')\","), body);
+		assertFalse(body.contains("\"id\":\"p1\""), "the key is not a body property: " + body);
+		assertTrue(body.contains("\"category@iot.navigationLink\":"
+				+ "\"https://h.example/sta/v1.1/Product('p1')/category\""), body);
+		assertTrue(body.contains("\"@iot.nextLink\":\"https://h.example/sta/v1.1/Product?$skip=1"),
+				"absolute next link: " + body);
+
+		Response expanded = get("/Product('p1')", Map.of("$expand", "category"));
+		assertEquals(200, expanded.status(), expanded.body());
+		assertTrue(expanded.body().startsWith("{\"@iot.id\":\"p1\""), "no context: " + expanded.body());
+		assertTrue(expanded.body().contains("\"category\":{\"@iot.id\":\"c1\","
+				+ "\"@iot.selfLink\":\"https://h.example/sta/v1.1/Category('c1')\""),
+				"expanded entities are decorated too: " + expanded.body());
+
+		Response nameOnly = get("/Product", Map.of("$select", "name"));
+		assertFalse(nameOnly.body().contains("@iot.id"), "key not selected: " + nameOnly.body());
+		assertFalse(nameOnly.body().contains("navigationLink"), nameOnly.body());
+		Response withKey = get("/Product", Map.of("$select", "id,name"));
+		assertTrue(withKey.body().contains("\"@iot.id\":\"p1\""), withKey.body());
+
+		Response navigated = get("/Product('p1')/category", Map.of());
+		assertTrue(navigated.body().startsWith("{\"@iot.id\":\"c1\""), navigated.body());
+	}
+
+	@Test
+	@DisplayName("ADR-0010: root document and error body come from the profile")
+	void wireProfileDocuments() throws Exception {
+		speakProfile(true);
+		Response root = get("/", Map.of());
+		assertEquals(200, root.status(), root.body());
+		assertTrue(root.body().contains("{\"name\":\"Product\",\"url\":\"https://h.example/sta/v1.1/Product\"}"),
+				root.body());
+
+		Response bad = get("/Product", Map.of("$filter", "nosuch eq 1"));
+		assertEquals(400, bad.status());
+		assertTrue(bad.body().startsWith("{\"code\":400,"), bad.body());
+	}
+
+	@Test
+	@DisplayName("ADR-0010: a root whose profile is missing answers 503, not plain OData")
+	void wireProfileMissing() throws Exception {
+		speakProfile(false);
+		backendResult = dairyProducts();
+		assertEquals(503, get("/Product", Map.of()).status());
+		servlet.bindWireProfile(testProfile, Map.of(WireProfile.PROFILE_PROPERTY, "sta"));
+		assertEquals(200, get("/Product", Map.of()).status());
+		servlet.unbindWireProfile(testProfile, Map.of(WireProfile.PROFILE_PROPERTY, "sta"));
+		assertEquals(503, get("/Product", Map.of()).status());
+	}
+
+	@Test
+	@DisplayName("ADR-0010: the ETag is over the OData form, whatever the wire")
+	void wireProfileKeepsTheETag() throws Exception {
+		backendResult = dairyProducts();
+		String odata = get("/Product('p1')", Map.of()).headers().get("ETag");
+		speakProfile(true);
+		assertEquals(odata, get("/Product('p1')", Map.of()).headers().get("ETag"));
 	}
 
 	@Test

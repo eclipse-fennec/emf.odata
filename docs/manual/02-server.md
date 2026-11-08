@@ -167,6 +167,38 @@ the format SAP-era clients speak; change sets map onto the same transactional at
 groups, `Content-ID` correlates the responses). Sub-requests dispatch through the normal
 pipeline, so every feature behaves exactly as in a direct call.
 
+## Wire profiles
+
+An OData dialect such as OGC SensorThings API differs from OData on the wire, not in the query
+language. A root can speak such a dialect through a `WireProfile` service
+(`org.eclipse.fennec.odata.wire.api`, ADR-0010): the profile is registered with the service
+property `odata.wire.profile=<name>` and the root selects it with the configuration key of the
+same name. Without that key nothing changes.
+
+What a profile decides:
+
+- the names of the control information (`ControlNames`): context URL, type discriminator,
+  count and next link — `null` leaves one out — plus what OData does not have: the key value
+  as a control member (`@iot.id`), an absolute self link (`@iot.selfLink`) and one navigation
+  link per navigation property (`<Nav>@iot.navigationLink`)
+- whether the key stays a body property, and the key literal in links
+- the root document and the error body
+
+Profile links are absolute. The base URL is `odata.base.url` if configured, else the
+`X-Forwarded-*` headers when `odata.forwarded.trust=true`, else the request. Under `$select`
+the key value and self link come with a selected key, a navigation link with a selected or
+expanded navigation. A root whose profile is not available answers **503** rather than plain
+OData. `$metadata`, the query options and writes stay OData; the ETag is computed over the
+OData form, so it does not depend on the wire.
+
+```json
+"org.eclipse.fennec.odata.servlet~sta": {
+  "osgi.http.whiteboard.servlet.pattern": "/sta/v1.1/*",
+  "odata.wire.profile": "sta",
+  "odata.base.url": "https://example.org/sta/v1.1"
+}
+```
+
 ## Operations
 
 Registered via the `ODataOperationHandler` SPI: unbound **function imports**

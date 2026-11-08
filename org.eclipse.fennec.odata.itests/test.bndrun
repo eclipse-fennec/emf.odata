@@ -38,6 +38,7 @@
 -runbundles.test: \
 	org.eclipse.fennec.odata.itests;version=snapshot,\
 	org.eclipse.fennec.odata.schema.api;version=snapshot,\
+	org.eclipse.fennec.odata.wire.api;version=snapshot,\
 	org.eclipse.fennec.odata.operation.api;version=snapshot
 
 -runfw: org.apache.felix.framework
@@ -91,6 +92,7 @@
 	org.eclipse.fennec.odata.query;version=snapshot,\
 	org.eclipse.fennec.odata.runtime;version=snapshot,\
 	org.eclipse.fennec.odata.schema.api;version=snapshot,\
+	org.eclipse.fennec.odata.wire.api;version=snapshot,\
 	org.eclipse.fennec.persistence;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.persistence.capabilities;version='[0.1.0,0.1.1)',\
 	org.eclipse.fennec.persistence.eclipselink;version='[0.1.0,0.1.1)',\

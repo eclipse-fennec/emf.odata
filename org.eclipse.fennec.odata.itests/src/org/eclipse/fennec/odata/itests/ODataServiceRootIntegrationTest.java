@@ -37,6 +37,8 @@ import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
+import org.eclipse.fennec.odata.wire.api.ControlNames;
+import org.eclipse.fennec.odata.wire.api.WireProfile;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -85,6 +87,8 @@ public class ODataServiceRootIntegrationTest {
 	private final List<ServiceRegistration<EPackage>> packageRegistrations = new ArrayList<>();
 	private final List<Configuration> configurations = new ArrayList<>();
 	private Path dataDirectory;
+	private Configuration servletConfiguration;
+	private Hashtable<String, Object> servletProperties;
 
 	@BeforeAll
 	void setUpStack(@InjectBundleContext BundleContext context,
@@ -111,7 +115,7 @@ public class ODataServiceRootIntegrationTest {
 
 		Configuration servlet = configurationAdmin
 				.createFactoryConfiguration("org.eclipse.fennec.odata.servlet", "?");
-		Hashtable<String, Object> servletProperties = new Hashtable<>();
+		servletProperties = new Hashtable<>();
 		servletProperties.put("osgi.http.whiteboard.servlet.pattern", "/atlas/shop/*");
 		servletProperties.put("osgi.http.whiteboard.target", target);
 		servletProperties.put("odata.model.packages", new String[] { shop.getNsURI() });
@@ -119,6 +123,7 @@ public class ODataServiceRootIntegrationTest {
 				new String[] { "Products=" + shop.getNsURI() + "#Product" });
 		servlet.update(servletProperties);
 		configurations.add(servlet);
+		servletConfiguration = servlet;
 
 		Configuration filter = configurationAdmin
 				.createFactoryConfiguration("org.eclipse.fennec.odata.request.filter", "?");
@@ -263,5 +268,51 @@ public class ODataServiceRootIntegrationTest {
 	void defaultRootIsReplaced() throws Exception {
 		assertEquals(404, get(HOST + "/odata/").statusCode(),
 				"with factory configurations present there is no default /odata root");
+	}
+
+	/** A SensorThings-like profile; the STA semantics live in emf.streaming. */
+	private static final class TestProfile implements WireProfile {
+
+		@Override
+		public ControlNames controls() {
+			return new ControlNames(null, null, "@iot.id", "@iot.selfLink", "@iot.navigationLink",
+					"@iot.count", "@iot.nextLink");
+		}
+
+		@Override
+		public boolean keyInBody(EClass type) {
+			return false;
+		}
+	}
+
+	@Test
+	@Order(6)
+	@DisplayName("ADR-0010: a root speaks the wire profile its configuration names")
+	void wireProfileByConfiguration(@InjectBundleContext BundleContext context) throws Exception {
+		Hashtable<String, Object> profiled = new Hashtable<>(servletProperties);
+		profiled.put(WireProfile.ROOT_PROPERTY, "itest-sta");
+		servletConfiguration.update(profiled);
+		awaitStatus(ROOT + "/Products", 503); // the named profile is not there yet
+
+		Hashtable<String, Object> profileProperties = new Hashtable<>();
+		profileProperties.put(WireProfile.PROFILE_PROPERTY, "itest-sta");
+		ServiceRegistration<WireProfile> registration = context.registerService(WireProfile.class,
+				new TestProfile(), profileProperties);
+		try {
+			awaitStatus(ROOT + "/Products", 200);
+			HttpResponse<String> products = get(ROOT + "/Products");
+			String body = products.body();
+			assertTrue(body.contains("\"@iot.id\":\"p1\""), body);
+			assertTrue(body.contains("\"@iot.selfLink\":\"" + ROOT + "/Products('p1')\""),
+					"absolute link from the request: " + body);
+			assertTrue(body.contains("\"category@iot.navigationLink\":\"" + ROOT + "/Products('p1')/category\""),
+					body);
+			assertFalse(body.contains("@odata.context"), body);
+		} finally {
+			registration.unregister();
+		}
+		awaitStatus(ROOT + "/Products", 503);
+		servletConfiguration.update(servletProperties);
+		awaitStatus(ROOT + "/Products", 200);
 	}
 }

@@ -70,4 +70,5 @@
 	org.objectweb.asm.commons;version='[9.9.1,9.9.2)',\
 	org.objectweb.asm.tree;version='[9.9.1,9.9.2)',\
 	org.objectweb.asm.tree.analysis;version='[9.9.1,9.9.2)',\
-	org.objectweb.asm.util;version='[9.9.1,9.9.2)'
+	org.objectweb.asm.util;version='[9.9.1,9.9.2)',\
+	org.eclipse.fennec.odata.wire.api;version=snapshot

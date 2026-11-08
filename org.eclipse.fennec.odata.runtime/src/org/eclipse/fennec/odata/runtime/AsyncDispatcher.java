@@ -112,10 +112,11 @@ void accept(HttpServletRequest request, HttpServletResponse response)
 	BatchHttpResponse captured = new BatchHttpResponse(response);
 	String metadataLevel = ODataServlet.METADATA_LEVEL.get();
 	Boolean ieee754 = ODataServlet.IEEE754.get();
+	Wire wire = Wire.current();
 	String id = UUID.randomUUID().toString();
 	asyncResults.put(id, asyncExecutor.submit(() -> {
 		try {
-			return executeAsync(snapshot, captured, metadataLevel, ieee754);
+			return executeAsync(snapshot, captured, metadataLevel, ieee754, wire);
 		} finally {
 			if (bounded) {
 				permits.release(); // in-flight = executing; the permit frees when the run ends
@@ -133,9 +134,10 @@ void accept(HttpServletRequest request, HttpServletResponse response)
  * the monitor always has something to deliver.
  */
 private AsyncResult executeAsync(BatchHttpRequest request, BatchHttpResponse captured,
-		String metadataLevel, Boolean ieee754) {
+		String metadataLevel, Boolean ieee754, Wire wire) {
 	ODataServlet.METADATA_LEVEL.set(metadataLevel);
 	ODataServlet.IEEE754.set(ieee754);
+	Wire.CURRENT.set(wire);
 	try {
 		servlet.dispatchDirectly(request, captured); // HttpServlet dispatch → doGet, bypasses respond-async
 		captured.flushBufferQuietly();
@@ -151,6 +153,7 @@ private AsyncResult executeAsync(BatchHttpRequest request, BatchHttpResponse cap
 	} finally {
 		ODataServlet.METADATA_LEVEL.remove();
 		ODataServlet.IEEE754.remove();
+		Wire.CURRENT.remove();
 	}
 }
 
