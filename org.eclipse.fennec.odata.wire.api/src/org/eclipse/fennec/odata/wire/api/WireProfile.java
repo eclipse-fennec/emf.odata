@@ -75,8 +75,9 @@ public interface WireProfile {
 	}
 
 	/**
-	 * The error body for a status and an already sanitized message, or empty for the OData error
-	 * ([OData-JSON] 21).
+	 * The error body for a status and a message, or empty for the OData error ([OData-JSON] 21).
+	 * The message is already JSON-escaped, stripped of control characters and truncated: it goes
+	 * into a JSON string as it is, never escaped a second time.
 	 */
 	default Optional<String> errorBody(int status, String message) {
 		return Optional.empty();
