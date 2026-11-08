@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -898,9 +899,7 @@ public class ODataServlet extends HttpServlet {
 		SelectTree select = formats.selectOption(request, type);
 		Map<String, ResponseFormatter.ExpandItem> expand = formats.expandOption(request, type);
 		if (formats.wantsXml(request)) {
-			List<EObject> copies = shaper.shapeAll(List.of(entity), type, select, ResponseFormatter.shapePaths(expand));
-			copies.forEach(copy -> formats.applyNestedFilters(copy, expand));
-			formats.writeXmi(response, copies);
+			formats.writeXmi(response, formats.shapeAll(List.of(entity), select, expand, Map.of()));
 			return;
 		}
 		String json = formats.entityJson(entity, type, select, expand);
@@ -1125,10 +1124,7 @@ public class ODataServlet extends HttpServlet {
 		List<EObject> page = hasMore ? result.entities().subList(0, top) : result.entities();
 
 		if (xml) { // XMI is a non-OData projection — trimmed, but without an embedded link
-			List<EObject> copies = shaper.shapeAll(page, context, select,
-					ResponseFormatter.shapePaths(expand), narrowed);
-			copies.forEach(copy -> formats.applyNestedFilters(copy, expand, narrowed));
-			formats.writeXmi(response, copies);
+			formats.writeXmi(response, formats.shapeAll(page, select, expand, narrowed));
 			return;
 		}
 		StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata#" + setName
@@ -1438,8 +1434,9 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		EObject entity = fetchByKey(target, path.key(), path.namedKeys(),
-				path.segments().isEmpty() ? formats.expandOption(request, target.entityType()).keySet()
-						: walkPrefetch(target.entityType(), path.segments()),
+				path.segments().isEmpty()
+						? ResponseFormatter.shapePaths(formats.expandOption(request, target.entityType()))
+						: walkPrefetch(target.entityType(), path.segments(), request),
 				response);
 		if (entity == null) {
 			return; // error already written
@@ -1544,8 +1541,8 @@ public class ODataServlet extends HttpServlet {
 		List<ResourcePath.Segment> rest = path.segments().subList(1, path.segments().size());
 		if (cast.key() != null) {
 			EObject entity = fetchByKey(target, cast.key(),
-					rest.isEmpty() ? formats.expandOption(request, castType).keySet()
-							: walkPrefetch(castType, rest),
+					rest.isEmpty() ? ResponseFormatter.shapePaths(formats.expandOption(request, castType))
+							: walkPrefetch(castType, rest, request),
 					response);
 			if (entity == null) {
 				return; // error already written
@@ -1579,26 +1576,41 @@ public class ODataServlet extends HttpServlet {
 	 * after the backend's session closed. Cast segments switch the context type; the first
 	 * non-navigation segment ends the prefix (nothing to prefetch beyond it).
 	 */
-	private Set<String> walkPrefetch(EClass type, List<ResourcePath.Segment> segments) {
+	private Set<String> walkPrefetch(EClass type, List<ResourcePath.Segment> segments,
+			HttpServletRequest request) {
 		StringBuilder path = new StringBuilder();
 		EClass current = type;
+		boolean whole = true;
 		for (ResourcePath.Segment segment : segments) {
 			if (segment instanceof ResourcePath.TypeCastSegment cast) {
 				EClass castType = resolveCastType(cast.qualifiedName(), null);
 				if (castType == null) {
+					whole = false;
 					break; // the walk itself will answer 404
 				}
 				current = castType;
 				continue;
 			}
 			if (!(segment instanceof ResourcePath.PropertySegment property)
-					|| !(current.getEStructuralFeature(property.name()) instanceof EReference reference)) {
+					|| !(current.getEStructuralFeature(property.name()) instanceof EReference reference)
+					|| reference.isContainment()) {
+				whole = false;
 				break;
 			}
 			path.append(path.isEmpty() ? "" : "/").append(property.name());
 			current = reference.getEReferenceType();
 		}
-		return path.isEmpty() ? Set.of() : Set.of(path.toString());
+		if (path.isEmpty()) {
+			return Set.of();
+		}
+		Set<String> paths = new LinkedHashSet<>();
+		paths.add(path.toString());
+		if (whole) { // a $expand on the addressed entities is read below the walked prefix
+			for (String expanded : ResponseFormatter.shapePaths(formats.expandOption(request, current))) {
+				paths.add(path + "/" + expanded);
+			}
+		}
+		return paths;
 	}
 
 	/**
@@ -1838,16 +1850,25 @@ public class ODataServlet extends HttpServlet {
 	private void walk(ResourcePath path, EObject root, HttpServletRequest request,
 			HttpServletResponse response) throws IOException {
 		// on a navigation path we apply $filter/$orderby/$top/$skip/$count to a terminal collection
-		// (13.1.2 SHOULD); other options ($select/$expand/$apply/$search/$compute) stay 501 here
+		// (13.1.2 SHOULD) and shape the addressed entities with $select/$expand; the other options
+		// ($apply/$search/$compute) stay 501 here
 		for (String option : SUPPORTED_OPTIONS) {
-			boolean handledOnNav = Set.of("$format", "$filter", "$orderby", "$top", "$skip", "$count")
-					.contains(option);
+			boolean handledOnNav = Set.of("$format", "$filter", "$orderby", "$top", "$skip", "$count",
+					"$select", "$expand").contains(option);
 			if (!handledOnNav && option(request, option) != null) {
 				error(response, 501, "this query option is not implemented on navigation paths");
 				return;
 			}
 		}
 		Object current = root;
+		// what the context URL is built from: the declared type of the addressed resource, and
+		// the canonical path of the last entity on the way plus the segments after it
+		EClass declared = root.eClass();
+		String owner = path.key() == null ? path.entitySet() : entityPathOf(root);
+		if (owner == null) {
+			owner = path.entitySet() + "(" + path.key() + ")";
+		}
+		StringBuilder tail = new StringBuilder();
 		for (int i = 0; i < path.segments().size(); i++) {
 			ResourcePath.Segment segment = path.segments().get(i);
 			boolean last = i == path.segments().size() - 1;
@@ -1872,12 +1893,15 @@ public class ODataServlet extends HttpServlet {
 						return;
 					}
 					current = object.eGet(feature);
+					declared = feature.getEType() instanceof EClass target ? target : null;
+					tail.append('/').append(property.name());
 					if (property.key() != null) {
 						current = selectByKey(current, property.key());
 						if (current == null) {
 							error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
 							return;
 						}
+						tail.append('(').append(property.key()).append(')');
 					}
 				}
 				case ResourcePath.KeySegment(String value) -> {
@@ -1888,6 +1912,7 @@ public class ODataServlet extends HttpServlet {
 						error(response, HttpServletResponse.SC_NOT_FOUND, "entity not found");
 						return;
 					}
+					tail.append('(').append(value).append(')');
 				}
 				case ResourcePath.TypeCastSegment cast -> {
 					EClass castClass = resolveCastType(cast.qualifiedName(), null);
@@ -1904,6 +1929,8 @@ public class ODataServlet extends HttpServlet {
 								+ ODataJson.sanitize(cast.qualifiedName()) + "'");
 						return;
 					}
+					declared = castClass;
+					tail.append('/').append(cast.qualifiedName());
 					if (current instanceof List<?> collection) { // collection cast: type filter
 						current = collection.stream().filter(castClass::isInstance).toList();
 						if (cast.key() != null) {
@@ -1988,11 +2015,17 @@ public class ODataServlet extends HttpServlet {
 					return;
 				}
 			}
+			String entityPath = current instanceof EObject entity && !(entity instanceof Enumerator)
+					? entityPathOf(entity) : null;
+			if (entityPath != null) { // an addressable entity: later segments hang off it
+				owner = entityPath;
+				tail.setLength(0);
+			}
 		}
 		if (current instanceof List<?> collection) { // terminal nav collection: $filter/$orderby/$skip/$top
 			current = pageCollection(orderCollection(filterCollection(collection, request), request), request);
 		}
-		writeWalkedValue(path, current, request, response);
+		writeWalkedValue(current, declared, owner + tail, request, response);
 	}
 
 	/** Applies {@code $filter} to a walked entity collection (in-memory; already materialized). */
@@ -2083,13 +2116,36 @@ public class ODataServlet extends HttpServlet {
 		return null;
 	}
 
-	private void writeWalkedValue(ResourcePath path, Object value, HttpServletRequest request,
-			HttpServletResponse response) throws IOException {
+	/**
+	 * Writes the end of a walked resource path with its context URL ([OData-Protocol] 10): the
+	 * entity set of the addressed entities ({@code #Observations}, {@code #Things/$entity}) when
+	 * their type is served by one, else — and for properties — the canonical path below the last
+	 * entity on the way ({@code #Datastreams('d1')/name}). {@code $select}/{@code $expand}
+	 * shape the addressed entities (or complex values) like on an entity set.
+	 *
+	 * @param declared the declared type of the addressed resource, null for a primitive one
+	 * @param path     the canonical path of the resource (last entity plus the segments after it)
+	 */
+	private void writeWalkedValue(Object value, EClass declared, String path,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		boolean shaping = option(request, "$select") != null || option(request, "$expand") != null;
+		if (shaping && declared == null) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"$select and $expand apply to entities and complex values");
+			return;
+		}
 		if (value == null) {
 			response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 			return;
 		}
-		String context = contextRoot(request) + "/$metadata#" + path.entitySet();
+		boolean entities = declared != null && !keyAttributes(declared).isEmpty();
+		String set = entities ? entitySetServing(declared) : null;
+		String target = set != null ? set : path;
+		String context = contextRoot(request) + "/$metadata#" + target
+				+ (entities && value instanceof EObject ? "/$entity" : "");
+		SelectTree select = declared == null ? null : formats.selectOption(request, declared);
+		Map<String, ResponseFormatter.ExpandItem> expand = declared == null ? Map.of()
+				: formats.expandOption(request, declared);
 		if (value instanceof Enumerator literal) { // enum property → value document with the literal
 			response.setContentType(contentTypeJson());
 			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
@@ -2100,10 +2156,10 @@ public class ODataServlet extends HttpServlet {
 		}
 		if (value instanceof EObject object) {
 			if (formats.wantsXml(request)) {
-				formats.writeXmi(response, shaper.shapeAll(List.of(object), object.eClass(), null, Set.of()));
+				formats.writeXmi(response, formats.shapeAll(List.of(object), select, expand, Map.of()));
 				return;
 			}
-			String json = formats.entityJson(object, object.eClass(), null, Set.of());
+			String json = formats.entityJson(object, declared, select, expand);
 			response.setContentType(contentTypeJson());
 			response.getWriter().write(withContext(ODataJson.sanitize(context), json));
 			return;
@@ -2113,7 +2169,7 @@ public class ODataServlet extends HttpServlet {
 				List<EObject> objects = collection.stream()
 						.filter(EObject.class::isInstance).map(EObject.class::cast).toList();
 				formats.writeXmi(response, objects.isEmpty() ? List.of()
-						: shaper.shapeAll(objects, objects.get(0).eClass(), null, Set.of()));
+						: formats.shapeAll(objects, select, expand, Map.of()));
 				return;
 			}
 			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
@@ -2125,7 +2181,7 @@ public class ODataServlet extends HttpServlet {
 				}
 				first = false;
 				if (member instanceof EObject object) {
-					json.append(formats.entityJson(object, object.eClass(), null, Set.of()));
+					json.append(formats.entityJson(object, declared, select, expand));
 				} else {
 					ODataJson.value(json, member, ieee754());
 				}
@@ -2145,6 +2201,50 @@ public class ODataServlet extends HttpServlet {
 		response.getWriter().write(json.toString());
 	}
 
+	/**
+	 * The published entity set serving a type — its own, else the nearest supertype's with the
+	 * type as cast ({@code Products/Ns.Discounted}) — or null when no set serves it.
+	 */
+	private String entitySetServing(EClass type) {
+		String own = model.setNameOf(type);
+		if (resolveEntityType(own) == type) {
+			return own;
+		}
+		for (EClass superType : type.getEAllSuperTypes()) {
+			String name = model.setNameOf(superType);
+			if (resolveEntityType(name) == superType) {
+				String qualified = qualifiedNameOf(type);
+				return qualified == null ? name : name + "/" + qualified;
+			}
+		}
+		return null;
+	}
+
+	/** The canonical {@code Set(key)} path of an entity, or null when no set serves it or it has no key. */
+	private String entityPathOf(EObject entity) {
+		String set = entitySetServing(entity.eClass());
+		List<EAttribute> keys = keyAttributes(entity.eClass());
+		if (set == null || keys.isEmpty()) {
+			return null;
+		}
+		int cast = set.indexOf('/');
+		Map<String, Object> keyValues = new LinkedHashMap<>();
+		for (EAttribute id : keys) {
+			keyValues.put(id.getName(), entity.eGet(id));
+		}
+		return (cast < 0 ? set : set.substring(0, cast)) + "(" + keyLiteral(keyValues) + ")";
+	}
+
+	/** {@code Namespace.Type} as {@code $metadata} names it, or null outside the published packages. */
+	private String qualifiedNameOf(EClass type) {
+		EPackage pkg = type.getEPackage();
+		if (pkg == null || !model.packages().contains(pkg)) {
+			return null;
+		}
+		ODataPackageProfile profile = profiles.computeIfAbsent(pkg, p -> new OdataResolver().resolve(p));
+		return profile.getNamespace() + "." + type.getName();
+	}
+
 	/** {@code /{Set}({key})}: the key becomes a typed equality AST — never parsed as expression. */
 	private void singleEntity(String setName, EObject entity, EClass entityType,
 			HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -2153,10 +2253,7 @@ public class ODataServlet extends HttpServlet {
 		SelectTree select = formats.selectOption(request, entityType);
 		Map<String, ResponseFormatter.ExpandItem> expand = formats.expandOption(request, entityType);
 		if (formats.wantsXml(request)) {
-			List<EObject> copies = shaper.shapeAll(List.of(entity), entityType, select,
-					ResponseFormatter.shapePaths(expand));
-			copies.forEach(copy -> formats.applyNestedFilters(copy, expand));
-			formats.writeXmi(response, copies);
+			formats.writeXmi(response, formats.shapeAll(List.of(entity), select, expand, Map.of()));
 			return;
 		}
 		String json = formats.entityJson(entity, entityType, select, expand);

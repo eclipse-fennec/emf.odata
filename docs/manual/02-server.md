@@ -89,7 +89,7 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 | `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) |
 | `$count` | `$count=true` inline, the `/$count` segment, filtered/searched counts in expressions (`$count($filter=…)`, `$count($search=…)`) |
 | `$select` | nested `$select` plus `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count` on selected collections (nav collections against the target type, primitive collections via `$it`) |
-| `$expand` | nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, **`$levels`** on self-recursive navigations (1..8 or `max`), **`nav/$ref`** reference expansion, **cast-in-expand** `nav/Ns.Type` (nested `$select`-in-`$expand` → 501) |
+| `$expand` | nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, **`$levels`** on self-recursive navigations (1..8 or `max`), **`nav/$ref`** reference expansion, **cast-in-expand** `nav/Ns.Type`, nested **`$select`** and **`$expand`** at any depth (`Datastreams($select=name;$expand=Observations($top=1))`, counts at every level); `$compute` and `nav/$ref` inside `$expand` → 501 |
 | `$search` | free-text, **case-insensitive**, pushed to the backend (a `contains` OR-chain over the type's string properties; `$filter` comparisons stay case-sensitive per OData semantics) |
 | `$compute` | server-computed properties (`price mul 1.19 as gross`) |
 | `$apply` | aggregation (see below) |

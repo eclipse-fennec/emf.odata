@@ -37,7 +37,7 @@ Spec documents (OASIS OData **v4.01**):
 | `$top` / `$skip` | Paging | ✅ | URL Conv. §5.1.5 / §5.1.6 |
 | `$count` (inline + `/$count`) | Count | ✅ | URL Conv. §5.1.7 |
 | `$select` (nested `$select`; `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count` on selected collections) | Project properties | ✅ (`$count` below top level → 501) | URL Conv. §5.1.3 |
-| `$expand` (nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, `$levels` on self-recursive navigations, `nav/$ref` reference expansion, cast-in-expand) | Expand related | ✅ (nested `$select`-in-`$expand` → 501) | URL Conv. §5.1.2/5.1.3 |
+| `$expand` (nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, nested `$select`/`$expand`, `$levels` on self-recursive navigations, `nav/$ref` reference expansion, cast-in-expand) | Expand related | ✅ (`$compute` and nested `nav/$ref` inside `$expand` → 501) | URL Conv. §5.1.2/5.1.3 |
 | `$search` | Free-text search | ✅ — folded into `$filter` as a **case-insensitive** `contains` OR-chain over the type's string properties | URL Conv. §5.1.8 |
 | `$compute` | Computed properties | ✅ | URL Conv. §5.1.9 |
 | `$apply` | Aggregation | ✅ (see below) | Data Aggregation §3 |
@@ -53,7 +53,7 @@ Spec documents (OASIS OData **v4.01**):
 | Segment | Spec requires | Support | Reference |
 |---|---|---|---|
 | `Set` / `Set(key)` (incl. composite/named keys `(k1=v1,k2=v2)`) | Address sets and entities | ✅ (reads AND entity-level writes; below-entity composite writes → 501). Key literal type mismatches → 400 | URL Conv. §4.3 |
-| Navigation paths `Set(key)/nav[/…]`, keyed nav | — | ✅ | URL Conv. §4.4 |
+| Navigation paths `Set(key)/nav[/…]`, keyed nav (`$filter`/`$orderby`/`$top`/`$skip`/`$count`/`$select`/`$expand` on the addressed entities; context URL of the target set) | — | ✅ (`$apply`/`$search`/`$compute` → 501) | URL Conv. §4.4 |
 | `/$value` (primitive + enum) | Raw value | ✅ | URL Conv. §4.6 |
 | `/$count` on sets and navigations | — | ✅ | URL Conv. §4.8 |
 | Derived-type cast `Set/Ns.Type[(key)]` | Type-cast segments | ✅ (one cast per step) | URL Conv. §4.11 |

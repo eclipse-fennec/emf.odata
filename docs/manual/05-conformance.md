@@ -31,7 +31,7 @@ property-level writes (replace-based), and deep inserts of containments.
 
 ## Known SHOULD/MAY gaps
 
-- A few **4.01 Intermediate SHOULDs** — some query options on navigation paths, some options inside `$expand`.
+- A few **4.01 Intermediate SHOULDs** — `$apply`/`$search`/`$compute` on navigation paths, `$compute` inside `$expand`.
 - **Cross-join** (`$crossjoin`, 4.0 Advanced SHOULD 15) — the single remaining spec SHOULD anywhere; parses and refuses honestly (501).
 - **Delta v1 limits** — change tracking (the Advanced SHOULD) is covered since 2026-07-13, with
   documented v1 limits: no `$expand` deltas, no `PATCH` collection-update, no JPA backend — see

@@ -16,7 +16,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -114,8 +116,21 @@ SelectTree selectOption(HttpServletRequest request, EClass entityType,
  *                expanded — the response carries {@code {"@odata.id": …}} objects
  * @param cast    {@code nav/Ns.Type} (5.1.3.2): only related instances of the derived type
  *                are expanded; null without a cast
+ * @param levels  {@code $levels} of a self-recursive navigation (9.8), 1 without
+ * @param select  nested {@code $select} of the expanded entities, null without one
+ * @param expand  nested {@code $expand} of the expanded entities, never null
  */
-record ExpandItem(CollectionOptions options, boolean refOnly, EClass cast, int levels) {
+record ExpandItem(CollectionOptions options, boolean refOnly, EClass cast, int levels,
+		SelectTree select, Map<String, ExpandItem> expand) {
+
+	ExpandItem {
+		// request order is response order (and prefetch order)
+		expand = expand == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(expand));
+	}
+
+	ExpandItem(CollectionOptions options, boolean refOnly, EClass cast, int levels) {
+		this(options, refOnly, cast, levels, null, Map.of());
+	}
 }
 
 /**
@@ -149,17 +164,27 @@ private NestedOptionParser nestedOptions(HttpServletRequest request) {
 
 /**
  * Validated {@code $expand} items: navigation name → {@link ExpandItem}. Supported item
- * shapes: {@code nav}, {@code nav($filter=…)}, {@code nav/$ref} and {@code nav/Ns.Type}
- * (optionally with a nested {@code $filter} against the derived type); other nested
- * options answer 501.
+ * shapes: {@code nav}, {@code nav(…options…)}, {@code nav/$ref} and {@code nav/Ns.Type}
+ * (optionally with nested options against the derived type). The options are the collection
+ * options, {@code $levels}, and a nested {@code $select} and {@code $expand}; {@code $compute}
+ * answers 501.
  */
 Map<String, ExpandItem> expandOption(HttpServletRequest request, EClass entityType) {
 	String expand = ODataServlet.option(request, "$expand");
-	Map<String, ExpandItem> items = new LinkedHashMap<>();
 	if (expand == null || expand.isBlank()) {
-		return items;
+		return new LinkedHashMap<>();
 	}
 	servlet.limits.checkExpression(expand); // nested $filter trees are parsed — same hostile-input guard
+	return parseExpand(expand, entityType, nestedOptions(request), 0);
+}
+
+/** One {@code $expand} value against a context type; {@code depth} counts the enclosing items. */
+private Map<String, ExpandItem> parseExpand(String expand, EClass entityType,
+		NestedOptionParser optionParser, int depth) {
+	Map<String, ExpandItem> items = new LinkedHashMap<>();
+	if (expand.isBlank()) {
+		throw new ODataQueryParseException("empty $expand");
+	}
 	for (String item : splitExpandItems(expand)) {
 		String trimmed = item.trim();
 		String name = trimmed;
@@ -188,6 +213,10 @@ Map<String, ExpandItem> expandOption(HttpServletRequest request, EClass entityTy
 			throw new UnsupportedOperationException(
 					"options on $expand=nav/$ref are not implemented");
 		}
+		if (refOnly && depth > 0) {
+			throw new UnsupportedOperationException(
+					"$expand=nav/$ref inside $expand is not implemented");
+		}
 		EClass cast = null;
 		if (castName != null) {
 			cast = servlet.resolveCastType(castName, null);
@@ -200,7 +229,7 @@ Map<String, ExpandItem> expandOption(HttpServletRequest request, EClass entityTy
 				? new ExpandItem(CollectionOptions.NONE, refOnly, cast, 1)
 				: expandItemOptions(nested, reference,
 						cast != null ? cast : reference.getEReferenceType(),
-						nestedOptions(request), refOnly, cast));
+						optionParser, refOnly, cast, depth));
 	}
 	return items;
 }
@@ -210,15 +239,35 @@ private static final int MAX_EXPAND_LEVELS = 8;
 
 /**
  * The {@code ;}-separated option list of one {@code $expand} item — the collection options
- * (Advanced 9.2/9.4–9.7) plus {@code $levels} for SELF-RECURSIVE navigations (9.8);
- * {@code $select}/{@code $expand}/{@code $compute} inside {@code $expand} answer 501.
+ * (Advanced 9.2/9.4–9.7), {@code $levels} for SELF-RECURSIVE navigations (9.8), and a nested
+ * {@code $select}/{@code $expand} against the target (or cast) type ([OData-URL] 5.1.3);
+ * {@code $compute} inside {@code $expand} answers 501.
  */
 private ExpandItem expandItemOptions(String optionList, EReference reference,
-		EClass context, NestedOptionParser optionParser, boolean refOnly, EClass cast) {
+		EClass context, NestedOptionParser optionParser, boolean refOnly, EClass cast, int depth) {
 	CollectionOptions.Accumulator options = new CollectionOptions.Accumulator();
 	int levels = 1;
+	SelectTree select = null;
+	Map<String, ExpandItem> expand = Map.of();
 	for (String option : SelectTree.splitTopLevel(optionList, ';')) {
 		String trimmed = option.trim();
+		Matcher selectMatcher = NESTED_SELECT.matcher(trimmed);
+		if (selectMatcher.find()) {
+			if (select != null) {
+				throw new ODataQueryParseException("duplicate $select inside $expand");
+			}
+			select = SelectTree.parse(trimmed.substring(selectMatcher.end()), context, optionParser);
+			continue;
+		}
+		Matcher expandMatcher = NESTED_EXPAND.matcher(trimmed);
+		if (expandMatcher.find()) {
+			if (!expand.isEmpty()) {
+				throw new ODataQueryParseException("duplicate $expand inside $expand");
+			}
+			expand = parseExpand(trimmed.substring(expandMatcher.end()), context, optionParser,
+					depth + 1);
+			continue;
+		}
 		Matcher matcher = NESTED_LEVELS.matcher(trimmed);
 		if (matcher.find()) {
 			String value = trimmed.substring(matcher.end()).trim();
@@ -236,11 +285,15 @@ private ExpandItem expandItemOptions(String optionList, EReference reference,
 					"this nested $expand option is not implemented");
 		}
 	}
-	return new ExpandItem(options.build(), refOnly, cast, levels);
+	return new ExpandItem(options.build(), refOnly, cast, levels, select, expand);
 }
 
 private static final Pattern NESTED_LEVELS =
 		Pattern.compile("(?i)^\\$?levels=");
+private static final Pattern NESTED_SELECT =
+		Pattern.compile("(?i)^\\$?select=");
+private static final Pattern NESTED_EXPAND =
+		Pattern.compile("(?i)^\\$?expand=");
 
 private static int parsedLevels(String value) {
 	try {
@@ -255,22 +308,46 @@ private static int parsedLevels(String value) {
 	}
 }
 
-/** The navigations rendered INLINE — everything except the {@code /$ref} items. */
-static Set<String> inlineNavs(Map<String, ExpandItem> expand) {
-	return expand.entrySet().stream()
-			.filter(item -> !item.getValue().refOnly())
-			.map(Map.Entry::getKey)
-			.collect(Collectors.toCollection(LinkedHashSet::new));
+/**
+ * The request tree for the shaper: the {@code $select} and every inline expansion with its
+ * nested select/expand. {@code $levels} unrolls into nested plain expansions of the same
+ * navigation — only the first level carries the options.
+ */
+static EntityShaper.Shape shape(SelectTree select, Map<String, ExpandItem> expand) {
+	return new EntityShaper.Shape(select, expansions(expand));
+}
+
+private static Map<String, EntityShaper.Expansion> expansions(Map<String, ExpandItem> expand) {
+	Map<String, EntityShaper.Expansion> expansions = new LinkedHashMap<>();
+	expand.forEach((name, item) -> {
+		if (item.refOnly()) {
+			return;
+		}
+		Map<String, EntityShaper.Expansion> nested = expansions(item.expand());
+		if (item.levels() > 1 && !nested.containsKey(name)) {
+			nested = new LinkedHashMap<>(nested);
+			nested.putAll(levelChain(name, item.levels() - 1));
+		}
+		expansions.put(name, new EntityShaper.Expansion(
+				new EntityShaper.Shape(item.select(), nested), item.options(), item.cast()));
+	});
+	return expansions;
+}
+
+private static Map<String, EntityShaper.Expansion> levelChain(String name, int levels) {
+	if (levels <= 0) {
+		return Map.of();
+	}
+	return Map.of(name, new EntityShaper.Expansion(
+			new EntityShaper.Shape(null, levelChain(name, levels - 1)), CollectionOptions.NONE, null));
 }
 
 /**
- * The paths the SHAPER co-copies (and backends prefetch): the inline navigation names plus
- * the self-recursive {@code $levels} chains ({@code nav}, {@code nav/nav}, …).
- */
-/**
- * The same enumeration as {@link #shapePaths}, carrying each item's options as the ASK to the
- * backend (ADR-0008). Only the first level carries them — deeper {@code $levels} links are
- * plain, which is what the in-memory pass does today too.
+ * The same tree, carrying each item's options as the ASK to the backend (ADR-0008). Only a
+ * first-level navigation WITHOUT deeper paths carries them: a deeper path ({@code nav/next},
+ * nested {@code $expand}, {@code $levels}) has the backend resolve {@code nav} in full on the
+ * way, and the resolved state is the very thing a narrowed expansion is read from — that
+ * navigation keeps its options in memory instead.
  *
  * <p>An item that wants {@code $count} deliberately asks for no paging: the count of matching
  * children is derivable from a pushed filter only as long as nothing truncated the result, and
@@ -284,31 +361,27 @@ static List<ExpandSpec> expandSpecs(Map<String, ExpandItem> expand) {
 		}
 		CollectionOptions options = item.options();
 		boolean countable = options.count();
-		specs.add(new ExpandSpec(name, options.filter(), options.orderBy(),
-				countable ? 0 : options.skip(), countable ? -1 : options.top()));
-		StringBuilder chain = new StringBuilder(name);
-		for (int level = 2; level <= item.levels(); level++) {
-			chain.append('/').append(name);
-			specs.add(ExpandSpec.of(chain.toString()));
+		boolean leaf = item.expand().isEmpty() && item.levels() <= 1;
+		specs.add(leaf
+				? new ExpandSpec(name, options.filter(), options.orderBy(),
+						countable ? 0 : options.skip(), countable ? -1 : options.top())
+				: ExpandSpec.of(name));
+		for (String path : shapePaths(Map.of(name, item))) {
+			if (!path.equals(name)) {
+				specs.add(ExpandSpec.of(path));
+			}
 		}
 	});
 	return specs;
 }
 
+/**
+ * The paths the SHAPER co-copies (and backends prefetch): the inline navigation names, their
+ * nested expansions and the self-recursive {@code $levels} chains ({@code nav}, {@code nav/nav},
+ * …).
+ */
 static Set<String> shapePaths(Map<String, ExpandItem> expand) {
-	Set<String> paths = new LinkedHashSet<>();
-	expand.forEach((name, item) -> {
-		if (item.refOnly()) {
-			return;
-		}
-		StringBuilder chain = new StringBuilder(name);
-		paths.add(chain.toString());
-		for (int level = 2; level <= item.levels(); level++) {
-			chain.append('/').append(name);
-			paths.add(chain.toString());
-		}
-	});
-	return paths;
+	return shape(null, expand).paths();
 }
 
 /** Top-level comma split of {@code $expand} — parens and string literals stay intact. */
@@ -335,59 +408,17 @@ private static List<String> splitExpandItems(String expand) {
 }
 
 /**
- * Nested {@code $expand} casts and collection options run on the SHAPED copy — never on
- * backend objects. Returns the requested inline counts (navigation → filtered, pre-paging
- * count) for the {@code name@odata.count} response members.
+ * Shaped copies for a self-contained document (XMI): the entities plus their expanded targets
+ * as extra roots, nested casts and collection options applied ({@link EntityShaper}).
  */
-Map<String, Long> applyNestedFilters(EObject copy, Map<String, ExpandItem> expand) {
-	return applyNestedFilters(copy, expand, Map.of());
-}
-
-/**
- * {@link #applyNestedFilters} skipping what the backend already applied (ADR-0008): a filter
- * pushed down means the shaped list IS the match set, so re-running it here would be a second
- * pass over the same predicate, and re-paging an already paged list would page the page.
- */
-Map<String, Long> applyNestedFilters(EObject copy, Map<String, ExpandItem> expand,
+List<EObject> shapeAll(List<EObject> entities, SelectTree select, Map<String, ExpandItem> expand,
 		Map<String, ExpandPushdown> narrowed) {
-	Map<String, Long> counts = new LinkedHashMap<>();
-	for (Map.Entry<String, ExpandItem> entry : expand.entrySet()) {
-		ExpandItem item = entry.getValue();
-		ExpandPushdown pushed = narrowed.getOrDefault(entry.getKey(), ExpandPushdown.NONE);
-		CollectionOptions remaining = item.options();
-		if (pushed.filter()) {
-			remaining = remaining.withoutFilter();
-		}
-		if (pushed.paging()) {
-			remaining = remaining.withoutPaging();
-		}
-		if (item.refOnly() || (item.cast() == null && remaining.isNone())) {
-			continue;
-		}
-		EStructuralFeature feature = copy.eClass().getEStructuralFeature(entry.getKey());
-		if (feature == null) {
-			continue;
-		}
-		if (copy.eGet(feature) instanceof List<?> children) {
-			if (item.cast() != null) { // cast-in-expand: only derived instances stay (5.1.3.2)
-				children.removeIf(child -> !item.cast().isInstance(child));
-			}
-			long total = servlet.shaper.applyOptions(children, remaining);
-			if (remaining.count()) {
-				counts.put(entry.getKey(), total);
-			}
-		} else if (item.cast() != null && copy.eGet(feature) instanceof EObject child
-				&& !item.cast().isInstance(child)) {
-			copy.eUnset(feature); // single-valued: a non-matching instance is not expanded
-		}
-	}
-	return counts;
+	return servlet.shaper.shapeAll(entities, shape(select, expand), narrowed);
 }
 
 String entityJson(EObject entity, EClass entityType, SelectTree select, Set<String> expand)
 		throws IOException {
-	return serializeEntity(entity, servlet.shaper.shape(entity, entityType, select, expand, null),
-			entityType, expand, select, expand);
+	return entityJson(entity, entityType, EntityShaper.Shape.ofPaths(select, expand), Map.of(), Map.of());
 }
 
 /** {@link #entityJson} for parsed expand specs: applies nested casts/options after shaping. */
@@ -399,30 +430,14 @@ String entityJson(EObject entity, EClass entityType, SelectTree select,
 /** {@link #entityJson} knowing which expansions the backend already narrowed (ADR-0008). */
 String entityJson(EObject entity, EClass entityType, SelectTree select,
 		Map<String, ExpandItem> expand, Map<String, ExpandPushdown> narrowed) throws IOException {
-	Set<String> inline = inlineNavs(expand);
-	Map<String, Long> counts = new LinkedHashMap<>();
-	EObject copy = servlet.shaper.shape(entity, entityType, select, shapePaths(expand), null,
-			counts, narrowed);
-	counts.putAll(applyNestedFilters(copy, expand, narrowed));
-	return withExpandedRefs(withNestedCounts(
-			serializeEntity(entity, copy, entityType, inline, select, shapePaths(expand)), counts),
-			entity, expand);
+	return entityJson(entity, entityType, shape(select, expand), expand, narrowed);
 }
 
-/**
- * Splices the requested inline counts of nested collections ({@code $expand}/{@code $select}
- * {@code $count=true}) as {@code name@odata.count} members ([OData-JSON] 4.5.5; strings
- * under IEEE754Compatible like every Edm.Int64 count).
- */
-private String withNestedCounts(String entityJson, Map<String, Long> counts) {
-	if (counts.isEmpty()) {
-		return entityJson;
-	}
-	StringBuilder members = new StringBuilder();
-	counts.forEach((name, total) -> members.append(",\"").append(name)
-			.append("@odata.count\":").append(ODataServlet.countValue(total)));
-	String inner = entityJson.substring(1, entityJson.length() - 1);
-	return "{" + (inner.isEmpty() ? members.substring(1) : inner + members) + "}";
+private String entityJson(EObject entity, EClass entityType, EntityShaper.Shape shape,
+		Map<String, ExpandItem> expand, Map<String, ExpandPushdown> narrowed) throws IOException {
+	Map<EObject, Map<String, Long>> counts = new IdentityHashMap<>();
+	EObject copy = servlet.shaper.shape(entity, shape, narrowed, counts, null);
+	return withExpandedRefs(serializeEntity(entity, copy, entityType, shape, counts), entity, expand);
 }
 
 /**
@@ -468,11 +483,14 @@ private String withExpandedRefs(String entityJson, EObject entity,
 }
 
 /**
- * @param select   the {@code $select} tree the copy was shaped with, or null
- * @param navPaths the navigation paths the copy was shaped with ({@link #shapePaths})
+ * @param shape  the request tree the copy was shaped with
+ * @param counts the inline counts per shaped copy ({@code name@odata.count} members)
  */
 private String serializeEntity(EObject entity, EObject copy, EClass entityType,
-		Set<String> expand, SelectTree select, Set<String> navPaths) throws IOException {
+		EntityShaper.Shape shape, Map<EObject, Map<String, Long>> counts) throws IOException {
+	// the copy carries exactly the requested navigations, linked one way: everything it holds
+	// is to be written inline, bidirectional navigations included
+	Set<String> expand = shape.navigationNames();
 	boolean full = "full".equals(ODataServlet.responseMetadataLevel());
 	// full metadata: the default codec profile emits @odata.type/@odata.id per entity;
 	// minimal: control info that is computable from the context URL is left out ([OData-JSON] 3.1)
@@ -484,7 +502,7 @@ private String serializeEntity(EObject entity, EObject copy, EClass entityType,
 	resource.getContents().add(copy);
 	ByteArrayOutputStream out = new ByteArrayOutputStream();
 	resource.save(out, null);
-	String json = retainShaped(out.toString(StandardCharsets.UTF_8), copy, select, navPaths);
+	String json = retainShaped(out.toString(StandardCharsets.UTF_8), copy, shape, counts);
 	if (!full && !ODataServlet.omitContext() && entity.eClass() != entityType) {
 		// derived instance under minimal metadata: the type is NOT computable from the context
 		// URL, so transport the single-field discriminator ([OData-JSON] 4.5.8). Full metadata
@@ -511,18 +529,23 @@ private static final ObjectMapper EXACT_JSON = JsonMapper.builder()
 /**
  * The codec writes EVERY value (null, default, empty — a selected property must be in the
  * payload, [OData-Protocol] 8.2.8.6), so the members the shaping deliberately excluded are
- * dropped here: unselected structural properties and non-expanded navigation properties.
+ * dropped here: unselected structural properties and non-expanded navigation properties. The
+ * inline counts are spliced in on the way ({@code name@odata.count}, [OData-JSON] 4.5.5;
+ * strings under IEEE754Compatible like every Edm.Int64 count).
  */
-private String retainShaped(String json, EObject copy, SelectTree select, Set<String> navPaths) {
+private String retainShaped(String json, EObject copy, EntityShaper.Shape shape,
+		Map<EObject, Map<String, Long>> counts) {
 	if (!(EXACT_JSON.readTree(json) instanceof ObjectNode node)) {
 		return json;
 	}
-	retainShaped(node, copy, select, navPaths);
+	retainShaped(node, copy, shape, counts);
 	return EXACT_JSON.writeValueAsString(node);
 }
 
-private void retainShaped(ObjectNode node, EObject copy, SelectTree select, Set<String> navPaths) {
+private void retainShaped(ObjectNode node, EObject copy, EntityShaper.Shape shape,
+		Map<EObject, Map<String, Long>> counts) {
 	EClass type = copy.eClass();
+	SelectTree select = shape.select();
 	List<EAttribute> keys = servlet.keyAttributes(type);
 	for (EStructuralFeature feature : type.getEAllStructuralFeatures()) {
 		String name = feature.getName();
@@ -530,51 +553,51 @@ private void retainShaped(ObjectNode node, EObject copy, SelectTree select, Set<
 		if (member == null) {
 			continue;
 		}
+		EntityShaper.Expansion expansion = shape.expand().get(name);
 		if (feature instanceof EReference reference && !reference.isContainment()) {
-			Set<String> deeper = subPaths(navPaths, name);
-			if (!navPaths.contains(name) && deeper.isEmpty()) {
+			if (expansion == null) {
 				node.remove(name); // not expanded: navigation stays out of the payload
 				continue;
 			}
-			retainNested(member, copy.eGet(reference), null, deeper); // expanded = whole entity
+			retainNested(member, copy.eGet(reference), expansion.shape(), counts);
 			continue;
 		}
 		SelectTree child = select == null ? null : select.child(name);
-		if (select != null && child == null && !keys.contains(feature)) {
+		if (select != null && child == null && expansion == null && !keys.contains(feature)) {
 			node.remove(name);
 			continue;
 		}
 		if (feature instanceof EReference) { // complex value: a nested $select prunes it too
-			retainNested(member, copy.eGet(feature),
-					child == null || child.isLeaf() ? null : child, Set.of());
+			EntityShaper.Shape nested = expansion != null ? expansion.shape()
+					: new EntityShaper.Shape(child == null || child.isLeaf() ? null : child, Map.of());
+			retainNested(member, copy.eGet(feature), nested, counts);
 		}
+	}
+	Map<String, Long> inline = counts.get(copy);
+	if (inline != null) {
+		inline.forEach((name, total) -> {
+			if (ODataServlet.ieee754()) {
+				node.put(name + "@odata.count", String.valueOf(total));
+			} else {
+				node.put(name + "@odata.count", total.longValue());
+			}
+		});
 	}
 }
 
 /** Pairs the JSON value of a structured member with its EObject value(s), in payload order. */
-private void retainNested(JsonNode member, Object value, SelectTree select, Set<String> navPaths) {
+private void retainNested(JsonNode member, Object value, EntityShaper.Shape shape,
+		Map<EObject, Map<String, Long>> counts) {
 	if (member instanceof ObjectNode object && value instanceof EObject nested) {
-		retainShaped(object, nested, select, navPaths);
+		retainShaped(object, nested, shape, counts);
 	} else if (member instanceof ArrayNode array && value instanceof List<?> items
 			&& array.size() == items.size()) {
 		for (int i = 0; i < items.size(); i++) {
 			if (array.get(i) instanceof ObjectNode object && items.get(i) instanceof EObject nested) {
-				retainShaped(object, nested, select, navPaths);
+				retainShaped(object, nested, shape, counts);
 			}
 		}
 	}
-}
-
-/** The remainders of the paths below {@code name} ({@code nav/next} → {@code next}). */
-private static Set<String> subPaths(Set<String> paths, String name) {
-	String prefix = name + "/";
-	Set<String> deeper = new LinkedHashSet<>();
-	for (String path : paths) {
-		if (path.startsWith(prefix)) {
-			deeper.add(path.substring(prefix.length()));
-		}
-	}
-	return deeper;
 }
 
 /**
