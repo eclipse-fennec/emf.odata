@@ -42,14 +42,13 @@ import org.eclipse.fennec.model.command.CommandFactory;
 import org.eclipse.fennec.model.command.DeleteCommand;
 import org.eclipse.fennec.model.command.InsertCommand;
 import org.eclipse.fennec.model.command.UpdateCommand;
+import org.eclipse.fennec.model.command.UpdateEntry;
+import org.eclipse.fennec.model.command.UpdateKind;
+import org.eclipse.fennec.model.command.UpdateTemplate;
 import org.eclipse.fennec.model.expression.Expression;
 import org.eclipse.fennec.model.query.Query;
 import org.eclipse.fennec.model.query.builder.Expressions;
 import org.eclipse.fennec.model.query.builder.QueryBuilder;
-import org.eclipse.fennec.model.stream.ChangeEntry;
-import org.eclipse.fennec.model.stream.ChangeSet;
-import org.eclipse.fennec.model.stream.DeltaKind;
-import org.eclipse.fennec.model.stream.StreamFactory;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
@@ -89,7 +88,7 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  * ({@code jpa://<unit>} or {@code mongodb://<db>}) plus the entity name and executes
  * one command against it: POST becomes an {@code InsertCommand}, DELETE a
  * {@code DeleteCommand} whose selector is the key predicate as Expression IR, and
- * PATCH/PUT an {@code UpdateCommand} carrying a {@code ChangeSet} template
+ * PATCH/PUT an {@code UpdateCommand} carrying a {@code UpdateTemplate} template
  * (SET/UNSET for single-valued attributes, a deterministic REMOVE/ADD sequence for
  * many-valued ones; non-containment references as id-valued entries, persistence-jpa#107).
  * Relationship operations map onto reference-entry {@code UpdateCommand}s, composite
@@ -393,7 +392,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 			journal.record(entityType, fragment, ChangeJournal.keyValuesOf(upserted), false);
 			return new WriteResult(upserted, true);
 		}
-		ChangeSet template = template(entityType, payload, current, replace);
+		UpdateTemplate template = template(entityType, payload, current, replace);
 		if (!template.getEntries().isEmpty()) {
 			UpdateCommand command = CommandFactory.eINSTANCE.createUpdateCommand();
 			command.setSelector(keySelector(entityType, fragment));
@@ -619,13 +618,13 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	public void link(EClass entityType, String rawKey, String navigation, String targetRawKey) {
 		EReference reference = navigationReference(entityType, navigation);
 		String targetFragment = fragmentFromRaw(reference.getEReferenceType(), targetRawKey);
-		ChangeSet template = StreamFactory.eINSTANCE.createChangeSet();
+		UpdateTemplate template = CommandFactory.eINSTANCE.createUpdateTemplate();
 		if (reference.isMany()) {
-			ChangeEntry add = entry(DeltaKind.ADD, entityType, reference, targetFragment);
+			UpdateEntry add = entry(UpdateKind.ADD, reference, targetFragment);
 			add.setIndex(-1);
 			template.getEntries().add(add);
 		} else {
-			template.getEntries().add(entry(DeltaKind.SET, entityType, reference, targetFragment));
+			template.getEntries().add(entry(UpdateKind.SET, reference, targetFragment));
 		}
 		updateReference(entityType, fragmentFromRaw(entityType, rawKey), template, true);
 	}
@@ -633,13 +632,13 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	@Override
 	public boolean unlink(EClass entityType, String rawKey, String navigation, String targetRawKey) {
 		EReference reference = navigationReference(entityType, navigation);
-		ChangeSet template = StreamFactory.eINSTANCE.createChangeSet();
+		UpdateTemplate template = CommandFactory.eINSTANCE.createUpdateTemplate();
 		if (reference.isMany()) {
-			ChangeEntry remove = entry(DeltaKind.REMOVE, entityType, reference, null);
-			remove.setValueOld(fragmentFromRaw(reference.getEReferenceType(), targetRawKey));
+			UpdateEntry remove = entry(UpdateKind.REMOVE, reference, null);
+			remove.setOldValue(fragmentFromRaw(reference.getEReferenceType(), targetRawKey));
 			template.getEntries().add(remove);
 		} else {
-			template.getEntries().add(entry(DeltaKind.SET, entityType, reference, null));
+			template.getEntries().add(entry(UpdateKind.SET, reference, null));
 		}
 		return updateReference(entityType, fragmentFromRaw(entityType, rawKey), template, false);
 	}
@@ -664,7 +663,7 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	}
 
 	/** Executes a reference-entry template against the keyed owner; journals the owner. */
-	private boolean updateReference(EClass entityType, String fragment, ChangeSet template,
+	private boolean updateReference(EClass entityType, String fragment, UpdateTemplate template,
 			boolean failOnMiss) {
 		UpdateCommand command = CommandFactory.eINSTANCE.createUpdateCommand();
 		command.setSelector(keySelector(entityType, fragment));
@@ -781,10 +780,10 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 	 * never touched; transmitted containment references stay refused (object
 	 * lifecycle, not patching).
 	 */
-	private ChangeSet template(EClass entityType, EObject payload, EObject current,
+	private UpdateTemplate template(EClass entityType, EObject payload, EObject current,
 			boolean replace) {
-		ChangeSet template = StreamFactory.eINSTANCE.createChangeSet();
-		List<ChangeEntry> entries = template.getEntries();
+		UpdateTemplate template = CommandFactory.eINSTANCE.createUpdateTemplate();
+		List<UpdateEntry> entries = template.getEntries();
 		// every key component is off limits, not just the eID attribute: a composite identity is
 		// declared on the type (#35), and patching one of its components would move the entity
 		List<EAttribute> ids = CompositeIds.idAttributes(entityType);
@@ -797,14 +796,14 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 				if (attribute.isMany()) {
 					rewriteList(entries, entityType, attribute, current, (List<?>) payload.eGet(attribute));
 				} else {
-					entries.add(entry(DeltaKind.SET, entityType, attribute,
+					entries.add(entry(UpdateKind.SET, attribute,
 							literal(attribute, payload.eGet(attribute))));
 				}
 			} else if (replace && current.eIsSet(attribute)) {
 				if (attribute.isMany()) {
 					rewriteList(entries, entityType, attribute, current, List.of());
 				} else {
-					entries.add(entry(DeltaKind.UNSET, entityType, attribute, null));
+					entries.add(entry(UpdateKind.UNSET, attribute, null));
 				}
 			}
 		}
@@ -822,19 +821,19 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 				@SuppressWarnings("unchecked")
 				List<EObject> currentMembers = (List<EObject>) current.eGet(reference);
 				for (EObject member : currentMembers) {
-					ChangeEntry remove = entry(DeltaKind.REMOVE, entityType, reference, null);
-					remove.setValueOld(requiredFragment(reference, member));
+					UpdateEntry remove = entry(UpdateKind.REMOVE, reference, null);
+					remove.setOldValue(requiredFragment(reference, member));
 					entries.add(remove);
 				}
 				for (EObject member : members) {
-					ChangeEntry add = entry(DeltaKind.ADD, entityType, reference,
+					UpdateEntry add = entry(UpdateKind.ADD, reference,
 							requiredFragment(reference, member));
 					add.setIndex(-1);
 					entries.add(add);
 				}
 			} else {
 				EObject target = (EObject) payload.eGet(reference);
-				entries.add(entry(DeltaKind.SET, entityType, reference,
+				entries.add(entry(UpdateKind.SET, reference,
 						target == null ? null : requiredFragment(reference, target)));
 			}
 		}
@@ -850,25 +849,25 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		return fragment;
 	}
 
-	private void rewriteList(List<ChangeEntry> entries, EClass entityType, EAttribute attribute,
+	private void rewriteList(List<UpdateEntry> entries, EClass entityType, EAttribute attribute,
 			EObject current, List<?> values) {
 		int size = ((List<?>) current.eGet(attribute)).size();
 		for (int index = size - 1; index >= 0; index--) {
-			ChangeEntry remove = entry(DeltaKind.REMOVE, entityType, attribute, null);
+			UpdateEntry remove = entry(UpdateKind.REMOVE, attribute, null);
 			remove.setIndex(index);
 			entries.add(remove);
 		}
 		for (Object value : values) {
-			entries.add(entry(DeltaKind.ADD, entityType, attribute, literal(attribute, value)));
+			entries.add(entry(UpdateKind.ADD, attribute, literal(attribute, value)));
 		}
 	}
 
-	private static ChangeEntry entry(DeltaKind kind, EClass entityType, EStructuralFeature feature,
+	private static UpdateEntry entry(UpdateKind kind, EStructuralFeature feature,
 			String valueNew) {
-		ChangeEntry entry = StreamFactory.eINSTANCE.createChangeEntry();
+		UpdateEntry entry = CommandFactory.eINSTANCE.createUpdateEntry();
 		entry.setKind(kind);
-		entry.setFeatureId(entityType.getFeatureID(feature));
-		entry.setValueNew(valueNew);
+		entry.setFeature(feature);
+		entry.setValue(valueNew);
 		return entry;
 	}
 
