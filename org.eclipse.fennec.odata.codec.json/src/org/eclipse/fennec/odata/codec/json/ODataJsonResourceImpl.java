@@ -161,7 +161,9 @@ public class ODataJsonResourceImpl extends CodecResource {
 					.idOnTop(true);
 		}
 		if (!expandedReferences.isEmpty()) {
-			builder.expand(expandedReferences);
+			// a $expand names what to inline — bidirectional navigations included (the codec's
+			// default skips those to stay out of cycles; the caller hands over an acyclic tree)
+			builder.expand(expandedReferences).expandIgnoreBidirectional(false);
 		}
 		return builder.build();
 	}

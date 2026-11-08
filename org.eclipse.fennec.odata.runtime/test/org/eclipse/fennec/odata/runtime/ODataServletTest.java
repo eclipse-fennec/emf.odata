@@ -1746,8 +1746,11 @@ class ODataServletTest {
 		assertTrue(ordered.body().indexOf("great") < ordered.body().indexOf("poor"),
 				"$orderby stars desc puts the 5-star review first: " + ordered.body());
 
-		assertEquals(501, get("/Product('p1')/reviews", Map.of("$select", "stars")).status(),
-				"$select on a navigation path is not implemented yet");
+		Response selected = get("/Product('p1')/reviews", Map.of("$select", "stars"));
+		assertEquals(200, selected.status(), selected.body());
+		assertTrue(selected.body().contains("\"stars\":5"), selected.body());
+		assertFalse(selected.body().contains("comment"), "$select projects the walked collection: "
+				+ selected.body());
 	}
 
 	@Test
@@ -2028,6 +2031,22 @@ class ODataServletTest {
 		assertEquals(404, get("/Product/webshop.NoSuchType", Map.of()).status());
 		assertEquals(404, get("/Product/webshop.Category", Map.of()).status(),
 				"cast to a non-derived type identifies nothing");
+	}
+
+	@Test
+	@DisplayName("#112: a navigation named in $select AND $expand is written in full")
+	void selectedAndExpandedNavigation() throws Exception {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		dairy.eSet(categoryClass.getEStructuralFeature("name"), "Dairy");
+		backendResult = List.of(product("p1", "Milk", "1.20", dairy));
+
+		Response both = get("/Product", Map.of("$select", "name,category", "$expand", "category"));
+		assertEquals(200, both.status(), both.body());
+		assertTrue(both.body().contains("\"name\":\"Dairy\""), "expanded in full: " + both.body());
+		assertFalse(both.body().contains("_ref"), "no proxy form: " + both.body());
+		assertFalse(both.body().contains("\"price\""), "unselected root property pruned");
 	}
 
 	@Test
@@ -2494,9 +2513,93 @@ class ODataServletTest {
 		assertEquals("0", navCount.body(), "empty collection counts 0");
 
 		assertEquals(404, get("/Product('p1')/nosuch", Map.of()).status(), "unknown segment");
-		assertEquals(501, get("/Product('p1')/category", Map.of("$select", "name")).status(),
+		Response selected = get("/Product('p1')/category", Map.of("$select", "name"));
+		assertEquals(200, selected.status(), selected.body());
+		assertTrue(selected.body().contains("\"name\":\"Dairy\""), selected.body());
+		assertEquals(400, get("/Product('p1')/name", Map.of("$select", "name")).status(),
+				"$select on a primitive property is not applicable");
+		assertEquals(501, get("/Product('p1')/category", Map.of("$compute", "name as n")).status(),
 				"unimplemented query options on navigation paths → 501");
 		assertEquals(404, get("/NoSet('x')/name", Map.of()).status());
+	}
+
+	@Test
+	@DisplayName("#112: the context URL of a walked path names what it addresses")
+	void walkedContextUrls() throws Exception {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		dairy.eSet(categoryClass.getEStructuralFeature("name"), "Dairy");
+		EObject milk = product("p1", "Milk", "1.20", dairy);
+		EObject butter = product("p2", "Butter", "2.10", dairy);
+		@SuppressWarnings("unchecked")
+		List<EObject> accessories = (List<EObject>) milk.eGet(productClass.getEStructuralFeature("accessories"));
+		accessories.add(butter);
+		backendResult = List.of(milk);
+
+		Response single = get("/Product('p1')/category", Map.of());
+		assertTrue(single.body().contains("$metadata#Category/$entity\""), single.body());
+		Response collection = get("/Product('p1')/accessories", Map.of());
+		assertTrue(collection.body().contains("$metadata#Product\""), collection.body());
+		assertTrue(collection.body().contains("\"Butter\""), collection.body());
+		Response property = get("/Product('p1')/name", Map.of());
+		assertTrue(property.body().contains("$metadata#Product('p1')/name\""), property.body());
+		Response viaNavigation = get("/Product('p1')/category/name", Map.of());
+		assertTrue(viaNavigation.body().contains("$metadata#Category('c1')/name\""),
+				"a property hangs off the last entity on the path: " + viaNavigation.body());
+		Response contained = get("/Product('p1')/reviews", Map.of());
+		assertTrue(contained.body().contains("$metadata#Product('p1')/reviews\""),
+				"keyless contained values have no set: " + contained.body());
+
+		Response expanded = get("/Product('p1')/accessories",
+				Map.of("$select", "name", "$expand", "category($select=name)"));
+		assertEquals(200, expanded.status(), expanded.body());
+		assertTrue(expanded.body().contains("\"category\":{") && expanded.body().contains("\"Dairy\""),
+				expanded.body());
+		assertFalse(expanded.body().contains("\"price\""), "unselected: " + expanded.body());
+	}
+
+	@Test
+	@DisplayName("#112: $select and $expand nest inside $expand, counts at every level")
+	void nestedExpandOptions() throws Exception {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		dairy.eSet(categoryClass.getEStructuralFeature("name"), "Dairy");
+		EObject milk = product("p1", "Milk", "1.20", null);
+		EObject butter = product("p2", "Butter", "2.10", dairy);
+		EObject cheese = product("p3", "Cheese", "5.00", dairy);
+		accessoriesOf(milk).addAll(List.of(butter, cheese));
+		accessoriesOf(butter).add(cheese);
+		backendResult = List.of(milk);
+
+		Response nested = get("/Product", Map.of("$select", "name",
+				"$expand", "accessories($select=name;$orderby=name desc;$count=true;"
+						+ "$expand=category($select=name),accessories($select=name;$count=true))"));
+		assertEquals(200, nested.status(), nested.body());
+		String body = nested.body();
+		assertTrue(body.indexOf("\"Cheese\"") < body.indexOf("\"Butter\""), "$orderby inside: " + body);
+		assertFalse(body.contains("\"price\""), "nested $select prunes the expanded entities: " + body);
+		assertTrue(body.contains("\"category\":{\"id\":\"c1\",\"name\":\"Dairy\"}"),
+				"nested $expand with its own $select: " + body);
+		assertTrue(body.contains("\"accessories@odata.count\":2"), "first-level count: " + body);
+		assertTrue(body.contains("\"accessories@odata.count\":1"), "second-level count: " + body);
+		assertEquals(List.of("accessories", "accessories/category", "accessories/accessories"),
+				lastQuery.get().expandPaths(), "the backend prefetches the nested paths");
+		assertTrue(lastQuery.get().expand().get(0).isPlain(),
+				"a navigation with deeper paths keeps its options in memory (ADR-0008)");
+
+		assertEquals(400, get("/Product", Map.of("$expand", "accessories($select=nosuch)")).status());
+		assertEquals(400, get("/Product", Map.of("$expand", "accessories($expand=nosuch)")).status());
+		assertEquals(501, get("/Product", Map.of("$expand", "accessories($expand=category/$ref)"))
+				.status(), "nested $ref expansion is not implemented");
+		assertEquals(501, get("/Product", Map.of("$expand", "accessories($compute=price as p)"))
+				.status());
+	}
+
+	@SuppressWarnings("unchecked")
+	private List<EObject> accessoriesOf(EObject product) {
+		return (List<EObject>) product.eGet(productClass.getEStructuralFeature("accessories"));
 	}
 
 	@Test

@@ -186,7 +186,8 @@ primitiv/Entity/Collection), unbound Actions (POST) via `ODataOperationHandler`-
 · ✅ **NEU 2026-07-08**: **Query-Optionen auf Navigationspfaden**: `$filter`/`$orderby`/`$top`/`$skip`/
 `$count` auf einer Navigations-Collection (`Set(key)/nav?$filter=…&$orderby=…`), `/$count` zählt die
 **gefilterte** Collection, `$orderby` sortiert in-memory (multi-key, null-first); nicht implementierte
-Optionen (`$select`, `$expand`, …) auf Nav-Pfaden weiterhin 501; Client threadet die
+Optionen auf Nav-Pfaden weiterhin 501 (**seit 2026-11-08, #112:** `$select`/`$expand` dort ✅, ebenso
+verschachteltes `$select`/`$expand` in `$expand` und der Kontext-URL des Ziels); Client threadet die
 Query-Option-Builder über `navigateCollection`
 · ✅ **NEU 2026-07-08**: **`$batch` (OData-v4.01-JSON-Batch-Format)**: `POST <root>/$batch` mit
 `{"requests":[…]}`; jede Sub-Request wird über eine synthetische Request/Response durch dieselbe
