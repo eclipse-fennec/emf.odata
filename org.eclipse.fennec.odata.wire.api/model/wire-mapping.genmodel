@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<genmodel:GenModel xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore"
+    xmlns:genmodel="http://www.eclipse.org/emf/2002/GenModel" copyrightText="Copyright (c) 2026 Contributors to the Eclipse Foundation.&#xA;&#xA;This program and the accompanying materials are made&#xA;available under the terms of the Eclipse Public License 2.0&#xA;which is available at https://www.eclipse.org/legal/epl-2.0/&#xA;&#xA;SPDX-License-Identifier: EPL-2.0&#xA;&#xA;Contributors:&#xA;  Data In Motion Consulting - initial implementation"
+    modelDirectory="/org.eclipse.fennec.odata.wire.api/src-gen" modelPluginID="org.eclipse.fennec.odata.wire.api"
+    modelName="WireMapping" rootExtendsClass="org.eclipse.emf.ecore.impl.MinimalEObjectImpl$Container"
+    importerID="org.eclipse.emf.importer.ecore" complianceLevel="21.0" copyrightFields="false"
+    usedGenPackages="../../org.eclipse.emf.ecore/model/Ecore.genmodel#//ecore"
+    operationReflection="true" importOrganizing="true" oSGiCompatible="true">
+  <foreignModel>wire-mapping.ecore</foreignModel>
+  <genPackages prefix="WireMapping" basePackage="org.eclipse.fennec.odata.wire" resource="XMI"
+      disposableProviderFactory="true" ecorePackage="wire-mapping.ecore#/">
+    <genClasses ecoreClass="wire-mapping.ecore#//WireMapping">
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//WireMapping/classes"/>
+    </genClasses>
+    <genClasses ecoreClass="wire-mapping.ecore#//ClassMapping">
+      <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//ClassMapping/eClass"/>
+      <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//ClassMapping/properties"/>
+    </genClasses>
+    <genClasses image="false" ecoreClass="wire-mapping.ecore#//WireProperty">
+      <genFeatures createChild="false" ecoreFeature="ecore:EAttribute wire-mapping.ecore#//WireProperty/name"/>
+    </genClasses>
+    <genClasses ecoreClass="wire-mapping.ecore#//IntervalProperty">
+      <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//IntervalProperty/start"/>
+      <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//IntervalProperty/end"/>
+    </genClasses>
+    <genClasses ecoreClass="wire-mapping.ecore#//AlternativesProperty">
+      <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//AlternativesProperty/parts"/>
+    </genClasses>
+  </genPackages>
+</genmodel:GenModel>

@@ -2,3 +2,13 @@ Bundle-Name: Fennec OData Wire Profile API
 Bundle-Description: SPI for the wire profile of a service root (ADR-0010): an OData dialect such as OGC SensorThings renames the control information, keeps the key out of the body, writes absolute self and navigation links and its own root document — selected per root by configuration, plain OData by default
 
 -library: enableEMF
+
+src=${^src},src-gen
+
+# The wire mapping (#119): the model a profile hands over, generated into src-gen
+-includeresource.model: model=model
+-generate:\
+	model/wire-mapping.genmodel;\
+		generate=fennecEMF;\
+		genmodel=model/wire-mapping.genmodel;\
+		output=src-gen
