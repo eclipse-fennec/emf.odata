@@ -12,12 +12,19 @@
  */
 package org.eclipse.fennec.odata.query;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -27,11 +34,14 @@ import org.antlr.v4.runtime.tree.TerminalNode;
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EClassifier;
+import org.eclipse.emf.ecore.EDataType;
 import org.eclipse.emf.ecore.EEnum;
 import org.eclipse.emf.ecore.EEnumLiteral;
+import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EOperation;
 import org.eclipse.emf.ecore.EParameter;
 import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.m2x.model.ocl.BooleanLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.CollectionItem;
 import org.eclipse.fennec.m2x.model.ocl.CollectionKind;
@@ -39,8 +49,10 @@ import org.eclipse.fennec.m2x.model.ocl.CollectionLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.EnumLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.IntegerLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.IteratorExp;
+import org.eclipse.fennec.m2x.model.ocl.NullLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.OclFactory;
+import org.eclipse.fennec.m2x.model.ocl.OclType;
 import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.RealLiteralExp;
@@ -50,6 +62,9 @@ import org.eclipse.fennec.m2x.model.ocl.Variable;
 import org.eclipse.fennec.m2x.model.ocl.VariableExp;
 import org.eclipse.fennec.odata.query.antlr.ODataFilterBaseVisitor;
 import org.eclipse.fennec.odata.query.antlr.ODataFilterParser;
+import org.eclipse.fennec.odata.wire.api.OperandKind;
+import org.eclipse.fennec.odata.wire.api.WireCondition;
+import org.eclipse.fennec.odata.wire.api.WireOperator;
 
 /**
  * Maps the {@code ODataFilter.g4} parse tree onto the m2x OCL AST (the internal predicate IR),
@@ -127,8 +142,33 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	private record LambdaScope(String name, Variable variable, EClass elementClass) {
 	}
 
+	/** The root's wire properties and key alias (#119); {@link WireView#NONE} for plain OData. */
+	private final WireView wire;
+	/**
+	 * Placeholders of wire properties in the tree being built: the expression stands for the
+	 * property until a comparison, a function or {@code $orderby} replaces it with its parts. One
+	 * that survives the build is a wire property used where it cannot be ({@link #checkResolved}).
+	 */
+	private final Map<OclExpression, WireRef> wireRefs = new IdentityHashMap<>();
+
+	/** A wire property on a path: its binding and the source of its parts (null = implicit). */
+	private record WireRef(WireView.Binding binding, OclExpression source) {
+	}
+
+	private static final Map<WireOperator, String> WIRE_OPS = Map.of(WireOperator.EQ, "=",
+			WireOperator.NE, "<>", WireOperator.GT, ">", WireOperator.GE, ">=", WireOperator.LT, "<",
+			WireOperator.LE, "<=");
+	private static final Map<String, WireOperator> OCL_TO_WIRE = Map.of("=", WireOperator.EQ,
+			"<>", WireOperator.NE, ">", WireOperator.GT, ">=", WireOperator.GE, "<", WireOperator.LT,
+			"<=", WireOperator.LE);
+
 	ODataToOclBuilder(EClass context) {
+		this(context, WireView.NONE);
+	}
+
+	ODataToOclBuilder(EClass context, WireView wire) {
 		this.context = context;
+		this.wire = wire;
 	}
 
 	/** Makes an aggregate/compute alias visible to subsequently built expressions. */
@@ -170,13 +210,201 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 
 	@Override
 	public OclExpression visitBinaryComparison(ODataFilterParser.BinaryComparisonContext ctx) {
-		return binary(COMPARISON_OPS.get(ctx.op.getText().toLowerCase()), visit(ctx.additive(0)), visit(ctx.additive(1)));
+		String op = COMPARISON_OPS.get(ctx.op.getText().toLowerCase());
+		OclExpression left = visit(ctx.additive(0));
+		OclExpression right = visit(ctx.additive(1));
+		WireRef leftWire = wireRefs.get(left);
+		WireRef rightWire = wireRefs.get(right);
+		if (leftWire == null && rightWire == null) {
+			return binary(op, left, right);
+		}
+		if (leftWire != null && rightWire != null) {
+			throw new ODataQueryNotImplementedException("comparing the wire properties '"
+					+ leftWire.binding().name() + "' and '" + rightWire.binding().name() + "' is not implemented");
+		}
+		WireOperator operator = OCL_TO_WIRE.get(op);
+		if (operator == null) {
+			throw new ODataQueryParseException("'" + ctx.op.getText() + "' does not apply to '"
+					+ (leftWire != null ? leftWire : rightWire).binding().name() + "'");
+		}
+		return leftWire != null ? wireCompare(leftWire, operator, right)
+				: wireCompare(rightWire, operator.converse(), left);
+	}
+
+	/** {@code property operator operand} through the handler, as a condition over the parts. */
+	private OclExpression wireCompare(WireRef ref, WireOperator operator, OclExpression operand) {
+		WireCondition condition;
+		try {
+			condition = ref.binding().handler().compare(operator, operandKind(operand));
+		} catch (IllegalArgumentException e) {
+			throw new ODataQueryParseException(String.valueOf(e.getMessage()));
+		} catch (UnsupportedOperationException e) {
+			throw new ODataQueryNotImplementedException(String.valueOf(e.getMessage()));
+		}
+		if (condition == null) {
+			throw new IllegalStateException("the handler of '" + ref.binding().name() + "' gave no condition");
+		}
+		return condition(ref, condition, operand);
+	}
+
+	private OclExpression condition(WireRef ref, WireCondition condition, OclExpression operand) {
+		return switch (condition) {
+		case WireCondition.Compare compare -> binary(WIRE_OPS.get(compare.operator()),
+				partCall(ref, compare.part()), EcoreUtil.copy(operand));
+		case WireCondition.IsNull isNull -> binary("=", partCall(ref, isNull.part()),
+				FACTORY.createNullLiteralExp());
+		case WireCondition.Not not -> {
+			OperationCallExp exp = FACTORY.createOperationCallExp();
+			exp.setName("not");
+			exp.setOwnedSource(condition(ref, not.condition(), operand));
+			yield exp;
+		}
+		case WireCondition.And and -> fold("and", and.conditions(), true, ref, operand);
+		case WireCondition.Or or -> fold("or", or.conditions(), false, ref, operand);
+		case WireCondition.Constant constant -> bool(constant.value());
+		};
+	}
+
+	private OclExpression fold(String op, List<WireCondition> conditions, boolean empty, WireRef ref,
+			OclExpression operand) {
+		OclExpression result = null;
+		for (WireCondition condition : conditions) {
+			OclExpression next = condition(ref, condition, operand);
+			result = result == null ? next : binary(op, result, next);
+		}
+		return result == null ? bool(empty) : result;
+	}
+
+	private static OclExpression bool(boolean value) {
+		BooleanLiteralExp exp = FACTORY.createBooleanLiteralExp();
+		exp.setBooleanSymbol(value);
+		return exp;
+	}
+
+	/** A part of a wire property, read from the property's source; only its own parts. */
+	private OclExpression partCall(WireRef ref, EAttribute part) {
+		if (part == null || !ref.binding().parts().contains(part)) {
+			throw new IllegalStateException("the handler of '" + ref.binding().name()
+					+ "' named an attribute that is not one of its parts");
+		}
+		PropertyCallExp call = FACTORY.createPropertyCallExp();
+		call.setReferredProperty(part);
+		if (ref.source() == null) {
+			call.setIsImplicit(true);
+		} else {
+			call.setOwnedSource(EcoreUtil.copy(ref.source()));
+		}
+		return call;
+	}
+
+	/** The expression itself, or the part of a wire property that stands for it as an operand. */
+	private OclExpression operand(OclExpression expression, String function) {
+		WireRef ref = wireRefs.get(expression);
+		if (ref == null) {
+			return expression;
+		}
+		EAttribute part = ref.binding().handler().operandOf(function);
+		if (part == null) {
+			throw new ODataQueryParseException("'" + ref.binding().name() + "' is no operand of '" + function + "'");
+		}
+		return partCall(ref, part);
+	}
+
+	/** The type of the other side of a comparison, as a handler sees it. */
+	private static OperandKind operandKind(OclExpression operand) {
+		if (operand instanceof NullLiteralExp) {
+			return OperandKind.NULL;
+		}
+		EClassifier type = new OclTypeResolver().resolve(operand).getType();
+		if (type == null) {
+			return OperandKind.UNKNOWN;
+		}
+		if (type instanceof EEnum) {
+			return OperandKind.OTHER;
+		}
+		if (type instanceof EDataType dataType && !(type instanceof OclType)
+				&& dataType.getInstanceClass() != null) {
+			Class<?> instance = dataType.getInstanceClass();
+			if (Date.class.isAssignableFrom(instance) || instance == Instant.class
+					|| instance == OffsetDateTime.class || instance == ZonedDateTime.class
+					|| instance == LocalDateTime.class) {
+				return OperandKind.DATE_TIME;
+			}
+			if (instance == LocalDate.class) {
+				return OperandKind.DATE;
+			}
+			if (instance == LocalTime.class) {
+				return OperandKind.TIME_OF_DAY;
+			}
+		}
+		return switch (String.valueOf(type.getName())) {
+		case "Integer", "Real", "UnlimitedNatural" -> OperandKind.NUMBER;
+		case "String" -> OperandKind.STRING;
+		case "Boolean" -> OperandKind.BOOLEAN;
+		case "DateTimeOffset" -> OperandKind.DATE_TIME;
+		case "Date" -> OperandKind.DATE;
+		case "TimeOfDay" -> OperandKind.TIME_OF_DAY;
+		case "OclVoid" -> OperandKind.NULL;
+		default -> type instanceof EClass ? OperandKind.UNKNOWN : OperandKind.OTHER;
+		};
+	}
+
+	/**
+	 * The {@code $orderby} keys of an item: the parts of a wire property in the handler's order,
+	 * else the expression itself.
+	 */
+	List<OclExpression> orderKeys(OclExpression expression) {
+		WireRef ref = wireRefs.get(expression);
+		if (ref == null) {
+			return List.of(expression);
+		}
+		List<EAttribute> keys = ref.binding().handler().orderBy();
+		if (keys == null || keys.isEmpty()) {
+			throw new ODataQueryParseException("'" + ref.binding().name() + "' cannot be sorted");
+		}
+		return keys.stream().map(part -> partCall(ref, part)).toList();
+	}
+
+	/**
+	 * Fails when a wire property is left where it cannot stand: as a filter of its own, in
+	 * {@code $apply}, as the argument of an unknown construct.
+	 *
+	 * @param notImplemented whether that is a 501 (in {@code $apply}) rather than a 400
+	 */
+	<T extends OclExpression> T checkResolved(T expression, boolean notImplemented) {
+		if (wireRefs.isEmpty()) {
+			return expression;
+		}
+		List<EObject> nodes = new ArrayList<>();
+		nodes.add(expression);
+		expression.eAllContents().forEachRemaining(nodes::add);
+		for (EObject node : nodes) {
+			WireRef ref = wireRefs.get(node);
+			if (ref != null) {
+				String message = "the wire property '" + ref.binding().name() + "' cannot be used here";
+				if (notImplemented) {
+					throw new ODataQueryNotImplementedException(message);
+				}
+				throw new ODataQueryParseException(message);
+			}
+		}
+		return expression;
 	}
 
 	@Override
 	public OclExpression visitInListComparison(ODataFilterParser.InListComparisonContext ctx) {
 		// Set{...}->includes(<lhs>) — per the req §3.5 mapping for v4.01 'in'
 		return includes(ctx.literal().stream().map(this::visit).toList(), visit(ctx.additive()));
+	}
+
+	/** {@code property in (a, b)} on a wire property: {@code property eq a or property eq b}. */
+	private OclExpression wireIn(WireRef ref, List<OclExpression> members) {
+		OclExpression result = null;
+		for (OclExpression member : members) {
+			OclExpression next = wireCompare(ref, WireOperator.EQ, member);
+			result = result == null ? next : binary("or", result, next);
+		}
+		return result == null ? bool(false) : result;
 	}
 
 	@Override
@@ -192,6 +420,10 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	}
 
 	private OclExpression includes(List<OclExpression> members, OclExpression lhs) {
+		WireRef ref = wireRefs.get(lhs);
+		if (ref != null) {
+			return wireIn(ref, members);
+		}
 		CollectionLiteralExp set = FACTORY.createCollectionLiteralExp();
 		set.setKind(CollectionKind.SET);
 		for (OclExpression member : members) {
@@ -204,12 +436,16 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 
 	@Override
 	public OclExpression visitAddSub(ODataFilterParser.AddSubContext ctx) {
-		return binary(ARITHMETIC_OPS.get(ctx.op.getText().toLowerCase()), visit(ctx.additive()), visit(ctx.multiplicative()));
+		String op = ctx.op.getText().toLowerCase();
+		return binary(ARITHMETIC_OPS.get(op), operand(visit(ctx.additive()), op),
+				operand(visit(ctx.multiplicative()), op));
 	}
 
 	@Override
 	public OclExpression visitMulDivMod(ODataFilterParser.MulDivModContext ctx) {
-		return binary(ARITHMETIC_OPS.get(ctx.op.getText().toLowerCase()), visit(ctx.multiplicative()), visit(ctx.primary()));
+		String op = ctx.op.getText().toLowerCase();
+		return binary(ARITHMETIC_OPS.get(op), operand(visit(ctx.multiplicative()), op),
+				operand(visit(ctx.primary()), op));
 	}
 
 	@Override
@@ -373,9 +609,10 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		}
 		OperationCallExp exp = FACTORY.createOperationCallExp();
 		exp.setName(oclName);
-		exp.setOwnedSource(visit(args.get(0)));
+		String function = odataName.toLowerCase();
+		exp.setOwnedSource(operand(visit(args.get(0)), function));
 		for (int i = 1; i < args.size(); i++) {
-			exp.getOwnedArguments().add(visit(args.get(i)));
+			exp.getOwnedArguments().add(operand(visit(args.get(i)), function));
 		}
 		return exp;
 	}
@@ -440,6 +677,21 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		for (int i = start; i < segments.size(); i++) {
 			Step step = segments.get(i);
 			if (step.annotation() != null) {
+				EAttribute key = wire.keyAlias(current, step.annotation().getText());
+				if (key != null) { // the profile's key value name (@iot.id) stands for the key (#119 E9)
+					PropertyCallExp call = FACTORY.createPropertyCallExp();
+					call.setReferredProperty(key);
+					if (source == null) {
+						call.setIsImplicit(true);
+					} else {
+						call.setOwnedSource(source);
+					}
+					source = call;
+					valueType = key.getEType();
+					many = false;
+					current = null;
+					continue;
+				}
 				// @Ns.Term value reference: representable, but no runtime vocabulary values yet
 				throw new UnsupportedOperationException(
 						"annotation value references are not supported yet: "
@@ -490,9 +742,21 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 							+ "' — the previous segment is not a structured type");
 				}
 				EStructuralFeature feature = current.getEStructuralFeature(name);
+				if (feature != null && wire.partOf(current, feature) != null) {
+					feature = null; // a part of a wire property is not addressable (#119)
+				}
 				if (feature == null) {
-					throw new ODataQueryParseException(
-							"unknown property '" + name + "' on " + current.getName());
+					WireView.Binding binding = wire.property(current, name);
+					if (binding == null) {
+						throw new ODataQueryParseException(
+								"unknown property '" + name + "' on " + current.getName());
+					}
+					if (i != segments.size() - 1 || ctx.lambdaCall() != null || ctx.countCall() != null) {
+						throw new ODataQueryParseException("'" + name + "' has no members");
+					}
+					VariableExp placeholder = FACTORY.createVariableExp();
+					wireRefs.put(placeholder, new WireRef(binding, source));
+					return placeholder;
 				}
 				PropertyCallExp call = FACTORY.createPropertyCallExp();
 				call.setReferredProperty(feature);
@@ -853,7 +1117,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	public OclExpression visitNegatedPrimary(ODataFilterParser.NegatedPrimaryContext ctx) {
 		OperationCallExp negate = FACTORY.createOperationCallExp();
 		negate.setName("-"); // unary form: no arguments, only the source
-		negate.setOwnedSource(visit(ctx.primary()));
+		negate.setOwnedSource(operand(visit(ctx.primary()), "sub"));
 		return negate;
 	}
 

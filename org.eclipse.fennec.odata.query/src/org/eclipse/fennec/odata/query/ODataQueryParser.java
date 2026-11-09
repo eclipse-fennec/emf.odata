@@ -64,6 +64,17 @@ public class ODataQueryParser {
 
 	private final OclTypeResolver typeResolver = new OclTypeResolver();
 
+	/** The root's wire properties and key alias (#119); plain OData by default. */
+	private volatile WireView wireView = WireView.NONE;
+
+	/**
+	 * Sets the wire view every later parse resolves against. A root sets it once when its
+	 * profile binds; a parser with a cache must be cleared with it.
+	 */
+	public void wireView(WireView view) {
+		this.wireView = view == null ? WireView.NONE : view;
+	}
+
 	/** Max nesting when parameter alias values reference other aliases ({@code @a=@b add 1}). */
 	private static final int MAX_ALIAS_DEPTH = 8;
 
@@ -90,9 +101,8 @@ public class ODataQueryParser {
 			Map<String, String> parameterAliases) {
 		return parsing(() -> {
 			ODataFilterParser parser = newParser(filter);
-			Supplier<ODataToOclBuilder> factory = () -> new ODataToOclBuilder(context);
-			return typeResolver.resolve(
-					aliasWired(factory, parameterAliases, 0).visit(parser.filter()));
+			Supplier<ODataToOclBuilder> factory = () -> new ODataToOclBuilder(context, wireView);
+			return typeResolver.resolve(filter(aliasWired(factory, parameterAliases, 0), parser));
 		});
 	}
 
@@ -111,8 +121,7 @@ public class ODataQueryParser {
 		return parsing(() -> {
 			ODataFilterParser parser = newParser(filter);
 			Supplier<ODataToOclBuilder> factory = () -> builderWithAliases(context, pipeline);
-			return typeResolver.resolve(
-					aliasWired(factory, parameterAliases, 0).visit(parser.filter()));
+			return typeResolver.resolve(filter(aliasWired(factory, parameterAliases, 0), parser));
 		});
 	}
 
@@ -133,7 +142,7 @@ public class ODataQueryParser {
 	}
 
 	private ODataToOclBuilder builderWithAliases(EClass context, ApplyPipeline pipeline) {
-		ODataToOclBuilder builder = new ODataToOclBuilder(context);
+		ODataToOclBuilder builder = new ODataToOclBuilder(context, wireView);
 		pipeline.eAllContents().forEachRemaining(element -> {
 			if (element instanceof AggregateExpression aggregate) {
 				builder.registerAlias(aggregate.getAlias());
@@ -155,7 +164,7 @@ public class ODataQueryParser {
 		return parsing(() -> {
 			ODataFilterParser parser = newParser(orderBy);
 			return orderBySegments(parser,
-					aliasWired(() -> new ODataToOclBuilder(context), parameterAliases, 0));
+					aliasWired(() -> new ODataToOclBuilder(context, wireView), parameterAliases, 0));
 		});
 	}
 
@@ -163,9 +172,17 @@ public class ODataQueryParser {
 		List<OrderBySegment> segments = new ArrayList<>();
 		for (ODataFilterParser.OrderbyItemContext item : parser.orderby().orderbyItem()) {
 			boolean ascending = item.direction == null || item.direction.getType() != ODataFilterLexer.DESC;
-			segments.add(new OrderBySegment(typeResolver.resolve(builder.visit(item.expr())), ascending));
+			// a wire property sorts by its parts, in the handler's order (#119)
+			for (OclExpression key : builder.orderKeys(builder.visit(item.expr()))) {
+				segments.add(new OrderBySegment(typeResolver.resolve(builder.checkResolved(key, false)), ascending));
+			}
 		}
 		return segments;
+	}
+
+	/** The filter of a parser, failing on a wire property left on its own. */
+	private static OclExpression filter(ODataToOclBuilder builder, ODataFilterParser parser) {
+		return builder.checkResolved(builder.visit(parser.filter()), false);
 	}
 
 	/**
@@ -189,7 +206,7 @@ public class ODataQueryParser {
 				throw new ODataQueryParseException(
 						"parameter alias nesting exceeds " + MAX_ALIAS_DEPTH + " levels");
 			}
-			return aliasWired(factory, values, depth + 1).visit(newParser(value).filter());
+			return filter(aliasWired(factory, values, depth + 1), newParser(value));
 		});
 		return builder;
 	}
@@ -203,7 +220,7 @@ public class ODataQueryParser {
 	public ApplyPipeline parseApply(String apply, EClass context) {
 		return parsing(() -> {
 			ODataFilterParser parser = newParser(apply);
-			ODataToOclBuilder builder = new ODataToOclBuilder(context);
+			ODataToOclBuilder builder = new ODataToOclBuilder(context, wireView);
 			return pipeline(parser.apply().applySeq(), builder);
 		});
 	}
@@ -233,7 +250,7 @@ public class ODataQueryParser {
 				ComputeTransformation t = ApplyFactory.eINSTANCE.createComputeTransformation();
 				for (ODataFilterParser.ComputeItemContext item : compute.computeItem()) {
 					ComputeExpression ce = ApplyFactory.eINSTANCE.createComputeExpression();
-					ce.setExpression(typeResolver.resolve(builder.visit(item.expr())));
+					ce.setExpression(typeResolver.resolve(builder.checkResolved(builder.visit(item.expr()), true)));
 					ce.setAlias(item.alias.getText());
 					t.getComputeExpressions().add(ce);
 					builder.registerAlias(ce.getAlias());
@@ -249,7 +266,7 @@ public class ODataQueryParser {
 			}
 			case ODataFilterParser.FilterTrafoContext filter -> {
 				FilterTransformation t = ApplyFactory.eINSTANCE.createFilterTransformation();
-				t.setPredicate(typeResolver.resolve(builder.visit(filter.expr())));
+				t.setPredicate(typeResolver.resolve(builder.checkResolved(builder.visit(filter.expr()), true)));
 				yield t;
 			}
 			case ODataFilterParser.BottomTopTrafoContext bottomTop -> {
@@ -262,15 +279,15 @@ public class ODataQueryParser {
 					case "bottomsum" -> BottomTopMethod.BOTTOM_SUM;
 					default -> BottomTopMethod.BOTTOM_PERCENT;
 				});
-				t.setThreshold(typeResolver.resolve(builder.visit(bottomTop.expr(0))));
-				t.setValue(typeResolver.resolve(builder.visit(bottomTop.expr(1))));
+				t.setThreshold(typeResolver.resolve(builder.checkResolved(builder.visit(bottomTop.expr(0)), true)));
+				t.setValue(typeResolver.resolve(builder.checkResolved(builder.visit(bottomTop.expr(1)), true)));
 				yield t;
 			}
 			case ODataFilterParser.OrderByTrafoContext orderBy -> {
 				OrderByTransformation t = ApplyFactory.eINSTANCE.createOrderByTransformation();
 				for (ODataFilterParser.OrderbyItemContext item : orderBy.orderbyItem()) {
 					OrderByExpression e = ApplyFactory.eINSTANCE.createOrderByExpression();
-					e.setExpression(typeResolver.resolve(builder.visit(item.expr())));
+					e.setExpression(typeResolver.resolve(builder.checkResolved(builder.visit(item.expr()), true)));
 					e.setAscending(item.direction == null
 							|| item.direction.getType() != ODataFilterLexer.DESC);
 					t.getItems().add(e);
@@ -305,7 +322,7 @@ public class ODataQueryParser {
 		GroupByTransformation t = ApplyFactory.eINSTANCE.createGroupByTransformation();
 		for (ODataFilterParser.GroupbyElementContext element : ctx.groupbyElement()) {
 			if (element instanceof ODataFilterParser.PathElementContext path) {
-				t.getGroupingProperties().add(typeResolver.resolve(builder.visit(path.memberPath())));
+				t.getGroupingProperties().add(typeResolver.resolve(builder.checkResolved(builder.visit(path.memberPath()), true)));
 			} else if (element instanceof ODataFilterParser.RollupRecursiveElementContext) {
 				throw new UnsupportedOperationException(
 						"rolluprecursive grouping is not supported yet");
@@ -325,7 +342,7 @@ public class ODataQueryParser {
 					hierarchy.setHierarchy(name);
 				} else {
 					for (ODataFilterParser.MemberPathContext level : levels) {
-						hierarchy.getLevels().add(typeResolver.resolve(builder.visit(level)));
+						hierarchy.getLevels().add(typeResolver.resolve(builder.checkResolved(builder.visit(level), true)));
 					}
 				}
 				t.getRollups().add(hierarchy);
@@ -353,7 +370,7 @@ public class ODataQueryParser {
 		AggregateExpression aggregate = ApplyFactory.eINSTANCE.createAggregateExpression();
 		switch (ctx) {
 			case ODataFilterParser.AggregateWithItemContext with -> {
-				aggregate.setExpression(typeResolver.resolve(builder.visit(with.expr())));
+				aggregate.setExpression(typeResolver.resolve(builder.checkResolved(builder.visit(with.expr()), true)));
 				method(with.method.getText(), aggregate::setMethod, aggregate::setCustomMethod);
 				aggregate.setAlias(with.alias.getText());
 				for (ODataFilterParser.AggrFromContext from : with.aggrFrom()) {
@@ -395,7 +412,7 @@ public class ODataQueryParser {
 			ODataFilterParser.ExprContext expr, ODataToOclBuilder builder) {
 		String text = expr.getText();
 		if (text.endsWith("/$count")) {
-			aggregate.setExpression(typeResolver.resolve(builder.visit(expr)));
+			aggregate.setExpression(typeResolver.resolve(builder.checkResolved(builder.visit(expr), true)));
 			aggregate.setMethod(AggregateMethod.COUNT);
 			return;
 		}
@@ -411,7 +428,7 @@ public class ODataQueryParser {
 			String methodText, ODataToOclBuilder builder) {
 		AggregateFrom from = ApplyFactory.eINSTANCE.createAggregateFrom();
 		for (ODataFilterParser.MemberPathContext path : paths) {
-			from.getGroupingProperties().add(typeResolver.resolve(builder.visit(path)));
+			from.getGroupingProperties().add(typeResolver.resolve(builder.checkResolved(builder.visit(path), true)));
 		}
 		if (methodText != null) {
 			method(methodText, from::setMethod, from::setCustomMethod);

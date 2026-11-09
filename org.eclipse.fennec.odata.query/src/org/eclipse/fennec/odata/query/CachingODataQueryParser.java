@@ -124,6 +124,12 @@ public class CachingODataQueryParser extends ODataQueryParser {
 		caches.remove(context);
 	}
 
+	@Override
+	public void wireView(WireView view) {
+		super.wireView(view);
+		invalidateAll(); // a cached parse was made against the previous view
+	}
+
 	public void invalidateAll() {
 		caches.clear();
 	}
