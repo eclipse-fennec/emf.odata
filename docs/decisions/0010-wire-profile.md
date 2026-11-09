@@ -2,7 +2,7 @@
 
 | Feld     | Wert                                                                          |
 |----------|-------------------------------------------------------------------------------|
-| Status   | Akzeptiert (Stufen 1 und 4 umgesetzt, 2, 3 und 5 offen)                       |
+| Status   | Akzeptiert (alle fünf Stufen umgesetzt)                                       |
 | Datum    | 2026-11-09                                                                    |
 | Betrifft | emf.odata#110, #115 (Entwurf), #121 (Entscheidungsprotokoll D1–D9), #119, #125, #126, #130; Bundle `org.eclipse.fennec.odata.wire.api`, `ODataServlet`, Query-Bundle |
 
@@ -148,10 +148,10 @@ Abnahme ist der STA-TCK (ets-sta10/11) gegen das Pool-Beispiel von emf.streaming
 | Stufe | Inhalt | Stand |
 |---|---|---|
 | 1 | SPI, Kontrollnamen an einem Ort, Navigationslinks, Basis-URL, Root-Dokument, Fehler-Body (#116; PRs #122, #124, #127) | umgesetzt |
-| 2 | Lesen: `@iot.id` in Bodies, Verlinken (#117) | offen |
-| 3 | JSON-wertige Properties (#118); vermutlich ein Handler-Fall statt `type=json` | offen |
+| 2 | Lesen: `@iot.id` in Bodies als Key, Verlinken; Deep Insert neuer Entities generisch in emf.odata (#117, #135) | umgesetzt |
+| 3 | JSON-wertige Properties: `WireJson` und der mitgelieferte `JsonTextHandler`, keine Annotation (#118, #135) | umgesetzt |
 | 4 | Wire-Properties über mehrere Attribute (#119, #128, #131, #132), `$value` strukturiert (#130) | umgesetzt; STA-Handler in emf.streaming#69–71 |
-| 5 | Paging innerhalb `$expand` (#120) | offen |
+| 5 | Paging auf Navigations-Collections und innerhalb `$expand` (#120, #135) | umgesetzt |
 
 ## Konsequenzen
 
