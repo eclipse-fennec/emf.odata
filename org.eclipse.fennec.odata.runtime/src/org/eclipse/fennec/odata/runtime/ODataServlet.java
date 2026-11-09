@@ -50,6 +50,8 @@ import org.eclipse.emf.ecore.EOperation;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.emf.ecore.EcoreFactory;
+import org.eclipse.emf.ecore.EcorePackage;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
@@ -87,7 +89,9 @@ import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.query.CachingODataQueryParser;
+import org.eclipse.fennec.odata.query.ODataQueryNotImplementedException;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
+import org.eclipse.fennec.odata.query.WireView;
 import org.eclipse.fennec.odata.query.ODataResourceParser;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.query.ResourcePath;
@@ -244,6 +248,8 @@ public class ODataServlet extends HttpServlet {
 	 * {@value WireProfile#REFERENCE} — plain OData unless {@code wireProfile.target} selects another.
 	 */
 	private volatile WireProfile wireProfile = ODataWireProfile.INSTANCE;
+	/** The profile's wire properties and key alias (#119), checked when the root activates. */
+	private volatile WireView wireView = WireView.NONE;
 	/** The absolute URL of this root for absolute links ({@code odata.base.url}); null = derived. */
 	private volatile String baseUrl;
 	/** Whether {@code X-Forwarded-*} may set the base URL ({@code odata.forwarded.trust}). */
@@ -251,6 +257,9 @@ public class ODataServlet extends HttpServlet {
 
 	@Activate
 	void activate(Map<String, Object> configuration) {
+		// a mapping the runtime cannot serve fails the root, as a profile that is not there would
+		wireView = WireView.of(wireProfile, this::keyAttributes);
+		parser.wireView(wireView);
 		Object base = configuration.get("odata.base.url");
 		baseUrl = base == null || String.valueOf(base).isBlank() ? null : String.valueOf(base).trim();
 		trustForwarded = Boolean.parseBoolean(String.valueOf(configuration.get("odata.forwarded.trust")));
@@ -435,7 +444,7 @@ public class ODataServlet extends HttpServlet {
 
 	/** The wire of a request to this root. */
 	private Wire wireOf(HttpServletRequest request) {
-		return Wire.of(wireProfile, Wire.baseUrl(request, baseUrl, trustForwarded));
+		return Wire.of(wireProfile, Wire.baseUrl(request, baseUrl, trustForwarded), wireView);
 	}
 
 	@Reference
@@ -642,6 +651,8 @@ public class ODataServlet extends HttpServlet {
 			LOGGER.log(System.Logger.Level.WARNING,
 					() -> "bad request serving GET " + request.getRequestURI(), e);
 			error(response, HttpServletResponse.SC_BAD_REQUEST, "the request could not be processed");
+		} catch (ODataQueryNotImplementedException e) {
+			error(response, 501, e.getMessage()); // a curated message, e.g. a wire property (#119)
 		} catch (UnsupportedOperationException e) {
 			// pushdown backends refuse loudly instead of answering wrongly (e.g. a JPA
 			// backend without a translation for a construct) — an honest 501
@@ -2016,6 +2027,19 @@ public class ODataServlet extends HttpServlet {
 						return;
 					}
 					EStructuralFeature feature = object.eClass().getEStructuralFeature(property.name());
+					WireView view = Wire.current().view();
+					if (feature != null && view.partOf(object.eClass(), feature) != null) {
+						feature = null; // a part of a wire property is not addressable (#119)
+					}
+					WireView.Binding wire = feature == null && property.key() == null
+							? view.property(object.eClass(), property.name()) : null;
+					if (wire != null) { // a wire property: the value its handler writes
+						current = wire.handler().write(object);
+						addressed = wireFeature(wire);
+						declared = null;
+						tail.append('/').append(property.name());
+						continue;
+					}
 					if (feature == null) {
 						// 4.01 13.2.1/9.3+9.5: a parameterless bound function invoked WITHOUT
 						// parentheses, unqualified (default namespace)
@@ -2162,6 +2186,17 @@ public class ODataServlet extends HttpServlet {
 			current = pageCollection(orderCollection(filterCollection(collection, request), request), request);
 		}
 		writeWalkedValue(current, declared, addressed, owner + tail, request, response);
+	}
+
+	/**
+	 * A stand-in feature for a wire property (#119), so a property request on it names its
+	 * member like any other property ({@link WireProfile#propertyMember}).
+	 */
+	static EStructuralFeature wireFeature(WireView.Binding wire) {
+		EAttribute feature = EcoreFactory.eINSTANCE.createEAttribute();
+		feature.setName(wire.name());
+		feature.setEType(EcorePackage.Literals.EJAVA_OBJECT);
+		return feature;
 	}
 
 	/** Applies {@code $filter} to a walked entity collection (in-memory; already materialized). */

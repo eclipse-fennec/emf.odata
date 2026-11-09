@@ -14,10 +14,13 @@ package org.eclipse.fennec.odata.runtime;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -46,6 +49,7 @@ import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.OrderBySegment;
+import org.eclipse.fennec.odata.query.WireView;
 import org.eclipse.fennec.odata.wire.api.ControlNames;
 
 import tools.jackson.databind.DeserializationFeature;
@@ -595,7 +599,58 @@ private void retainShaped(ObjectNode node, EObject copy, EntityShaper.Shape shap
 			}
 		});
 	}
+	wireMembers(node, copy, select);
 	decorate(node, copy, shape);
+}
+
+/**
+ * The wire properties of a profile (#119): each replaces its parts, at the place of its first
+ * part, with the value its handler writes — when selected, or always without {@code $select}.
+ */
+private static void wireMembers(ObjectNode node, EObject copy, SelectTree select) {
+	Map<String, WireView.Binding> properties = Wire.current().view().properties(copy.eClass());
+	if (properties.isEmpty()) {
+		return;
+	}
+	Map<String, WireView.Binding> byPart = new HashMap<>();
+	properties.values().forEach(binding -> binding.parts().forEach(part -> byPart.put(part.getName(), binding)));
+	Set<String> written = new HashSet<>();
+	ObjectNode ordered = node.objectNode();
+	node.properties().forEach(member -> {
+		WireView.Binding binding = byPart.get(member.getKey());
+		if (binding == null) {
+			ordered.set(member.getKey(), member.getValue());
+		} else if (written.add(binding.name()) && (select == null || select.selectsWire(binding.name()))) {
+			ordered.set(binding.name(), wireValue(node, binding, copy));
+		}
+	});
+	properties.values().forEach(binding -> {
+		if (written.add(binding.name()) && (select == null || select.selectsWire(binding.name()))) {
+			ordered.set(binding.name(), wireValue(node, binding, copy));
+		}
+	});
+	node.removeAll();
+	node.setAll(ordered);
+}
+
+/** The JSON of a wire property: the scalar its handler writes. */
+static JsonNode wireValue(ObjectNode factory, WireView.Binding binding, EObject entity) {
+	Object value = binding.handler().write(entity);
+	return switch (value) {
+	case null -> factory.nullNode();
+	case String text -> factory.textNode(text);
+	case Boolean bool -> factory.booleanNode(bool);
+	case BigDecimal decimal -> factory.numberNode(decimal);
+	case BigInteger integer -> factory.numberNode(integer);
+	case Long number -> factory.numberNode(number);
+	case Integer number -> factory.numberNode(number);
+	case Short number -> factory.numberNode(number);
+	case Byte number -> factory.numberNode(number);
+	case Double number -> factory.numberNode(number);
+	case Float number -> factory.numberNode(number);
+	default -> throw new IllegalStateException("the handler of '" + binding.name()
+			+ "' wrote a " + value.getClass().getSimpleName() + ", not a JSON scalar");
+	};
 }
 
 /**

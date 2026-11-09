@@ -221,6 +221,40 @@ overwrites them — any client could choose the host of every link.
 }
 ```
 
+### Wire properties
+
+A dialect may show model attributes as one property: SensorThings writes `phenomenonTime` as
+`"start/end"` over two date attributes, and `result` as whichever of a number, a boolean and a
+text attribute is set. The profile hands the runtime a `WireMapping` (`mapping()`, EMF model
+`https://eclipse.org/fennec/odata/wire/mapping/1.0`): per type, `WireProperty` entries with the
+wire name and the model attributes they stand for, the *parts*. What a property means is the
+profile's `WirePropertyHandler` (`handler(property)`) — the runtime knows no dialect semantics:
+
+| Handler method | Used for |
+|---|---|
+| `write(entity)` | the JSON value (string, number, boolean or `null`) in entities, `$expand`, `GET …/prop`, `/$value` |
+| `read(value)` | the part values from a write (POST, PUT, PATCH, `PUT …/prop`) |
+| `compare(op, operandKind)` | a `$filter` comparison, as a `WireCondition` over the parts |
+| `operandOf(function)` | the part a function or arithmetic operator works on (`year(…)`, `length(…)`, `add`) |
+| `orderBy()` | the `$orderby` keys |
+
+The runtime does the rest, for the root of that profile only — a plain OData root of the same
+model sees the attributes as they are:
+
+- the wire name replaces the parts in the payload, `$select` (which loads the parts) and
+  `$expand`; the parts are not addressable (400)
+- a comparison is turned so the property is on the left, `in` becomes `eq` comparisons, and the
+  handler's condition — which can name only the parts and the other operand — is pushed down
+  to the backend like any filter; nothing is filtered or sorted in memory
+- a merge (PATCH) that clears a part is written as a replace of the current state
+- comparing two wire properties answers 501, as do wire properties in `$apply`; a handler
+  answers 400 with `IllegalArgumentException` and 501 with `UnsupportedOperationException`
+- the ETag stays over the model attributes; `$metadata` still shows the model
+
+A mapping the runtime cannot serve — a part that is no attribute of the type, a property
+without parts or handler, a name used twice — fails the root when it activates. The profile's
+key value name (`@iot.id`) is an alias of a single key in `$filter`, `$orderby` and `$select`.
+
 ## Operations
 
 Registered via the `ODataOperationHandler` SPI: unbound **function imports**

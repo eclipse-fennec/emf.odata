@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
@@ -54,6 +55,7 @@ import org.eclipse.fennec.codec.util.MetadataServiceFactory;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
+import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataWhiteboard;
 import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
@@ -72,7 +74,15 @@ import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.wire.api.ControlNames;
 import org.eclipse.fennec.odata.wire.api.ServiceRoot;
+import org.eclipse.fennec.odata.wire.api.OperandKind;
+import org.eclipse.fennec.odata.wire.api.WireCondition;
+import org.eclipse.fennec.odata.wire.api.WireOperator;
 import org.eclipse.fennec.odata.wire.api.WireProfile;
+import org.eclipse.fennec.odata.wire.api.WirePropertyHandler;
+import org.eclipse.fennec.odata.wire.mapping.ClassMapping;
+import org.eclipse.fennec.odata.wire.mapping.WireMapping;
+import org.eclipse.fennec.odata.wire.mapping.WireMappingFactory;
+import org.eclipse.fennec.odata.wire.mapping.WireProperty;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -3497,5 +3507,197 @@ class ODataServletTest {
 			}
 		}
 		throw new IllegalStateException("test resource not found from " + start);
+	}
+
+	// --- #119: wire properties over model attributes, meaning from the profile's handler ---
+
+	/** A neutral handler: {@code label} = {@code "name#rating"}, compared and sorted by its parts. */
+	private final class LabelHandler implements WirePropertyHandler {
+		private final EAttribute name = (EAttribute) productClass.getEStructuralFeature("name");
+		private final EAttribute rating = (EAttribute) productClass.getEStructuralFeature("rating");
+
+		@Override
+		public Object write(EObject entity) {
+			return entity.eGet(name) == null ? null : entity.eGet(name) + "#" + entity.eGet(rating);
+		}
+
+		@Override
+		public Map<EAttribute, Object> read(Object value) {
+			if (value == null) {
+				Map<EAttribute, Object> cleared = new HashMap<>();
+				cleared.put(name, null);
+				return cleared;
+			}
+			if (!(value instanceof String text) || !text.contains("#")) {
+				throw new IllegalArgumentException("a label is 'name#rating'");
+			}
+			String[] parts = text.split("#");
+			return Map.of(name, parts[0], rating, Integer.valueOf(parts[1]));
+		}
+
+		@Override
+		public WireCondition compare(WireOperator operator, OperandKind operand) {
+			return switch (operand) {
+			case STRING -> WireCondition.compare(name, operator);
+			case NULL -> operator == WireOperator.EQ ? WireCondition.isNull(name)
+					: WireCondition.not(WireCondition.isNull(name));
+			default -> throw new IllegalArgumentException("a label compares with text");
+			};
+		}
+
+		@Override
+		public EAttribute operandOf(String function) {
+			return "length".equals(function) ? name : null;
+		}
+
+		@Override
+		public List<EAttribute> orderBy() {
+			return List.of(rating, name);
+		}
+	}
+
+	/** {@link TestProfile} plus the wire property {@code label} on Product. */
+	private final class LabelProfile implements WireProfile {
+		private final WireProperty label = WireMappingFactory.eINSTANCE.createWireProperty();
+		private final List<EAttribute> parts;
+
+		LabelProfile(EAttribute... parts) {
+			this.parts = List.of(parts);
+			label.setName("label");
+			label.getParts().addAll(this.parts);
+		}
+
+		@Override
+		public ControlNames controls() {
+			return testProfile.controls();
+		}
+
+		@Override
+		public boolean keyInBody(EClass type) {
+			return false;
+		}
+
+		@Override
+		public String propertyMember(EStructuralFeature property) {
+			return property.getName();
+		}
+
+		@Override
+		public Optional<WireMapping> mapping() {
+			ClassMapping product = WireMappingFactory.eINSTANCE.createClassMapping();
+			product.setEClass(productClass);
+			product.getProperties().add(label);
+			WireMapping mapping = WireMappingFactory.eINSTANCE.createWireMapping();
+			mapping.getClasses().add(product);
+			return Optional.of(mapping);
+		}
+
+		@Override
+		public Optional<WirePropertyHandler> handler(WireProperty property) {
+			return Optional.of(new LabelHandler());
+		}
+	}
+
+	private void speakLabel() {
+		servlet.setWireProfile(new LabelProfile((EAttribute) productClass.getEStructuralFeature("name"),
+				(EAttribute) productClass.getEStructuralFeature("rating")));
+		servlet.activate(Map.of("odata.max.top", "50", "odata.max.expression.length", "128",
+				"odata.max.nesting.depth", "8", "odata.max.body.size", "256"));
+	}
+
+	@Test
+	@DisplayName("#119: the wire property replaces its parts in the payload and under $select")
+	void wirePropertyPayload() throws Exception {
+		speakLabel();
+		backendResult = dairyProducts();
+
+		String all = get("/Product", Map.of()).body();
+		assertTrue(all.contains("{\"@iot.id\":\"p1\",\"@iot.selfLink\":\"Product('p1')\",\"label\":\"Milk#0\",\"price\":1.20"), all);
+		assertFalse(all.contains("\"name\""), "the parts are not on the wire: " + all);
+		assertFalse(all.contains("\"rating\""), all);
+
+		assertTrue(get("/Product", Map.of("$select", "label")).body().contains("\"value\":[{\"label\":\"Milk#0\"}"));
+		assertTrue(get("/Product", Map.of("$select", "@iot.id")).body().contains("\"value\":[{\"@iot.id\":\"p1\"}"),
+				"the key value name selects the key (E9)");
+		assertEquals(400, get("/Product", Map.of("$select", "name")).status(), "a part is not addressable");
+	}
+
+	@Test
+	@DisplayName("#119: $filter and $orderby reach the backend as conditions over the parts")
+	void wirePropertyQuery() throws Exception {
+		speakLabel();
+		backendResult = dairyProducts();
+
+		assertEquals(200, get("/Product", Map.of("$filter", "label eq 'Milk'")).status());
+		OperationCallExp eq = (OperationCallExp) lastQuery.get().filter();
+		assertEquals("=", eq.getName());
+		assertEquals("name", ((PropertyCallExp) eq.getOwnedSource())
+				.getReferredProperty().getName());
+
+		assertEquals(200, get("/Product", Map.of("$filter", "@iot.id eq 'p1'")).status());
+		assertEquals("id", ((PropertyCallExp)
+				((OperationCallExp) lastQuery.get().filter()).getOwnedSource()).getReferredProperty().getName());
+
+		assertEquals(200, get("/Product", Map.of("$orderby", "label desc")).status());
+		assertEquals(List.of("rating", "name"), lastQuery.get().orderBy().stream()
+				.map(segment -> ((PropertyCallExp) segment.expression())
+						.getReferredProperty().getName()).toList());
+		assertFalse(lastQuery.get().orderBy().get(0).ascending());
+
+		Response handlerSays400 = get("/Product", Map.of("$filter", "label eq 4"));
+		assertEquals(400, handlerSays400.status());
+		assertTrue(handlerSays400.body().contains("a label compares with text"), handlerSays400.body());
+		assertEquals(400, get("/Product", Map.of("$filter", "rating gt 1")).status(), "a part is not addressable");
+		assertEquals(501, get("/Product", Map.of("$filter", "label eq label")).status());
+	}
+
+	@Test
+	@DisplayName("#119: a property request on a wire property, also as $value")
+	void wirePropertyRequest() throws Exception {
+		speakLabel();
+		backendResult = dairyProducts();
+
+		assertEquals("{\"label\":\"Milk#0\"}", get("/Product('p1')/label", Map.of()).body());
+		assertEquals("Milk#0", get("/Product('p1')/label/$value", Map.of()).body());
+		assertEquals(404, get("/Product('p1')/name", Map.of()).status(), "a part is not addressable");
+	}
+
+	@Test
+	@DisplayName("#119: writes read the wire property through the handler")
+	void wirePropertyWrite() throws Exception {
+		speakLabel();
+		backendResult = dairyProducts().subList(0, 1);
+
+		Response created = callWrite("POST", "/Product", "{\"id\":\"p9\",\"label\":\"Cheese#3\"}", "application/json");
+		assertEquals(201, created.status(), created.body());
+		assertEquals("Cheese", lastWritePayload.get().eGet(productClass.getEStructuralFeature("name")));
+		assertEquals(3, lastWritePayload.get().eGet(productClass.getEStructuralFeature("rating")));
+
+		Response invalid = callWrite("POST", "/Product", "{\"id\":\"p9\",\"label\":5}", "application/json");
+		assertEquals(400, invalid.status());
+		assertTrue(invalid.body().contains("a label is 'name#rating'"), invalid.body());
+		assertEquals(400, callWrite("POST", "/Product", "{\"id\":\"p9\",\"name\":\"x\"}", "application/json").status(),
+				"a part is not addressable");
+
+		Response cleared = callWrite("PATCH", "/Product('p1')", Map.of(), "{\"label\":null}",
+				"application/json", Map.of("If-Match", "*"));
+		assertEquals(2, cleared.status() / 100, cleared.body());
+		assertTrue(lastReplace.get(), "clearing a part is a replace of the current state");
+		assertNull(lastWritePayload.get().eGet(productClass.getEStructuralFeature("name")));
+		assertEquals(new BigDecimal("1.20"), lastWritePayload.get().eGet(productClass.getEStructuralFeature("price")),
+				"the rest of the current state stays");
+
+		assertEquals(204, callWrite("PUT", "/Product('p1')/label", Map.of(), "{\"label\":\"Quark#2\"}",
+				"application/json", Map.of("If-Match", "*")).status());
+		assertEquals("Quark", lastWritePayload.get().eGet(productClass.getEStructuralFeature("name")));
+	}
+
+	@Test
+	@DisplayName("#119: a mapping the runtime cannot serve fails the root")
+	void wireMappingBroken() {
+		EClass category = EcoreHelper.getEClass(pkg, "Category");
+		servlet.setWireProfile(new LabelProfile((EAttribute) category.getEStructuralFeature("name")));
+		assertTrue(assertThrows(IllegalArgumentException.class, () -> servlet.activate(Map.of()))
+				.getMessage().contains("no attribute of Product"));
 	}
 }

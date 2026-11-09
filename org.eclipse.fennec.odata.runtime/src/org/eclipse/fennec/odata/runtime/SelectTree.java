@@ -20,9 +20,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
+import org.eclipse.fennec.odata.query.WireView;
 
 /**
  * Parsed and model-validated {@code $select} tree ([OData-URL] 5.1.3): plain properties are
@@ -99,6 +101,11 @@ public final class SelectTree {
 	}
 
 	/** Whether the control information {@code name} is selected on this level (ADR-0010). */
+	/** Whether a wire property is selected ({@code $select=phenomenonTime}, #119). */
+	public boolean selectsWire(String name) {
+		return selectsControl(name);
+	}
+
 	public boolean selectsControl(String name) {
 		return name != null && controls.contains(name);
 	}
@@ -127,6 +134,18 @@ public final class SelectTree {
 			}
 			int paren = trimmed.indexOf('(');
 			if (paren < 0) {
+				WireView view = Wire.current().view();
+				WireView.Binding wire = view.property(type, trimmed);
+				if (wire != null) { // a wire property selects its parts and itself (#119)
+					wire.parts().forEach(part -> items.put(part.getName(), LEAF));
+					controls.add(trimmed);
+					continue;
+				}
+				EAttribute key = view.keyAlias(type, trimmed);
+				if (key != null) { // the profile's key value name selects the key (E9)
+					items.put(key.getName(), LEAF);
+					continue;
+				}
 				feature(type, trimmed);
 				items.put(trimmed, LEAF);
 				continue;
@@ -202,7 +221,7 @@ public final class SelectTree {
 
 	private static EStructuralFeature feature(EClass type, String name) {
 		EStructuralFeature feature = type.getEStructuralFeature(name);
-		if (feature == null) {
+		if (feature == null || Wire.current().view().partOf(type, feature) != null) {
 			throw new ODataQueryParseException(
 					"unknown $select property '" + name + "' on " + type.getName());
 		}
