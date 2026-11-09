@@ -62,6 +62,20 @@ public interface WirePropertyHandler {
 	WireCondition compare(WireOperator operator, OperandKind operand);
 
 	/**
+	 * The condition for {@code property operator other}, where {@code other} is another wire
+	 * property of the same entity, e.g. {@code phenomenonTime lt validTime} (#129). The condition
+	 * may name the parts of both ({@link WireCondition.CompareParts}, {@link WireCondition.IsNull}).
+	 * The default answers 501.
+	 *
+	 * @throws IllegalArgumentException      when the two cannot compare (400)
+	 * @throws UnsupportedOperationException when the comparison is not supported (501)
+	 */
+	default WireCondition compare(WireOperator operator, WireProperty other) {
+		throw new UnsupportedOperationException("comparing with the wire property '" + other.getName()
+				+ "' is not implemented");
+	}
+
+	/**
 	 * The part that stands for the property as the operand of a function or an arithmetic
 	 * operator: the OData name such as {@code year}, {@code length}, {@code contains},
 	 * {@code round}, {@code add}; {@code null} when the property is no valid operand (400).

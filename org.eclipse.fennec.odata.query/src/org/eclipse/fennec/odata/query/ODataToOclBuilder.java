@@ -216,13 +216,18 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		WireRef leftWire = wireRefs.get(left);
 		WireRef rightWire = wireRefs.get(right);
 		if (leftWire == null && rightWire == null) {
+			if (isInterval(left) || isInterval(right)) {
+				throw new ODataQueryParseException("an interval literal compares only with a wire property");
+			}
 			return binary(op, left, right);
 		}
-		if (leftWire != null && rightWire != null) {
-			throw new ODataQueryNotImplementedException("comparing the wire properties '"
-					+ leftWire.binding().name() + "' and '" + rightWire.binding().name() + "' is not implemented");
-		}
 		WireOperator operator = OCL_TO_WIRE.get(op);
+		if (leftWire != null && rightWire != null) {
+			if (operator == null) {
+				throw new ODataQueryParseException("'" + ctx.op.getText() + "' does not apply to wire properties");
+			}
+			return wireCompare(leftWire, operator, rightWire);
+		}
 		if (operator == null) {
 			throw new ODataQueryParseException("'" + ctx.op.getText() + "' does not apply to '"
 					+ (leftWire != null ? leftWire : rightWire).binding().name() + "'");
@@ -244,32 +249,88 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		if (condition == null) {
 			throw new IllegalStateException("the handler of '" + ref.binding().name() + "' gave no condition");
 		}
-		return condition(ref, condition, operand);
+		return condition(ref, null, condition, operand);
 	}
 
-	private OclExpression condition(WireRef ref, WireCondition condition, OclExpression operand) {
+	/** {@code property operator other} between two wire properties, through the left handler (#129). */
+	private OclExpression wireCompare(WireRef ref, WireOperator operator, WireRef other) {
+		WireCondition condition;
+		try {
+			condition = ref.binding().handler().compare(operator, other.binding().property());
+		} catch (IllegalArgumentException e) {
+			throw new ODataQueryParseException(String.valueOf(e.getMessage()));
+		} catch (UnsupportedOperationException e) {
+			throw new ODataQueryNotImplementedException(String.valueOf(e.getMessage()));
+		}
+		if (condition == null) {
+			throw new IllegalStateException("the handler of '" + ref.binding().name() + "' gave no condition");
+		}
+		return condition(ref, other, condition, null);
+	}
+
+	/**
+	 * A condition as a query over parts.
+	 *
+	 * @param other   the other wire property between two wire properties, else null
+	 * @param operand the other operand of a comparison with a value, else null
+	 */
+	private OclExpression condition(WireRef ref, WireRef other, WireCondition condition, OclExpression operand) {
 		return switch (condition) {
 		case WireCondition.Compare compare -> binary(WIRE_OPS.get(compare.operator()),
-				partCall(ref, compare.part()), EcoreUtil.copy(operand));
-		case WireCondition.IsNull isNull -> binary("=", partCall(ref, isNull.part()),
+				partCall(ref, compare.part()), EcoreUtil.copy(require(ref, operand)));
+		case WireCondition.CompareBound bound -> binary(WIRE_OPS.get(bound.operator()),
+				partCall(ref, bound.part()), intervalBound(ref, operand, bound.bound()));
+		case WireCondition.CompareParts parts -> binary(WIRE_OPS.get(parts.operator()),
+				partCall(ref, parts.part()), partCall(require(ref, other), parts.otherPart()));
+		case WireCondition.IsNull isNull -> binary("=", partCall(owner(ref, other, isNull.part()), isNull.part()),
 				FACTORY.createNullLiteralExp());
 		case WireCondition.Not not -> {
 			OperationCallExp exp = FACTORY.createOperationCallExp();
 			exp.setName("not");
-			exp.setOwnedSource(condition(ref, not.condition(), operand));
+			exp.setOwnedSource(condition(ref, other, not.condition(), operand));
 			yield exp;
 		}
-		case WireCondition.And and -> fold("and", and.conditions(), true, ref, operand);
-		case WireCondition.Or or -> fold("or", or.conditions(), false, ref, operand);
+		case WireCondition.And and -> fold("and", and.conditions(), true, ref, other, operand);
+		case WireCondition.Or or -> fold("or", or.conditions(), false, ref, other, operand);
 		case WireCondition.Constant constant -> bool(constant.value());
 		};
 	}
 
+	/** The wire property a part belongs to: this one, else the other one of a two-property comparison. */
+	private static WireRef owner(WireRef ref, WireRef other, EAttribute part) {
+		return other != null && !ref.binding().parts().contains(part) && other.binding().parts().contains(part)
+				? other : ref;
+	}
+
+	private static <T> T require(WireRef ref, T value) {
+		if (value == null) {
+			throw new IllegalStateException("the handler of '" + ref.binding().name()
+					+ "' named an operand this comparison does not have");
+		}
+		return value;
+	}
+
+	/** A bound of an interval literal operand, as a DateTimeOffset literal. */
+	private OclExpression intervalBound(WireRef ref, OclExpression operand, WireCondition.Bound bound) {
+		if (!isInterval(operand)) {
+			throw new IllegalStateException("the handler of '" + ref.binding().name()
+					+ "' compared with an interval bound, but the operand is no interval");
+		}
+		String[] bounds = ((StringLiteralExp) operand).getStringSymbol().split("/", 2);
+		return typedString(bound == WireCondition.Bound.START ? bounds[0] : bounds[1], "DateTimeOffset");
+	}
+
+	/** Whether an expression is an interval literal {@code start/end} (#129). */
+	private static boolean isInterval(OclExpression expression) {
+		return expression instanceof StringLiteralExp literal && literal.getType() != null
+				&& "Interval".equals(literal.getType().getName());
+	}
+
 	private OclExpression fold(String op, List<WireCondition> conditions, boolean empty, WireRef ref,
-			OclExpression operand) {
+			WireRef other, OclExpression operand) {
 		OclExpression result = null;
 		for (WireCondition condition : conditions) {
-			OclExpression next = condition(ref, condition, operand);
+			OclExpression next = condition(ref, other, condition, operand);
 			result = result == null ? next : binary(op, result, next);
 		}
 		return result == null ? bool(empty) : result;
@@ -342,6 +403,7 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 		case "String" -> OperandKind.STRING;
 		case "Boolean" -> OperandKind.BOOLEAN;
 		case "DateTimeOffset" -> OperandKind.DATE_TIME;
+		case "Interval" -> OperandKind.INTERVAL;
 		case "Date" -> OperandKind.DATE;
 		case "TimeOfDay" -> OperandKind.TIME_OF_DAY;
 		case "OclVoid" -> OperandKind.NULL;
@@ -372,13 +434,13 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	 * @param notImplemented whether that is a 501 (in {@code $apply}) rather than a 400
 	 */
 	<T extends OclExpression> T checkResolved(T expression, boolean notImplemented) {
-		if (wireRefs.isEmpty()) {
-			return expression;
-		}
 		List<EObject> nodes = new ArrayList<>();
 		nodes.add(expression);
 		expression.eAllContents().forEachRemaining(nodes::add);
 		for (EObject node : nodes) {
+			if (node instanceof OclExpression literal && isInterval(literal)) {
+				throw new ODataQueryParseException("an interval literal compares only with a wire property");
+			}
 			WireRef ref = wireRefs.get(node);
 			if (ref != null) {
 				String message = "the wire property '" + ref.binding().name() + "' cannot be used here";
@@ -1083,6 +1145,11 @@ class ODataToOclBuilder extends ODataFilterBaseVisitor<OclExpression> {
 	@Override
 	public OclExpression visitGuidLiteral(ODataFilterParser.GuidLiteralContext ctx) {
 		return typedString(ctx.getText(), "Guid");
+	}
+
+	@Override
+	public OclExpression visitIntervalLiteral(ODataFilterParser.IntervalLiteralContext ctx) {
+		return typedString(ctx.getText(), "Interval"); // only valid as a wire property's operand (#129)
 	}
 
 	@Override
