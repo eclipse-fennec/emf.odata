@@ -53,22 +53,13 @@ public interface WireMappingFactory extends EFactory {
 	ClassMapping createClassMapping();
 
 	/**
-	 * Returns a new object of class '<em>Interval Property</em>'.
+	 * Returns a new object of class '<em>Wire Property</em>'.
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
-	 * @return a new object of class '<em>Interval Property</em>'.
+	 * @return a new object of class '<em>Wire Property</em>'.
 	 * @generated
 	 */
-	IntervalProperty createIntervalProperty();
-
-	/**
-	 * Returns a new object of class '<em>Alternatives Property</em>'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return a new object of class '<em>Alternatives Property</em>'.
-	 * @generated
-	 */
-	AlternativesProperty createAlternativesProperty();
+	WireProperty createWireProperty();
 
 	/**
 	 * Returns the package supported by this factory.

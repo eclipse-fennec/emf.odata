@@ -69,20 +69,21 @@ class WireMappingTest {
 		return (EAttribute) observation.getEStructuralFeature(name);
 	}
 
+	private WireProperty property(String name, String... parts) {
+		WireProperty property = WireMappingFactory.eINSTANCE.createWireProperty();
+		property.setName(name);
+		for (String part : parts) {
+			property.getParts().add(attribute(part));
+		}
+		return property;
+	}
+
 	private WireMapping sta() {
-		WireMappingFactory factory = WireMappingFactory.eINSTANCE;
-		IntervalProperty time = factory.createIntervalProperty();
-		time.setName("phenomenonTime");
-		time.setStart(attribute("phenomenonTimeStart"));
-		time.setEnd(attribute("phenomenonTimeEnd"));
-		AlternativesProperty result = factory.createAlternativesProperty();
-		result.setName("result");
-		result.getParts().addAll(List.of(attribute("resultText"), attribute("resultBoolean"),
-				attribute("resultNumber")));
-		ClassMapping mapping = factory.createClassMapping();
+		ClassMapping mapping = WireMappingFactory.eINSTANCE.createClassMapping();
 		mapping.setEClass(observation);
-		mapping.getProperties().addAll(List.of(time, result));
-		WireMapping wire = factory.createWireMapping();
+		mapping.getProperties().add(property("phenomenonTime", "phenomenonTimeStart", "phenomenonTimeEnd"));
+		mapping.getProperties().add(property("result", "resultNumber", "resultBoolean", "resultText"));
+		WireMapping wire = WireMappingFactory.eINSTANCE.createWireMapping();
 		wire.getClasses().add(mapping);
 		return wire;
 	}
@@ -106,12 +107,10 @@ class WireMappingTest {
 		in.load(new ByteArrayInputStream(bytes.toByteArray()), Map.of());
 		ClassMapping read = ((WireMapping) in.getContents().get(0)).getClasses().get(0);
 		assertSame(observation, read.getEClass());
-		IntervalProperty time = (IntervalProperty) read.getProperties().get(0);
+		WireProperty time = read.getProperties().get(0);
 		assertEquals("phenomenonTime", time.getName());
-		assertSame(attribute("phenomenonTimeStart"), time.getStart());
-		assertSame(attribute("phenomenonTimeEnd"), time.getEnd());
-		AlternativesProperty result = (AlternativesProperty) read.getProperties().get(1);
-		assertEquals(List.of(attribute("resultText"), attribute("resultBoolean"), attribute("resultNumber")),
-				result.getParts(), "the parts keep their order: it is the order of $orderby");
+		assertEquals(List.of(attribute("phenomenonTimeStart"), attribute("phenomenonTimeEnd")), time.getParts());
+		assertEquals(List.of(attribute("resultNumber"), attribute("resultBoolean"), attribute("resultText")),
+				read.getProperties().get(1).getParts(), "the parts keep their order");
 	}
 }

@@ -20,9 +20,7 @@ import org.eclipse.emf.ecore.EcorePackage;
 
 import org.eclipse.emf.ecore.impl.EPackageImpl;
 
-import org.eclipse.fennec.odata.wire.mapping.AlternativesProperty;
 import org.eclipse.fennec.odata.wire.mapping.ClassMapping;
-import org.eclipse.fennec.odata.wire.mapping.IntervalProperty;
 import org.eclipse.fennec.odata.wire.mapping.WireMapping;
 import org.eclipse.fennec.odata.wire.mapping.WireMappingFactory;
 import org.eclipse.fennec.odata.wire.mapping.WireMappingPackage;
@@ -55,20 +53,6 @@ public class WireMappingPackageImpl extends EPackageImpl implements WireMappingP
 	 * @generated
 	 */
 	private EClass wirePropertyEClass = null;
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	private EClass intervalPropertyEClass = null;
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	private EClass alternativesPropertyEClass = null;
 
 	/**
 	 * Creates an instance of the model <b>Package</b>, registered with
@@ -209,48 +193,8 @@ public class WireMappingPackageImpl extends EPackageImpl implements WireMappingP
 	 * @generated
 	 */
 	@Override
-	public EClass getIntervalProperty() {
-		return intervalPropertyEClass;
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EReference getIntervalProperty_Start() {
-		return (EReference)intervalPropertyEClass.getEStructuralFeatures().get(0);
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EReference getIntervalProperty_End() {
-		return (EReference)intervalPropertyEClass.getEStructuralFeatures().get(1);
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EClass getAlternativesProperty() {
-		return alternativesPropertyEClass;
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public EReference getAlternativesProperty_Parts() {
-		return (EReference)alternativesPropertyEClass.getEStructuralFeatures().get(0);
+	public EReference getWireProperty_Parts() {
+		return (EReference)wirePropertyEClass.getEStructuralFeatures().get(1);
 	}
 
 	/**
@@ -291,13 +235,7 @@ public class WireMappingPackageImpl extends EPackageImpl implements WireMappingP
 
 		wirePropertyEClass = createEClass(WIRE_PROPERTY);
 		createEAttribute(wirePropertyEClass, WIRE_PROPERTY__NAME);
-
-		intervalPropertyEClass = createEClass(INTERVAL_PROPERTY);
-		createEReference(intervalPropertyEClass, INTERVAL_PROPERTY__START);
-		createEReference(intervalPropertyEClass, INTERVAL_PROPERTY__END);
-
-		alternativesPropertyEClass = createEClass(ALTERNATIVES_PROPERTY);
-		createEReference(alternativesPropertyEClass, ALTERNATIVES_PROPERTY__PARTS);
+		createEReference(wirePropertyEClass, WIRE_PROPERTY__PARTS);
 	}
 
 	/**
@@ -331,8 +269,6 @@ public class WireMappingPackageImpl extends EPackageImpl implements WireMappingP
 		// Set bounds for type parameters
 
 		// Add supertypes to classes
-		intervalPropertyEClass.getESuperTypes().add(this.getWireProperty());
-		alternativesPropertyEClass.getESuperTypes().add(this.getWireProperty());
 
 		// Initialize classes, features, and operations; add parameters
 		initEClass(wireMappingEClass, WireMapping.class, "WireMapping", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
@@ -342,15 +278,9 @@ public class WireMappingPackageImpl extends EPackageImpl implements WireMappingP
 		initEReference(getClassMapping_EClass(), theEcorePackage.getEClass(), null, "eClass", null, 1, 1, ClassMapping.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_COMPOSITE, IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 		initEReference(getClassMapping_Properties(), this.getWireProperty(), null, "properties", null, 0, -1, ClassMapping.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, IS_COMPOSITE, !IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 
-		initEClass(wirePropertyEClass, WireProperty.class, "WireProperty", IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
+		initEClass(wirePropertyEClass, WireProperty.class, "WireProperty", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
 		initEAttribute(getWireProperty_Name(), theEcorePackage.getEString(), "name", null, 1, 1, WireProperty.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_UNSETTABLE, !IS_ID, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
-
-		initEClass(intervalPropertyEClass, IntervalProperty.class, "IntervalProperty", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
-		initEReference(getIntervalProperty_Start(), theEcorePackage.getEAttribute(), null, "start", null, 1, 1, IntervalProperty.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_COMPOSITE, IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
-		initEReference(getIntervalProperty_End(), theEcorePackage.getEAttribute(), null, "end", null, 1, 1, IntervalProperty.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_COMPOSITE, IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
-
-		initEClass(alternativesPropertyEClass, AlternativesProperty.class, "AlternativesProperty", !IS_ABSTRACT, !IS_INTERFACE, IS_GENERATED_INSTANCE_CLASS);
-		initEReference(getAlternativesProperty_Parts(), theEcorePackage.getEAttribute(), null, "parts", null, 1, -1, AlternativesProperty.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_COMPOSITE, IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
+		initEReference(getWireProperty_Parts(), theEcorePackage.getEAttribute(), null, "parts", null, 1, -1, WireProperty.class, !IS_TRANSIENT, !IS_VOLATILE, IS_CHANGEABLE, !IS_COMPOSITE, IS_RESOLVE_PROXIES, !IS_UNSETTABLE, IS_UNIQUE, !IS_DERIVED, IS_ORDERED);
 
 		// Create resource
 		createResource(eNS_URI);

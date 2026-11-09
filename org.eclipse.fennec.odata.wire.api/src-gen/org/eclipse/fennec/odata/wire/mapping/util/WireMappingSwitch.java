@@ -94,20 +94,6 @@ public class WireMappingSwitch<T> extends Switch<T> {
 				if (result == null) result = defaultCase(theEObject);
 				return result;
 			}
-			case WireMappingPackage.INTERVAL_PROPERTY: {
-				IntervalProperty intervalProperty = (IntervalProperty)theEObject;
-				T result = caseIntervalProperty(intervalProperty);
-				if (result == null) result = caseWireProperty(intervalProperty);
-				if (result == null) result = defaultCase(theEObject);
-				return result;
-			}
-			case WireMappingPackage.ALTERNATIVES_PROPERTY: {
-				AlternativesProperty alternativesProperty = (AlternativesProperty)theEObject;
-				T result = caseAlternativesProperty(alternativesProperty);
-				if (result == null) result = caseWireProperty(alternativesProperty);
-				if (result == null) result = defaultCase(theEObject);
-				return result;
-			}
 			default: return defaultCase(theEObject);
 		}
 	}
@@ -154,36 +140,6 @@ public class WireMappingSwitch<T> extends Switch<T> {
 	 * @generated
 	 */
 	public T caseWireProperty(WireProperty object) {
-		return null;
-	}
-
-	/**
-	 * Returns the result of interpreting the object as an instance of '<em>Interval Property</em>'.
-	 * <!-- begin-user-doc -->
-	 * This implementation returns null;
-	 * returning a non-null result will terminate the switch.
-	 * <!-- end-user-doc -->
-	 * @param object the target of the switch.
-	 * @return the result of interpreting the object as an instance of '<em>Interval Property</em>'.
-	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
-	 * @generated
-	 */
-	public T caseIntervalProperty(IntervalProperty object) {
-		return null;
-	}
-
-	/**
-	 * Returns the result of interpreting the object as an instance of '<em>Alternatives Property</em>'.
-	 * <!-- begin-user-doc -->
-	 * This implementation returns null;
-	 * returning a non-null result will terminate the switch.
-	 * <!-- end-user-doc -->
-	 * @param object the target of the switch.
-	 * @return the result of interpreting the object as an instance of '<em>Alternatives Property</em>'.
-	 * @see #doSwitch(org.eclipse.emf.ecore.EObject) doSwitch(EObject)
-	 * @generated
-	 */
-	public T caseAlternativesProperty(AlternativesProperty object) {
 		return null;
 	}
 

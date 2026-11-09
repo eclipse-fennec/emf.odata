@@ -27,7 +27,7 @@ import org.eclipse.fennec.odata.wire.mapping.WireMappingPackage;
  * The package will be registered into a OSGi base model registry.
  * <!-- end-user-doc -->
  * <!-- begin-model-doc -->
- * How a wire profile shows a model on the wire (ADR-0010, #119): wire properties that stand for one or more model attributes. The mapping belongs to the profile, not to the model: a plain OData root of the same model sees the attributes as they are.
+ * How a wire profile shows a model on the wire (ADR-0010, #119): wire properties that stand for one or more model attributes, given meaning by the profile. The mapping belongs to the profile, not to the model: a plain OData root of the same model sees the attributes as they are.
  * <!-- end-model-doc -->
  * @see EPackageConfigurator
  * @generated
@@ -40,7 +40,7 @@ public class WireMappingEPackageConfigurator implements EPackageConfigurator {
 	 * service property.
 	 * @generated
 	 */
-	public static final String FINGERPRINT = "fp1:580a4f3d171eb15f9a7d5a6b1d1662c799d9d3573c52c50985dbeb6564e78845";
+	public static final String FINGERPRINT = "fp1:a5eb418e88cbf185738ed5c9428e4aa2b0085463d34e3a150f50b5e17f8b7985";
 
 	private WireMappingPackage ePackage;
 

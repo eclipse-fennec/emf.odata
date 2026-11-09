@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.fennec.odata.wire.mapping.WireMapping;
+import org.eclipse.fennec.odata.wire.mapping.WireProperty;
 import org.osgi.annotation.versioning.ConsumerType;
 
 /**
@@ -103,9 +104,17 @@ public interface WireProfile {
 	 * attributes, such as an interval over a start and an end attribute. Empty for the model as
 	 * it is. The mapping belongs to the profile, so a plain OData root of the same model keeps
 	 * seeing the attributes; its {@code eClass} and attribute references point into the model
-	 * packages of the root.
+	 * packages of the root. Every property needs a {@link #handler}.
 	 */
 	default Optional<WireMapping> mapping() {
+		return Optional.empty();
+	}
+
+	/**
+	 * What a wire property of {@link #mapping()} means; empty fails the root, as a mapping the
+	 * runtime cannot serve.
+	 */
+	default Optional<WirePropertyHandler> handler(WireProperty property) {
 		return Optional.empty();
 	}
 

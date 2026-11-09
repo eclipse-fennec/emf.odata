@@ -12,6 +12,9 @@
  */
 package org.eclipse.fennec.odata.wire.mapping;
 
+import org.eclipse.emf.common.util.EList;
+
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EObject;
 
 import org.osgi.annotation.versioning.ProviderType;
@@ -22,7 +25,7 @@ import org.osgi.annotation.versioning.ProviderType;
  * <!-- end-user-doc -->
  *
  * <!-- begin-model-doc -->
- * A property on the wire that stands for model attributes. The attributes it maps are not addressable on the wire: the wire property replaces them in the JSON, $select, $filter and $orderby.
+ * A property on the wire that stands for model attributes, its parts. The parts are not addressable on the wire: the wire property replaces them in the JSON, $select, $filter and $orderby. What the property means — its JSON form, how it compares, how it sorts — is the profile's WirePropertyHandler; a profile may subclass this type to carry more.
  * <!-- end-model-doc -->
  *
  * <p>
@@ -30,10 +33,11 @@ import org.osgi.annotation.versioning.ProviderType;
  * </p>
  * <ul>
  *   <li>{@link org.eclipse.fennec.odata.wire.mapping.WireProperty#getName <em>Name</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.wire.mapping.WireProperty#getParts <em>Parts</em>}</li>
  * </ul>
  *
  * @see org.eclipse.fennec.odata.wire.mapping.WireMappingPackage#getWireProperty()
- * @model abstract="true"
+ * @model
  * @generated
  */
 @ProviderType
@@ -62,5 +66,20 @@ public interface WireProperty extends EObject {
 	 * @generated
 	 */
 	void setName(String value);
+
+	/**
+	 * Returns the value of the '<em><b>Parts</b></em>' reference list.
+	 * The list contents are of type {@link org.eclipse.emf.ecore.EAttribute}.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * <!-- begin-model-doc -->
+	 * The model attributes the property stands for, attributes of the mapped type or its supertypes; the runtime loads them for $select and accepts conditions only on them.
+	 * <!-- end-model-doc -->
+	 * @return the value of the '<em>Parts</em>' reference list.
+	 * @see org.eclipse.fennec.odata.wire.mapping.WireMappingPackage#getWireProperty_Parts()
+	 * @model required="true"
+	 * @generated
+	 */
+	EList<EAttribute> getParts();
 
 } // WireProperty
