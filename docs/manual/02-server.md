@@ -172,8 +172,13 @@ pipeline, so every feature behaves exactly as in a direct call.
 An OData dialect such as OGC SensorThings API differs from OData on the wire, not in the query
 language. A root can speak such a dialect through a `WireProfile` service
 (`org.eclipse.fennec.odata.wire.api`, ADR-0010): the profile is registered with the service
-property `odata.wire.profile=<name>` and the root selects it with the configuration key of the
-same name. Without that key nothing changes.
+property `odata.wire.profile=<name>`, and a root binds exactly one profile through its static
+reference `wireProfile`. The root configuration selects it with the target filter
+`wireProfile.target`, e.g. `(odata.wire.profile=sta)`. Without a target the root binds the plain
+OData profile (`odata.wire.profile=odata`, registered by the runtime) and nothing changes. A
+root whose target matches no profile does not start — it never falls back to plain OData. Give
+the request filter of the root (`org.eclipse.fennec.odata.request.filter`) the same target, so
+its errors are written in the same dialect.
 
 What a profile decides:
 
@@ -182,20 +187,32 @@ What a profile decides:
   as a control member (`@iot.id`), an absolute self link (`@iot.selfLink`) and one navigation
   link per navigation property (`<Nav>@iot.navigationLink`)
 - whether the key stays a body property, and the key literal in links
+- whether links are absolute (`absoluteLinks()`; OData keeps them relative)
 - the root document and the error body
 
-Profile links are absolute. The base URL is `odata.base.url` if configured, else the
-`X-Forwarded-*` headers when `odata.forwarded.trust=true`, else the request. Under `$select`
-the key value and self link come with a selected key, a navigation link with a selected or
-expanded navigation. A root whose profile is not available answers **503** rather than plain
-OData. `$metadata`, the query options and writes stay OData; the ETag is computed over the
-OData form, so it does not depend on the wire.
+Under `$select` the control information behaves like properties, as in the SensorThings
+reference implementation FROST: the key value comes with a selected key (`$select=id`), the
+self link with its own name (`$select=@iot.selfLink`), a navigation link with a selected
+navigation — being expanded is not enough. `$metadata`, the query options and writes stay
+OData; the ETag is computed over the OData form, so it does not depend on the wire.
+
+Absolute links need the base URL of the root: `odata.base.url` if configured, else the request.
+Behind a reverse proxy, let the HTTP container rewrite the request — for Felix HTTP Jetty
+`org.apache.felix.proxy.load.balancer.connection.enable=true`, which reads `Forwarded` and
+`X-Forwarded-*` for every servlet. A proxy that also moves the path needs `odata.base.url`, or
+`odata.forwarded.trust=true` on the root: then the root reads `X-Forwarded-Host/Proto/Prefix`
+itself (syntax-checked, first value of a list). Never trust the headers without a proxy that
+overwrites them — any client could choose the host of every link.
 
 ```json
 "org.eclipse.fennec.odata.servlet~sta": {
   "osgi.http.whiteboard.servlet.pattern": "/sta/v1.1/*",
-  "odata.wire.profile": "sta",
+  "wireProfile.target": "(odata.wire.profile=sta)",
   "odata.base.url": "https://example.org/sta/v1.1"
+},
+"org.eclipse.fennec.odata.request.filter~sta": {
+  "osgi.http.whiteboard.filter.pattern": "/sta/v1.1/*",
+  "wireProfile.target": "(odata.wire.profile=sta)"
 }
 ```
 

@@ -32,7 +32,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Semaphore;
 import java.util.function.Function;
@@ -240,20 +239,18 @@ public class ODataServlet extends HttpServlet {
 			new Semaphore(DEFAULT_MAX_ASYNC_INFLIGHT);
 	volatile int maxAsyncMonitors = DEFAULT_MAX_ASYNC_MONITORS;
 
-	/** The wire profiles in the framework by their {@value WireProfile#PROFILE_PROPERTY} (ADR-0010). */
-	private final Map<String, WireProfile> wireProfiles = new ConcurrentHashMap<>();
-	/** The profile this root speaks ({@value WireProfile#ROOT_PROPERTY}); null = plain OData. */
-	private volatile String wireProfileName;
-	/** The absolute URL of this root for profile links ({@code odata.base.url}); null = derived. */
+	/**
+	 * The profile this root speaks (ADR-0010), bound by the static reference
+	 * {@value WireProfile#REFERENCE} — plain OData unless {@code wireProfile.target} selects another.
+	 */
+	private volatile WireProfile wireProfile = ODataWireProfile.INSTANCE;
+	/** The absolute URL of this root for absolute links ({@code odata.base.url}); null = derived. */
 	private volatile String baseUrl;
 	/** Whether {@code X-Forwarded-*} may set the base URL ({@code odata.forwarded.trust}). */
 	private volatile boolean trustForwarded;
 
 	@Activate
 	void activate(Map<String, Object> configuration) {
-		Object profile = configuration.get(WireProfile.ROOT_PROPERTY);
-		wireProfileName = profile == null || String.valueOf(profile).isBlank() ? null
-				: String.valueOf(profile).trim();
 		Object base = configuration.get("odata.base.url");
 		baseUrl = base == null || String.valueOf(base).isBlank() ? null : String.valueOf(base).trim();
 		trustForwarded = Boolean.parseBoolean(String.valueOf(configuration.get("odata.forwarded.trust")));
@@ -426,33 +423,19 @@ public class ODataServlet extends HttpServlet {
 		operationHandlers.remove(handler);
 	}
 
-	@Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
-	void bindWireProfile(WireProfile profile, Map<String, Object> properties) {
-		Object name = properties.get(WireProfile.PROFILE_PROPERTY);
-		if (name != null) {
-			wireProfiles.put(String.valueOf(name), profile);
-		}
-	}
-
-	void unbindWireProfile(WireProfile profile, Map<String, Object> properties) {
-		Object name = properties.get(WireProfile.PROFILE_PROPERTY);
-		if (name != null) {
-			wireProfiles.remove(String.valueOf(name), profile);
-		}
-	}
-
 	/**
-	 * The wire of a request to this root, or null when the configured profile is not available —
-	 * then the root answers 503 rather than speaking a dialect its clients do not expect.
+	 * The wire profile of this root (ADR-0010): mandatory and static — a root whose configured
+	 * {@code wireProfile.target} matches no profile does not start, rather than speaking a dialect
+	 * its clients do not expect. Without a target it binds the plain OData profile.
 	 */
+	@Reference(name = WireProfile.REFERENCE, target = WireProfile.DEFAULT_TARGET)
+	void setWireProfile(WireProfile profile) {
+		this.wireProfile = profile;
+	}
+
+	/** The wire of a request to this root. */
 	private Wire wireOf(HttpServletRequest request) {
-		String name = wireProfileName;
-		if (name == null) {
-			return Wire.ODATA;
-		}
-		WireProfile profile = wireProfiles.get(name);
-		return profile == null ? null
-				: new Wire(profile, profile.controls(), Wire.baseUrl(request, baseUrl, trustForwarded));
+		return Wire.of(wireProfile, Wire.baseUrl(request, baseUrl, trustForwarded));
 	}
 
 	@Reference
@@ -684,16 +667,10 @@ public class ODataServlet extends HttpServlet {
 		String previousLevel = METADATA_LEVEL.get();
 		Boolean previousIeee754 = IEEE754.get();
 		Wire previousWire = Wire.CURRENT.get();
-		Wire wire = wireOf(request);
 		METADATA_LEVEL.set(metadataLevel(request));
 		IEEE754.set(ieee754Requested(request));
-		Wire.CURRENT.set(wire == null ? Wire.ODATA : wire);
+		Wire.CURRENT.set(wireOf(request));
 		try {
-			if (wire == null) {
-				error(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
-						"the wire profile of this service is not available");
-				return;
-			}
 			if ("/$batch".equals(pathInfo)) {
 				batchDispatcher.execute(request, response);
 				return;
@@ -888,15 +865,13 @@ public class ODataServlet extends HttpServlet {
 
 	private void serviceDocument(HttpServletRequest request, HttpServletResponse response) throws IOException {
 		Wire wire = Wire.current();
-		if (wire.profiled()) {
-			String base = wire.baseUrl();
-			Optional<String> document = wire.profile().serviceDocument(new ServiceRoot(base,
-					entitySetNames().stream().map(name -> new ServiceRoot.Entry(name, base + "/" + name)).toList(),
-					singletonNames().stream().map(name -> new ServiceRoot.Entry(name, base + "/" + name)).toList()));
-			if (document.isPresent()) {
-				writeDocument(request, response, "application/json;charset=UTF-8", document.get());
-				return;
-			}
+		String base = wire.baseUrl();
+		Optional<String> document = wire.profile().serviceDocument(new ServiceRoot(base,
+				entitySetNames().stream().map(name -> new ServiceRoot.Entry(name, base + "/" + name)).toList(),
+				singletonNames().stream().map(name -> new ServiceRoot.Entry(name, base + "/" + name)).toList()));
+		if (document.isPresent()) {
+			writeDocument(request, response, "application/json;charset=UTF-8", document.get());
+			return;
 		}
 		String sets = entitySetNames().stream()
 				.map(name -> "{\"name\":\"" + name + "\",\"kind\":\"EntitySet\",\"url\":\"" + name + "\"}")
@@ -1256,7 +1231,7 @@ public class ODataServlet extends HttpServlet {
 	private String nextLink(HttpServletRequest request, int nextSkip) {
 		Wire wire = Wire.current();
 		String path = request.getPathInfo() == null ? "" : request.getPathInfo();
-		StringBuilder link = new StringBuilder(wire.profiled() ? wire.baseUrl() + path : request.getRequestURI())
+		StringBuilder link = new StringBuilder(wire.absoluteLinks() ? wire.baseUrl() + path : request.getRequestURI())
 				.append("?$skip=").append(nextSkip);
 		for (String option : SUPPORTED_OPTIONS) {
 			String value = option(request, option);
@@ -2334,8 +2309,7 @@ public class ODataServlet extends HttpServlet {
 		for (EAttribute id : keys) {
 			keyValues.put(id.getName(), entity.eGet(id));
 		}
-		Wire wire = Wire.current();
-		String literal = wire.profiled() ? wire.profile().keyLiteral(keyValues) : keyLiteral(keyValues);
+		String literal = Wire.current().profile().keyLiteral(keyValues);
 		return (cast < 0 ? set : set.substring(0, cast)) + "(" + literal + ")";
 	}
 
@@ -2781,8 +2755,12 @@ public class ODataServlet extends HttpServlet {
 	void error(HttpServletResponse response, int status, String message) throws IOException {
 		response.setStatus(status);
 		response.setContentType("application/json;charset=UTF-8");
-		Wire wire = Wire.current();
-		String body = wire.profiled() ? wire.profile().errorBody(status, ODataJson.sanitize(message)).orElse(null) : null;
-		response.getWriter().write(body != null ? body : ODataJson.error(status, message));
+		response.getWriter().write(errorBody(Wire.current().profile(), status, message));
+	}
+
+	/** The error body of a profile, the OData error ([OData-JSON] 21) when it has none of its own. */
+	static String errorBody(WireProfile profile, int status, String message) {
+		return profile.errorBody(status, ODataJson.sanitize(message))
+				.orElseGet(() -> ODataJson.error(status, message));
 	}
 }

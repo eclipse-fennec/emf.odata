@@ -16,9 +16,9 @@ is the typed IR (no string concatenation), and errors never leak internals.
 | Max. parked async status monitors (LRU) | 100 | `odata.max.async.monitors` |
 | CORS origin(s) for browser clients (`*` or space-separated allowlist; empty = CORS off) | off | `odata.cors.origin` |
 | `Cache-Control` of `$metadata` and the service document (empty = no header) | `no-cache` | `odata.cache.control` |
-| Wire profile of the root, by the `odata.wire.profile` property of a `WireProfile` service (see [Wire profiles](/guides/02-server#wire-profiles)) | plain OData | `odata.wire.profile` |
+| Wire profile of the root and its request filter: target filter on the `odata.wire.profile` property of a `WireProfile` service (see [Wire profiles](/guides/02-server#wire-profiles)) | `(odata.wire.profile=odata)` — plain OData | `wireProfile.target` |
 | Absolute URL of the root for profile links | from the request | `odata.base.url` |
-| Let `X-Forwarded-Host/Proto/Prefix` set the base URL (only behind a proxy that overwrites them) | `false` | `odata.forwarded.trust` |
+| Let `X-Forwarded-Host/Proto/Prefix` set the base URL of this root (only behind a proxy that overwrites them; prefer the container's proxy support, see [Wire profiles](/guides/02-server#wire-profiles)) | `false` | `odata.forwarded.trust` |
 
 For every limit, `<= 0` disables the protection — a deliberate, documented foot-gun, never
 the default. The defaults above were reviewed and **confirmed as the shipped baseline on

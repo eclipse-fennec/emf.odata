@@ -105,7 +105,16 @@ SelectTree selectOption(HttpServletRequest request, EClass entityType,
 	}
 	// nested collection options over selected collections ([OData-URL] 5.1.3, 4.01 Advanced
 	// §13.2.3/5.1–5.4) parse through the same guarded parser as every other expression
-	return SelectTree.parse(select, entityType, nestedOptions(request));
+	return SelectTree.parse(select, entityType, nestedOptions(request), selectableControls());
+}
+
+/**
+ * The control information a {@code $select} may name (#121 D4): the self link of a wire
+ * profile, e.g. {@code $select=@iot.selfLink}. None for plain OData.
+ */
+static Set<String> selectableControls() {
+	String selfLink = Wire.current().names().selfLink();
+	return selfLink == null ? Set.of() : Set.of(selfLink);
 }
 
 /**
@@ -257,7 +266,8 @@ private ExpandItem expandItemOptions(String optionList, EReference reference,
 			if (select != null) {
 				throw new ODataQueryParseException("duplicate $select inside $expand");
 			}
-			select = SelectTree.parse(trimmed.substring(selectMatcher.end()), context, optionParser);
+			select = SelectTree.parse(trimmed.substring(selectMatcher.end()), context, optionParser,
+					selectableControls());
 			continue;
 		}
 		Matcher expandMatcher = NESTED_EXPAND.matcher(trimmed);
@@ -494,7 +504,7 @@ private String serializeEntity(EObject entity, EObject copy, EClass entityType,
 	Set<String> expand = shape.navigationNames();
 	Wire wire = Wire.current();
 	// a wire profile writes its own control information — never the full OData metadata
-	boolean full = !wire.profiled() && "full".equals(ODataServlet.responseMetadataLevel());
+	boolean full = wire.odataControls() && "full".equals(ODataServlet.responseMetadataLevel());
 	// full metadata: the default codec profile emits @odata.type/@odata.id per entity;
 	// minimal: control info that is computable from the context URL is left out ([OData-JSON] 3.1)
 	ODataJsonResourceImpl resource = full
@@ -596,23 +606,26 @@ private void retainShaped(ObjectNode node, EObject copy, EntityShaper.Shape shap
  * link first, then the properties (the key left out when the profile keeps it out of the body),
  * then one navigation link per navigation property. Only entities served by an entity set get
  * them; complex values and contained keyless objects stay as they are. Under {@code $select}
- * the key value and self link come with a selected key, a navigation link with a selected or
- * expanded navigation.
+ * the control information behaves like properties (#121 D4, as FROST does): the key value comes
+ * with a selected key, the self link with its selected name ({@code $select=@iot.selfLink}), a
+ * navigation link with a selected navigation — being expanded is not enough.
  */
 private void decorate(ObjectNode node, EObject copy, EntityShaper.Shape shape) {
 	Wire wire = Wire.current();
-	if (!wire.profiled()) {
-		return;
-	}
+	ControlNames names = wire.names();
 	EClass type = copy.eClass();
+	boolean keyInBody = wire.profile().keyInBody(type);
+	if (names.keyValue() == null && names.selfLink() == null && names.navigationLink() == null
+			&& keyInBody) {
+		return; // nothing to add or take away (plain OData)
+	}
 	List<EAttribute> keys = servlet.keyAttributes(type);
 	String path = keys.isEmpty() ? null : servlet.entityPathOf(copy);
 	if (path == null) {
 		return;
 	}
-	ControlNames names = wire.names();
 	SelectTree select = shape.select();
-	String self = wire.baseUrl() + "/" + path;
+	String self = (wire.absoluteLinks() ? wire.baseUrl() + "/" : "") + path;
 	ObjectNode ordered = node.objectNode();
 	boolean keySelected = select == null
 			|| keys.stream().anyMatch(key -> select.child(key.getName()) != null);
@@ -626,10 +639,9 @@ private void decorate(ObjectNode node, EObject copy, EntityShaper.Shape shape) {
 			keys.forEach(key -> composite.set(key.getName(), node.get(key.getName())));
 		}
 	}
-	if (keySelected && names.selfLink() != null) {
+	if (names.selfLink() != null && (select == null || select.selectsControl(names.selfLink()))) {
 		ordered.put(names.selfLink(), self);
 	}
-	boolean keyInBody = wire.profile().keyInBody(type);
 	Set<String> keyNames = keys.stream().map(EAttribute::getName).collect(Collectors.toSet());
 	node.properties().forEach(member -> {
 		if (keyInBody || !keyNames.contains(member.getKey())) {
@@ -639,8 +651,7 @@ private void decorate(ObjectNode node, EObject copy, EntityShaper.Shape shape) {
 	if (names.navigationLink() != null) {
 		for (EReference reference : type.getEAllReferences()) {
 			String name = reference.getName();
-			if (!reference.isContainment() && (select == null || select.child(name) != null
-					|| shape.expand().containsKey(name))) {
+			if (!reference.isContainment() && (select == null || select.child(name) != null)) {
 				ordered.put(name + names.navigationLink(), self + "/" + name);
 			}
 		}

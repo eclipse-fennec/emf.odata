@@ -19,9 +19,11 @@ import java.util.Set;
 
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ODataResourceParser;
+import org.eclipse.fennec.odata.wire.api.WireProfile;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.ConfigurationPolicy;
+import org.osgi.service.component.annotations.Reference;
 
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -49,6 +51,10 @@ import jakarta.servlet.http.HttpServletResponse;
  * and, where needed, {@code osgi.http.whiteboard.context.select} and
  * {@code osgi.http.whiteboard.target} — the same three properties the matching servlet
  * configuration carries. Factory configurations replace the unconfigured default filter.
+ *
+ * <p>Its 400s are written by the wire profile of the root it guards (ADR-0010, #123): the same
+ * static reference {@value WireProfile#REFERENCE} as the servlet, so its configuration carries the
+ * same {@code wireProfile.target} as the servlet's — plain OData without one.
  */
 @Component(service = Filter.class, configurationPid = ODataRequestFilter.PID,
 		configurationPolicy = ConfigurationPolicy.OPTIONAL, property = {
@@ -64,6 +70,13 @@ public class ODataRequestFilter implements Filter {
 			"$filter", "$orderby", "$apply", "$select", "$expand", "$compute", "$search");
 
 	private volatile RequestLimits limits = RequestLimits.DEFAULTS;
+	private volatile WireProfile wireProfile = ODataWireProfile.INSTANCE;
+
+	/** The wire profile of the guarded root, selected like the servlet's by {@code wireProfile.target}. */
+	@Reference(name = WireProfile.REFERENCE, target = WireProfile.DEFAULT_TARGET)
+	void setWireProfile(WireProfile profile) {
+		this.wireProfile = profile;
+	}
 
 	@Activate
 	void activate(Map<String, Object> configuration) {
@@ -108,8 +121,8 @@ public class ODataRequestFilter implements Filter {
 		} catch (ODataQueryParseException e) {
 			response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
 			response.setContentType("application/json;charset=UTF-8");
-			response.getWriter().write(ODataJson.error(HttpServletResponse.SC_BAD_REQUEST,
-					e.getMessage()));
+			response.getWriter().write(ODataServlet.errorBody(wireProfile,
+					HttpServletResponse.SC_BAD_REQUEST, e.getMessage()));
 			return false;
 		}
 	}

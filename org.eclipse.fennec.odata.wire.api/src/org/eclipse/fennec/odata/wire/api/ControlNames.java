@@ -31,7 +31,7 @@ package org.eclipse.fennec.odata.wire.api;
 public record ControlNames(String context, String type, String keyValue, String selfLink,
 		String navigationLink, String count, String nextLink) {
 
-	/** What a root without a profile writes: plain OData, minimal metadata. */
+	/** What the plain OData profile writes, minimal metadata. */
 	public static final ControlNames ODATA = new ControlNames("@odata.context", "@odata.type", null,
 			null, null, "@odata.count", "@odata.nextLink");
 }

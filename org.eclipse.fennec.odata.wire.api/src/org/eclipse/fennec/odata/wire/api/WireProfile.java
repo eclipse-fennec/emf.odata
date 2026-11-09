@@ -21,11 +21,14 @@ import org.osgi.annotation.versioning.ConsumerType;
 
 /**
  * The wire profile of a service root (ADR-0010). Registered as a service with the property
- * {@value #PROFILE_PROPERTY}; a root selects it with its configuration key
- * {@value #ROOT_PROPERTY}. A root without that key speaks plain OData; a root whose profile is
- * not (yet) available answers 503 rather than plain OData.
+ * {@value #PROFILE_PROPERTY}. A root binds exactly one profile through its static reference
+ * {@value #REFERENCE}; its configuration selects it with the target filter
+ * {@code wireProfile.target}, e.g. {@code (odata.wire.profile=sta)}. Without a target a root
+ * binds the plain OData profile ({@value #ODATA}), which the runtime registers itself. A root
+ * whose target matches no profile does not start — it never falls back to plain OData.
  *
- * <p>Everything not covered here — the query language, {@code }, writes — stays OData.
+ * <p>The defaults of this interface are the OData behaviour. Everything not covered here — the
+ * query language, {@code $metadata}, writes — stays OData.
  */
 @ConsumerType
 public interface WireProfile {
@@ -33,11 +36,22 @@ public interface WireProfile {
 	/** Service property naming the profile, e.g. {@code sta}. */
 	String PROFILE_PROPERTY = "odata.wire.profile";
 
-	/** Configuration key of a service root selecting a profile by its {@value #PROFILE_PROPERTY}. */
-	String ROOT_PROPERTY = "odata.wire.profile";
+	/** The {@value #PROFILE_PROPERTY} of the plain OData profile, the default of every root. */
+	String ODATA = "odata";
 
-	/** The names of the control information. */
-	ControlNames controls();
+	/**
+	 * Name of the reference of a service root (and its request filter) to its profile; the
+	 * configuration key {@code wireProfile.target} selects the profile.
+	 */
+	String REFERENCE = "wireProfile";
+
+	/** The target filter of {@link #REFERENCE} without a configured one: plain OData. */
+	String DEFAULT_TARGET = "(" + PROFILE_PROPERTY + "=" + ODATA + ")";
+
+	/** The names of the control information; OData's by default. */
+	default ControlNames controls() {
+		return ControlNames.ODATA;
+	}
 
 	/**
 	 * Whether the key attributes appear as properties of the entity body. SensorThings writes the
@@ -48,11 +62,12 @@ public interface WireProfile {
 	}
 
 	/**
-	 * The name of the key in {@code $filter}/{@code $select}/{@code $orderby}, or {@code null}
-	 * when it is addressed by its modelled name (SensorThings {@code id}).
+	 * Whether links are absolute, built from the base URL of the root ({@code odata.base.url},
+	 * else the request). SensorThings writes absolute self, navigation and next links; OData keeps
+	 * its context URLs and next links relative.
 	 */
-	default String keyQueryName(EClass type) {
-		return null;
+	default boolean absoluteLinks() {
+		return false;
 	}
 
 	/**
@@ -83,11 +98,14 @@ public interface WireProfile {
 		return Optional.empty();
 	}
 
-	/** The OData literal of one key value: strings quoted with single quotes doubled. */
+	/**
+	 * The OData literal of one key value: strings quoted with single quotes doubled, every other
+	 * value (numbers, booleans, GUIDs, dates) as it prints ([OData-ABNF] {@code keyPredicate}).
+	 */
 	static String literal(Object value) {
-		if (value instanceof Number || value instanceof Boolean) {
-			return String.valueOf(value);
+		if (value instanceof CharSequence text) {
+			return "'" + text.toString().replace("'", "''") + "'";
 		}
-		return "'" + String.valueOf(value).replace("'", "''") + "'";
+		return String.valueOf(value);
 	}
 }

@@ -283,16 +283,23 @@ public class ODataServiceRootIntegrationTest {
 		public boolean keyInBody(EClass type) {
 			return false;
 		}
+
+		@Override
+		public boolean absoluteLinks() {
+			return true;
+		}
 	}
 
 	@Test
 	@Order(6)
-	@DisplayName("ADR-0010: a root speaks the wire profile its configuration names")
+	@DisplayName("ADR-0010/#121 D1: a root speaks the wire profile its wireProfile.target selects")
 	void wireProfileByConfiguration(@InjectBundleContext BundleContext context) throws Exception {
 		Hashtable<String, Object> profiled = new Hashtable<>(servletProperties);
-		profiled.put(WireProfile.ROOT_PROPERTY, "itest-sta");
+		profiled.put(WireProfile.REFERENCE + ".target",
+				"(" + WireProfile.PROFILE_PROPERTY + "=itest-sta)");
 		servletConfiguration.update(profiled);
-		awaitStatus(ROOT + "/Products", 503); // the named profile is not there yet
+		// the selected profile is not there yet: the root is unsatisfied, never plain OData
+		awaitStatus(ROOT + "/Products", 404);
 
 		Hashtable<String, Object> profileProperties = new Hashtable<>();
 		profileProperties.put(WireProfile.PROFILE_PROPERTY, "itest-sta");
@@ -311,7 +318,7 @@ public class ODataServiceRootIntegrationTest {
 		} finally {
 			registration.unregister();
 		}
-		awaitStatus(ROOT + "/Products", 503);
+		awaitStatus(ROOT + "/Products", 404);
 		servletConfiguration.update(servletProperties);
 		awaitStatus(ROOT + "/Products", 200);
 	}
