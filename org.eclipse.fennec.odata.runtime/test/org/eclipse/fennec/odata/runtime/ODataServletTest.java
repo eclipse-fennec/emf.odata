@@ -2625,6 +2625,11 @@ class ODataServletTest {
 		}
 
 		@Override
+		public String propertyMember(EStructuralFeature property) {
+			return property.getName();
+		}
+
+		@Override
 		public Optional<String> serviceDocument(ServiceRoot root) {
 			return Optional.of("{\"value\":[" + root.entitySets().stream()
 					.map(set -> "{\"name\":\"" + set.name() + "\",\"url\":\"" + set.url() + "\"}")
@@ -2716,6 +2721,53 @@ class ODataServletTest {
 				"$expand", "category($select=@iot.selfLink)")).body();
 		assertTrue(nested.contains("\"category\":{\"@iot.selfLink\":"
 				+ "\"https://h.example/sta/v1.1/Category('c1')\"}"), nested);
+	}
+
+	@Test
+	@DisplayName("#125: a property value under the profile's member, OData keeps 'value'")
+	void wireProfilePropertyMember() throws Exception {
+		backendResult = dairyProducts();
+		Response odata = get("/Product('p1')/name", Map.of());
+		assertEquals(200, odata.status(), odata.body());
+		assertTrue(odata.body().endsWith("\"value\":\"Milk\"}"), odata.body());
+
+		speakProfile();
+		assertEquals("{\"name\":\"Milk\"}", get("/Product('p1')/name", Map.of()).body());
+		assertEquals("{\"tags\":[]}", get("/Product('p1')/tags", Map.of()).body(),
+				"a collection value under the property name too");
+		assertEquals("{\"reviews\":[]}", get("/Product('p1')/reviews", Map.of()).body());
+		assertEquals("Milk", get("/Product('p1')/name/$value", Map.of()).body(), "$value is unchanged");
+		assertTrue(get("/Product('p1')/category", Map.of()).body().startsWith("{\"@iot.id\":\"c1\""),
+				"an entity is no property value");
+	}
+
+	@Test
+	@DisplayName("#126: $ref on an entity set, paged and filtered like the set")
+	void refOnEntitySet() throws Exception {
+		backendResult = dairyProducts();
+		Response refs = get("/Product/$ref", Map.of("$count", "true", "$top", "1"));
+		assertEquals(200, refs.status(), refs.body());
+		assertTrue(refs.body().contains("$metadata#Collection($ref)"), refs.body());
+		assertTrue(refs.body().contains("\"@odata.count\":2"), refs.body());
+		assertTrue(refs.body().contains("\"value\":[{\"@odata.id\":\"Product('p1')\"}]"), refs.body());
+		assertTrue(refs.body().contains("\"@odata.nextLink\":"), refs.body());
+		assertEquals(400, get("/Product/$ref", Map.of("$select", "name")).status());
+		assertEquals(400, get("/Product/$ref", Map.of("$expand", "category")).status());
+	}
+
+	@Test
+	@DisplayName("#126: references carry the profile's absolute self link")
+	void wireProfileReferences() throws Exception {
+		speakProfile();
+		backendResult = dairyProducts();
+		assertEquals("{\"value\":[{\"@iot.selfLink\":\"https://h.example/sta/v1.1/Product('p1')\"},"
+				+ "{\"@iot.selfLink\":\"https://h.example/sta/v1.1/Product('p2')\"}]}",
+				get("/Product/$ref", Map.of()).body());
+		assertEquals("{\"@iot.selfLink\":\"https://h.example/sta/v1.1/Category('c1')\"}",
+				get("/Product('p1')/category/$ref", Map.of()).body());
+		String expanded = get("/Product('p1')", Map.of("$expand", "category/$ref")).body();
+		assertTrue(expanded.contains("\"category\":{\"@iot.selfLink\":"
+				+ "\"https://h.example/sta/v1.1/Category('c1')\"}"), expanded);
 	}
 
 	@Test

@@ -64,7 +64,7 @@ pattern under `org.eclipse.fennec.odata.request.filter`. Keys and an example are
 | `GET /odata/{Set}({key})` | single entity by key |
 | `GET /odata/{Set}({key})/{nav}` | navigation (entity or collection) |
 | `GET /odata/{Set}({key})/{prop}/$value` | raw property/enum value |
-| `GET /odata/{Set}({key})[/{nav}]/$ref` | entity reference(s) — ids only |
+| `GET /odata/{Set}[({key})[/{nav}]]/$ref` | entity reference(s) — ids only; on a set with `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, pushed down like the set |
 | `GET /odata/{Set}/$count`, `…/{nav}/$count` | count (honours `$filter`) |
 | `GET /odata/{Set}(k1=v1,k2=v2)` | composite / named key predicate |
 | `GET /odata/{Set}/{key}` | key-as-segment (4.01 MAY; properties win on ambiguity) |
@@ -188,12 +188,17 @@ What a profile decides:
   link per navigation property (`<Nav>@iot.navigationLink`)
 - whether the key stays a body property, and the key literal in links
 - whether links are absolute (`absoluteLinks()`; OData keeps them relative)
+- the member of a property value (`propertyMember`): OData writes `{"value":…}` and a complex
+  value as the body, SensorThings names it after the property (`GET Things(1)/name` →
+  `{"name":…}`)
 - the root document and the error body
 
 Under `$select` the control information behaves like properties, as in the SensorThings
 reference implementation FROST: the key value comes with a selected key (`$select=id`), the
 self link with its own name (`$select=@iot.selfLink`), a navigation link with a selected
-navigation — being expanded is not enough. `$metadata`, the query options and writes stay
+navigation — being expanded is not enough. An entity reference (`$ref`, `$expand=nav/$ref`) is
+the profile's self link when it has one (`{"@iot.selfLink":"https://…/Things(1)"}`), else
+`@odata.id`. `$metadata`, the query options and writes stay
 OData; the ETag is computed over the OData form, so it does not depend on the wire.
 
 Absolute links need the base URL of the root: `odata.base.url` if configured, else the request.

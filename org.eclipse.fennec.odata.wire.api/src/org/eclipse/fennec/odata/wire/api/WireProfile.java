@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EStructuralFeature;
 import org.osgi.annotation.versioning.ConsumerType;
 
 /**
@@ -82,6 +83,18 @@ public interface WireProfile {
 		}
 		return key.entrySet().stream().map(entry -> entry.getKey() + "=" + literal(entry.getValue()))
 				.collect(Collectors.joining(","));
+	}
+
+	/**
+	 * The member that carries the value of a property request ({@code GET Things(1)/name}), or
+	 * {@code null} for the OData form: {@code value} for a primitive, enumeration or collection
+	 * value, the complex value itself as the body ([OData-JSON] 6, 7). SensorThings names the
+	 * member after the property: {@code {"name":"…"}}, {@code {"unitOfMeasurement":{…}}}.
+	 *
+	 * @param property the addressed property (an attribute or a containment of a keyless type)
+	 */
+	default String propertyMember(EStructuralFeature property) {
+		return null;
 	}
 
 	/** The root document, or empty for the OData service document. */
