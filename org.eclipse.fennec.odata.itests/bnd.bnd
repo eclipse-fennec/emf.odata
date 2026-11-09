@@ -21,6 +21,7 @@ Test-Cases: ${classes;HIERARCHY_INDIRECTLY_ANNOTATED;org.junit.platform.commons.
 	org.eclipse.fennec.odata.client;version=project,\
 	org.eclipse.fennec.odata.wire.api;version=project,\
 	org.eclipse.fennec.persistence.orm;version=latest,\
+	org.eclipse.fennec.persistence.repository;version=latest,\
 	jakarta.persistence-api;version=latest
 
 Private-Package: org.eclipse.fennec.odata.itests

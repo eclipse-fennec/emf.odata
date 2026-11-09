@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -47,6 +48,7 @@ import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
 import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.query.ODataQueryParser;
+import org.eclipse.fennec.persistence.repository.api.ReadRepository;
 import org.eclipse.fennec.persistence.eorm.EntityMappings;
 import org.eclipse.fennec.persistence.orm.EntityMapper;
 import org.junit.jupiter.api.AfterAll;
@@ -58,8 +60,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.PrototypeServiceFactory;
 import org.osgi.framework.ServiceRegistration;
+import org.osgi.framework.dto.ServiceReferenceDTO;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.runtime.ServiceComponentRuntime;
@@ -96,6 +101,7 @@ public class RepositoryBackendIntegrationTest {
 	private static final String ECORE = "/org/eclipse/fennec/odata/itests/reposhop.ecore";
 	private static final String UNIT_NAME = "reposhop";
 	private static final String REPOSITORY_ID = "reposhop";
+	private static final String REPOSITORY_ID_PROPERTY = "persistence.repository.id";
 	private static final String BACKEND_FILTER = "(fennec.odata.backend=repository)";
 
 	private final HttpClient client = HttpClient.newHttpClient();
@@ -106,6 +112,7 @@ public class RepositoryBackendIntegrationTest {
 	private EClass articleClass;
 	private ServiceRegistration<EPackageConfigurator> configuratorRegistration;
 	private ServiceRegistration<EPackage> packageRegistration;
+	private ServiceRegistration<?> decoyRegistration;
 	private final List<Configuration> configurations = new ArrayList<>();
 	private Path workDirectory;
 
@@ -143,6 +150,9 @@ public class RepositoryBackendIntegrationTest {
 		repositoryProperties.put("readOnly", Boolean.TRUE);
 		configure(configurationAdmin, "fennec.repository.jpa", repositoryProperties);
 
+		// a decoy ranked above it: without an effective target the backend would bind this one (#82)
+		decoyRegistration = registerDecoy(context);
+
 		// ... and the OData backend bound to the facade by its id (#79)
 		Hashtable<String, Object> backendProperties = new Hashtable<>();
 		backendProperties.put("repository.target", "(persistence.repository.id=" + REPOSITORY_ID + ")");
@@ -163,6 +173,9 @@ public class RepositoryBackendIntegrationTest {
 		}
 		if (packageRegistration != null) {
 			packageRegistration.unregister();
+		}
+		if (decoyRegistration != null) {
+			decoyRegistration.unregister();
 		}
 		if (configuratorRegistration != null) {
 			configuratorRegistration.unregister();
@@ -292,6 +305,58 @@ public class RepositoryBackendIntegrationTest {
 			}
 		}
 		assertTrue(bound, "a configuration with the repository reference is satisfied");
+	}
+
+	@Test
+	@Order(5)
+	@DisplayName("#82: with a higher-ranked second repository, the configured one is bound")
+	void repositoryTargetBeatsRanking(
+			@InjectService(cardinality = 0, filter = BACKEND_FILTER) ServiceAware<QueryService> queryAware,
+			@InjectService ServiceComponentRuntime runtime) throws Exception {
+		assertNotNull(queryAware.waitForService(20_000));
+		ComponentDescriptionDTO description = runtime.getComponentDescriptionDTOs().stream()
+				.filter(candidate -> candidate.name.endsWith(".RepositoryQueryService"))
+				.findFirst().orElseThrow();
+		List<Object> boundIds = new ArrayList<>();
+		for (ComponentConfigurationDTO configuration : runtime.getComponentConfigurationDTOs(description)) {
+			for (SatisfiedReferenceDTO reference : configuration.satisfiedReferences) {
+				if ("repository".equals(reference.name)) {
+					for (ServiceReferenceDTO service : reference.boundServices) {
+						boundIds.add(service.properties.get(REPOSITORY_ID_PROPERTY));
+					}
+				}
+			}
+		}
+		assertEquals(List.of(REPOSITORY_ID), boundIds,
+				"the targeted repository, not the decoy ranked above it");
+	}
+
+	/**
+	 * A second {@code ReadRepository}, prototype-scoped like the real one (the reference takes
+	 * prototype services only) and ranked above it. Every call fails, so a backend bound to it
+	 * would fail the HTTP tests as well.
+	 */
+	private static ServiceRegistration<?> registerDecoy(BundleContext context) {
+		Object decoy = Proxy.newProxyInstance(ReadRepository.class.getClassLoader(),
+				new Class<?>[] { ReadRepository.class }, (proxy, method, args) -> switch (method.getName()) {
+				case "toString" -> "decoy repository";
+				case "hashCode" -> System.identityHashCode(proxy);
+				case "equals" -> proxy == args[0];
+				default -> throw new UnsupportedOperationException("the decoy repository was bound (#82)");
+				});
+		Hashtable<String, Object> properties = new Hashtable<>();
+		properties.put(REPOSITORY_ID_PROPERTY, "decoy");
+		properties.put("service.ranking", 1000);
+		return context.registerService(ReadRepository.class.getName(), new PrototypeServiceFactory<Object>() {
+			@Override
+			public Object getService(Bundle bundle, ServiceRegistration<Object> registration) {
+				return decoy;
+			}
+
+			@Override
+			public void ungetService(Bundle bundle, ServiceRegistration<Object> registration, Object service) {
+			}
+		}, properties);
 	}
 
 	private Path writeMappingFile() throws Exception {
