@@ -25,6 +25,7 @@ The load-bearing decisions are captured as ADRs (in
 | 0007 | The **client schema registry** decouples fetch/convert, persistence/lookup and the data path behind an SPI. |
 | 0008 | **`$expand` options push down** where the backend declares the capability; in-memory evaluation on shaped copies is the named fallback. |
 | 0009 | A root narrowed by **`odata.model.entitysets` describes the type closure** of its sets in `$metadata`: no exclude list. |
+| 0010 | A **wire profile per root** makes an OData dialect (SensorThings) a configuration: the profile renames the control information and supplies the meaning of its wire properties; emf.odata keeps only the mechanism and pushes every query down. |
 
 Two further choices are architecture facts rather than ADRs: the transport is a **plain
 Jakarta servlet** on the OSGi HTTP Whiteboard (no Jakarta REST / Jersey), and there is
