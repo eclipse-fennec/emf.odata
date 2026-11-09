@@ -82,6 +82,7 @@ import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
@@ -104,10 +105,12 @@ import org.open.oasis.docs.odata.ns.edm.EdmFactory;
 import org.open.oasis.docs.odata.ns.edm.EdmPackage;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
 import org.open.oasis.docs.odata.ns.edm.TActionFunctionParameter;
+import org.open.oasis.docs.odata.ns.edm.TCollectionExpression;
 import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
 import org.open.oasis.docs.odata.ns.edm.TEntitySet;
 import org.open.oasis.docs.odata.ns.edm.TPropertyValue;
 import org.open.oasis.docs.odata.ns.edm.TRecordExpression;
+import org.open.oasis.docs.odata.ns.edm.TStringConstantExpression;
 import org.open.oasis.docs.odata.ns.edmx.EdmxFactory;
 import org.open.oasis.docs.odata.ns.edmx.EdmxPackage;
 import org.open.oasis.docs.odata.ns.edmx.EdmxRoot;
@@ -1049,6 +1052,9 @@ public class ODataServlet extends HttpServlet {
 					boolCapability("Org.OData.Capabilities.V1.AsynchronousRequestsSupported", true));
 			container.getAnnotation().add(
 					boolCapability("Org.OData.Capabilities.V1.KeyAsSegmentSupported", false));
+			if (applySupported(container)) {
+				edmx.getReference().add(vocabularyReference("Org.OData.Aggregation.V1", "Aggregation"));
+			}
 		}
 		edmx.setDataServices(dataServices);
 		root.setEdmx(edmx);
@@ -1088,6 +1094,65 @@ public class ODataServlet extends HttpServlet {
 		AnnotationType annotation = EdmFactory.eINSTANCE.createAnnotationType();
 		annotation.setTerm(term);
 		annotation.setBool1(value);
+		return annotation;
+	}
+
+	/**
+	 * {@code Aggregation.ApplySupported} (#103) from what each published set's backend reports
+	 * ({@link QueryService#applySupport()}): on the container when every set agrees (the term
+	 * applies via the container), otherwise on each set whose backend executes {@code $apply}.
+	 * A set whose backend reports nothing gets no annotation.
+	 *
+	 * @return whether an annotation was written, so the vocabulary needs its reference
+	 */
+	private boolean applySupported(TEntityContainer container) {
+		Map<TEntitySet, ApplySupport> perSet = new LinkedHashMap<>();
+		for (TEntitySet set : container.getEntitySet()) {
+			EClass type = resolveEntityType(set.getName());
+			perSet.put(set, type == null ? ApplySupport.NONE : queryServices.stream()
+					.filter(service -> service.supports(type)).findFirst()
+					.map(QueryService::applySupport).orElse(ApplySupport.NONE));
+		}
+		Set<ApplySupport> distinct = new HashSet<>(perSet.values());
+		if (distinct.size() == 1) {
+			ApplySupport common = distinct.iterator().next();
+			if (common.supported()) {
+				container.getAnnotation().add(applySupportedAnnotation(common));
+				return true;
+			}
+			return false;
+		}
+		boolean written = false;
+		for (Map.Entry<TEntitySet, ApplySupport> entry : perSet.entrySet()) {
+			if (entry.getValue().supported()) {
+				entry.getKey().getAnnotation().add(applySupportedAnnotation(entry.getValue()));
+				written = true;
+			}
+		}
+		return written;
+	}
+
+	/** {@code Aggregation.ApplySupported} is a record of {@code Aggregation.ApplySupportedType}. */
+	private static AnnotationType applySupportedAnnotation(ApplySupport support) {
+		TCollectionExpression transformations = EdmFactory.eINSTANCE.createTCollectionExpression();
+		for (String transformation : support.transformations()) {
+			TStringConstantExpression name = EdmFactory.eINSTANCE.createTStringConstantExpression();
+			name.setValue(transformation);
+			transformations.getString().add(name);
+		}
+		TPropertyValue transformationsMember = EdmFactory.eINSTANCE.createTPropertyValue();
+		transformationsMember.setProperty("Transformations");
+		transformationsMember.getCollection().add(transformations);
+		TPropertyValue rollupMember = EdmFactory.eINSTANCE.createTPropertyValue();
+		rollupMember.setProperty("Rollup");
+		rollupMember.setEnumMember1(
+				List.of("Org.OData.Aggregation.V1.RollupType/" + support.rollup().member()));
+		TRecordExpression record = EdmFactory.eINSTANCE.createTRecordExpression();
+		record.getPropertyValue().add(transformationsMember);
+		record.getPropertyValue().add(rollupMember);
+		AnnotationType annotation = EdmFactory.eINSTANCE.createAnnotationType();
+		annotation.setTerm("Org.OData.Aggregation.V1.ApplySupported");
+		annotation.getRecord().add(record);
 		return annotation;
 	}
 

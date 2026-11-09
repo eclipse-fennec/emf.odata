@@ -278,6 +278,20 @@ public class RepositoryBackendIntegrationTest {
 		HttpResponse<String> total = get("/Article?$apply=" + encode("aggregate(stock with sum as total)"));
 		assertEquals(200, total.statusCode(), total.body());
 		assertTrue(total.body().contains("\"total\":515"), "12 + 3 + 500: " + total.body());
+
+		// #103: $metadata announces on the Article set exactly what this backend executes
+		// (other sets of the framework hang on other backends and carry their own)
+		String metadata = get("/$metadata").body();
+		assertTrue(metadata.contains("Namespace=\"Org.OData.Aggregation.V1\""), metadata);
+		int from = metadata.indexOf("<edm:EntitySet EntityType=\"reposhop.Article\"");
+		assertTrue(from >= 0, metadata);
+		String article = metadata.substring(from, metadata.indexOf("</edm:EntitySet>", from));
+		assertTrue(article.contains("Term=\"Org.OData.Aggregation.V1.ApplySupported\""), article);
+		assertTrue(article.contains("<edm:String>aggregate</edm:String>")
+				&& article.contains("<edm:String>topcount</edm:String>"), article);
+		assertFalse(article.contains("<edm:String>concat</edm:String>"),
+				"the command stage model has no concat: " + article);
+		assertTrue(article.contains("Org.OData.Aggregation.V1.RollupType/None"), article);
 	}
 
 	@Test

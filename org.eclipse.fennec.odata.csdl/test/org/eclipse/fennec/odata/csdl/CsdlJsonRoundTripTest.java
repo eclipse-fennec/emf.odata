@@ -13,6 +13,7 @@
 package org.eclipse.fennec.odata.csdl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,9 +31,17 @@ import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.open.oasis.docs.odata.ns.edm.AnnotationType;
+import org.open.oasis.docs.odata.ns.edm.EdmFactory;
 import org.open.oasis.docs.odata.ns.edm.SchemaType;
+import org.open.oasis.docs.odata.ns.edm.TCollectionExpression;
+import org.open.oasis.docs.odata.ns.edm.TEntityContainer;
+import org.open.oasis.docs.odata.ns.edm.TPropertyValue;
+import org.open.oasis.docs.odata.ns.edm.TRecordExpression;
+import org.open.oasis.docs.odata.ns.edm.TStringConstantExpression;
 import org.open.oasis.docs.odata.ns.edmx.EdmxRoot;
 
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -72,6 +81,45 @@ class CsdlJsonRoundTripTest {
 					model + ": the reader must capture everything the writer emits");
 			ecoreHelper.releaseAll();
 		}
+	}
+
+	@Test
+	@DisplayName("annotations on entity sets, singletons and imports survive writer and reader (#103)")
+	void containerMemberAnnotations() throws Exception {
+		EdmxRoot root = new EcoreToEdmConverter().toEdmx(load("company.ecore"));
+		TEntityContainer container = root.getEdmx().getDataServices().getSchema().stream()
+				.flatMap(schema -> schema.getEntityContainer().stream()).findFirst().orElseThrow();
+		assertFalse(container.getEntitySet().isEmpty(), "company.ecore declares entity sets");
+		container.getEntitySet().forEach(set -> set.getAnnotation().add(record("Set", "set")));
+		container.getSingleton().forEach(single -> single.getAnnotation().add(record("Single", "single")));
+		container.getFunctionImport().forEach(imp -> imp.getAnnotation().add(record("Fn", "fn")));
+		container.getActionImport().forEach(imp -> imp.getAnnotation().add(record("Act", "act")));
+
+		String json = CsdlJsonWriter.write(root);
+		String setName = container.getEntitySet().get(0).getName();
+		JsonNode set = MAPPER.readTree(json).findValue(container.getName()).path(setName);
+		assertEquals("set", set.path("@Test.V1.Set").path("Kinds").get(0).asString(), json);
+
+		String reserialized = CsdlJsonWriter.write(new CsdlJsonReader().read(json));
+		assertEquals(MAPPER.readTree(json), MAPPER.readTree(reserialized),
+				"the reader must keep the member annotations the writer emits");
+	}
+
+	/** A record-valued annotation like {@code Aggregation.ApplySupported}: {@code {Kinds: [value]}}. */
+	private static AnnotationType record(String term, String value) {
+		TStringConstantExpression string = EdmFactory.eINSTANCE.createTStringConstantExpression();
+		string.setValue(value);
+		TCollectionExpression collection = EdmFactory.eINSTANCE.createTCollectionExpression();
+		collection.getString().add(string);
+		TPropertyValue member = EdmFactory.eINSTANCE.createTPropertyValue();
+		member.setProperty("Kinds");
+		member.getCollection().add(collection);
+		TRecordExpression record = EdmFactory.eINSTANCE.createTRecordExpression();
+		record.getPropertyValue().add(member);
+		AnnotationType annotation = EdmFactory.eINSTANCE.createAnnotationType();
+		annotation.setTerm("Test.V1." + term);
+		annotation.getRecord().add(record);
+		return annotation;
 	}
 
 	@Test

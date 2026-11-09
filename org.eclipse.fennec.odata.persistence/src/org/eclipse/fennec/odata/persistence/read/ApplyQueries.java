@@ -42,6 +42,8 @@ import org.eclipse.fennec.model.query.Selection;
 import org.eclipse.fennec.model.query.SortDirection;
 import org.eclipse.fennec.model.query.builder.Expressions;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport.Rollup;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.query.apply.AggregateExpression;
 import org.eclipse.fennec.odata.query.apply.AggregateTransformation;
@@ -72,6 +74,15 @@ import org.eclipse.fennec.persistence.query.api.QueryResultRow;
  * {@link UnsupportedOperationException}, which the servlet maps to an honest 501.
  */
 public final class ApplyQueries {
+
+	/**
+	 * What {@link #plan} translates, announced in {@code $metadata} (#103): the stage model has
+	 * no {@code concat}, no {@code $apply}-internal {@code orderby}/{@code top}/{@code skip}, no
+	 * running-total {@code top*}/{@code bottom*} and no {@code rollup}. Position limits (a
+	 * plain {@code groupby} only last, {@code compute} only after a grouping) still answer 501.
+	 */
+	public static final ApplySupport SUPPORT = new ApplySupport(List.of("aggregate", "groupby",
+			"filter", "compute", "identity", "topcount", "bottomcount"), Rollup.NONE);
 
 	private ApplyQueries() {
 	}

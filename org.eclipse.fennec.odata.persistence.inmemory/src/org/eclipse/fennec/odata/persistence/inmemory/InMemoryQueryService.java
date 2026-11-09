@@ -28,6 +28,7 @@ import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
@@ -58,6 +59,11 @@ public class InMemoryQueryService implements QueryService {
 	@Override
 	public boolean supports(EClass entityType) {
 		return repositories.stream().anyMatch(r -> r.supplies(entityType));
+	}
+
+	@Override
+	public ApplySupport applySupport() {
+		return ApplyExecutor.SUPPORT;
 	}
 
 	@Override

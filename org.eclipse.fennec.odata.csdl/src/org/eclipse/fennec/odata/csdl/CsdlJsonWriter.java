@@ -286,11 +286,13 @@ public final class CsdlJsonWriter {
 			setNode.put("$Collection", true);
 			setNode.put("$Type", String.valueOf(set.getEntityType()));
 			bindings(set.getNavigationPropertyBinding(), setNode);
+			annotations(set.getAnnotation(), setNode);
 		}
 		for (TSingleton singleton : container.getSingleton()) {
 			ObjectNode singleNode = node.putObject(singleton.getName());
 			singleNode.put("$Type", String.valueOf(singleton.getType()));
 			bindings(singleton.getNavigationPropertyBinding(), singleNode);
+			annotations(singleton.getAnnotation(), singleNode);
 		}
 		for (TFunctionImport imp : container.getFunctionImport()) {
 			ObjectNode impNode = node.putObject(imp.getName());
@@ -298,6 +300,7 @@ public final class CsdlJsonWriter {
 			if (imp.getEntitySet() != null) {
 				impNode.put("$EntitySet", String.valueOf(imp.getEntitySet()));
 			}
+			annotations(imp.getAnnotation(), impNode);
 		}
 		for (TActionImport imp : container.getActionImport()) {
 			ObjectNode impNode = node.putObject(imp.getName());
@@ -305,6 +308,7 @@ public final class CsdlJsonWriter {
 			if (imp.getEntitySet() != null) {
 				impNode.put("$EntitySet", String.valueOf(imp.getEntitySet()));
 			}
+			annotations(imp.getAnnotation(), impNode);
 		}
 		return node;
 	}
