@@ -2647,6 +2647,11 @@ class ODataServletTest {
 		}
 
 		@Override
+		public boolean structuredRawValue() {
+			return true;
+		}
+
+		@Override
 		public Optional<String> errorBody(int status, String message) {
 			return Optional.of("{\"code\":" + status + ",\"message\":\"" + message + "\"}");
 		}
@@ -2749,6 +2754,36 @@ class ODataServletTest {
 		assertEquals("Milk", get("/Product('p1')/name/$value", Map.of()).body(), "$value is unchanged");
 		assertTrue(get("/Product('p1')/category", Map.of()).body().startsWith("{\"@iot.id\":\"c1\""),
 				"an entity is no property value");
+	}
+
+	@Test
+	@DisplayName("#130: $value on a structured property — 400 in OData, its JSON for a profile that wants it")
+	void structuredRawValue() throws Exception {
+		List<EObject> products = dairyProducts();
+		EObject milk = products.get(0);
+		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
+		EObject review = pkg.getEFactoryInstance().create(reviewClass);
+		review.eSet(reviewClass.getEStructuralFeature("stars"), 5);
+		review.eSet(reviewClass.getEStructuralFeature("comment"), "fresh");
+		@SuppressWarnings("unchecked")
+		List<EObject> reviews = (List<EObject>) milk.eGet(productClass.getEStructuralFeature("reviews"));
+		reviews.add(review);
+		@SuppressWarnings("unchecked")
+		List<String> tags = (List<String>) milk.eGet(productClass.getEStructuralFeature("tags"));
+		tags.add("dairy");
+		backendResult = products;
+
+		assertEquals(400, get("/Product('p1')/reviews/$value", Map.of()).status(), "OData: primitive values only");
+
+		speakProfile();
+		Response complex = get("/Product('p1')/reviews/$value", Map.of());
+		assertEquals(200, complex.status(), complex.body());
+		assertTrue(complex.headers().getOrDefault("Content-Type", "").startsWith("application/json"),
+				complex.headers().toString());
+		assertEquals("[{\"stars\":5,\"comment\":\"fresh\"}]", complex.body());
+		assertEquals("[\"dairy\"]", get("/Product('p1')/tags/$value", Map.of()).body());
+		assertEquals("Milk", get("/Product('p1')/name/$value", Map.of()).body(), "a primitive stays text");
+		assertEquals(400, get("/Product('p1')/category/$value", Map.of()).status(), "an entity has no $value");
 	}
 
 	@Test

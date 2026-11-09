@@ -50,6 +50,7 @@ class WireProfileTest {
 		assertEquals(ControlNames.ODATA, profile.controls());
 		assertTrue(profile.keyInBody(null));
 		assertFalse(profile.absoluteLinks(), "OData keeps its links relative (#121 D8)");
+		assertFalse(profile.structuredRawValue(), "OData: $value for primitive values only (#130)");
 		assertTrue(profile.serviceDocument(new ServiceRoot("http://h/r", List.of(), List.of())).isEmpty());
 		assertTrue(profile.errorBody(400, "x").isEmpty());
 		assertTrue(profile.mapping().isEmpty(), "no wire properties: the model as it is (#119)");
