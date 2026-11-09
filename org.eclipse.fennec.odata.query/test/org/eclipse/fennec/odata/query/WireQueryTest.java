@@ -119,6 +119,10 @@ class WireQueryTest {
 			if (operand == OperandKind.NULL) {
 				return op == WireOperator.EQ ? isNull(s) : not(isNull(s));
 			}
+			if (operand == OperandKind.INTERVAL && op == WireOperator.EQ) {
+				return and(WireCondition.compare(s, op, WireCondition.Bound.START),
+						WireCondition.compare(e, op, WireCondition.Bound.END));
+			}
 			if (operand != OperandKind.DATE_TIME) {
 				throw new IllegalArgumentException("an interval compares with a date");
 			}
@@ -130,6 +134,15 @@ class WireQueryTest {
 			case EQ -> and(WireCondition.compare(s, WireOperator.EQ), or(isNull(e), WireCondition.compare(e, WireOperator.EQ)));
 			case NE -> not(compare(WireOperator.EQ, operand));
 			};
+		}
+
+		@Override
+		public WireCondition compare(WireOperator op, WireProperty other) {
+			if (op != WireOperator.LT) {
+				throw new UnsupportedOperationException("only lt between intervals");
+			}
+			// ends before the other starts
+			return WireCondition.compare(e, WireOperator.LE, other.getParts().get(0));
 		}
 
 		@Override
@@ -294,6 +307,32 @@ class WireQueryTest {
 	}
 
 	@Test
+	@DisplayName("#129: an interval literal operand, compared bound by bound by the handler")
+	void intervalLiteral() {
+		assertEquals("((phenomenonTimeStart = '2020-01-01T00:00:00Z') and (phenomenonTimeEnd = '2020-02-01T00:00:00Z'))",
+				filter("phenomenonTime eq 2020-01-01T00:00:00Z/2020-02-01T00:00:00Z"));
+		assertThrows(ODataQueryParseException.class, () -> filter("phenomenonTime gt 2020-01-01T00:00:00Z/2020-02-01T00:00:00Z"),
+				"the handler refuses what it does not define (here: it takes DATE_TIME only for gt)");
+		assertTrue(assertThrows(ODataQueryParseException.class,
+				() -> filter("id eq 2020-01-01T00:00:00Z/2020-02-01T00:00:00Z")).getMessage()
+				.contains("only with a wire property"), "not OData: nowhere else");
+		assertThrows(ODataQueryParseException.class, () -> filter("year(2020-01-01T00:00:00Z/2020-02-01T00:00:00Z) eq 2020"));
+		assertEquals("((phenomenonTimeStart = '2020-01-01T00:00:00Z') and (phenomenonTimeEnd = '2020-02-01T00:00:00Z'))",
+				filter("phenomenonTime in (2020-01-01T00:00:00Z/2020-02-01T00:00:00Z)"));
+	}
+
+	@Test
+	@DisplayName("#129: two wire properties, compared by the left handler over the parts of both")
+	void twoWireProperties() {
+		assertEquals("(phenomenonTimeEnd <= Datastream/phenomenonTimeStart)",
+				filter("phenomenonTime lt Datastream/phenomenonTime"));
+		assertEquals("(Datastream/phenomenonTimeEnd <= phenomenonTimeStart)",
+				filter("Datastream/phenomenonTime lt phenomenonTime"));
+		assertThrows(ODataQueryNotImplementedException.class, () -> filter("result eq result"),
+				"a handler without the method: 501");
+	}
+
+	@Test
 	@DisplayName("in expands to eq comparisons")
 	void in() {
 		assertEquals("((resultNumber = 1) or (resultNumber = 2))", filter("result in (1, 2)"));
@@ -310,7 +349,8 @@ class WireQueryTest {
 	void handlerErrors() {
 		assertThrows(ODataQueryParseException.class, () -> filter("phenomenonTime gt 'x'"));
 		assertThrows(ODataQueryNotImplementedException.class, () -> filter("result eq 2020-01-01T00:00:00Z"));
-		assertThrows(ODataQueryNotImplementedException.class, () -> filter("phenomenonTime eq Datastream/phenomenonTime"));
+		assertThrows(ODataQueryNotImplementedException.class, () -> filter("phenomenonTime eq Datastream/phenomenonTime"),
+				"the handler's choice: only lt between intervals");
 		assertThrows(ODataQueryNotImplementedException.class, () -> filter("result eq result"), "two wire properties: #129");
 		assertThrows(ODataQueryParseException.class, () -> filter("result eq Datastream"), "an operand of unknown kind");
 	}

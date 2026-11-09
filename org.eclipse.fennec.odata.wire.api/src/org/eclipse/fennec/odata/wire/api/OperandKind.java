@@ -26,6 +26,12 @@ public enum OperandKind {
 	DATE,
 	/** {@code Edm.TimeOfDay}. */
 	TIME_OF_DAY,
+	/**
+	 * An interval literal {@code start/end} (ISO 8601, two DateTimeOffsets). Not OData: the runtime
+	 * accepts it only as the operand of a wire property; the handler compares its parts with the
+	 * literal's bounds ({@link WireCondition.CompareBound}, #129).
+	 */
+	INTERVAL,
 	/** The {@code null} literal. */
 	NULL,
 	/** A typed value of any other kind: GUID, duration, enumeration, binary. */

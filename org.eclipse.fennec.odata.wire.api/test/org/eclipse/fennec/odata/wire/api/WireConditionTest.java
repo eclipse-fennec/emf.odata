@@ -62,6 +62,8 @@ class WireConditionTest {
 	private static List<EAttribute> parts(WireCondition condition) {
 		return switch (condition) {
 		case WireCondition.Compare c -> List.of(c.part());
+		case WireCondition.CompareBound b -> List.of(b.part());
+		case WireCondition.CompareParts p -> List.of(p.part(), p.otherPart());
 		case WireCondition.IsNull n -> List.of(n.part());
 		case WireCondition.Not n -> parts(n.condition());
 		case WireCondition.And a -> a.conditions().stream().flatMap(c -> parts(c).stream()).toList();

@@ -94,6 +94,7 @@ Eine Wire-Property steht für Modell-Attribute, ihre *Parts* (#119).
   * `write`: JSON-Skalar
   * `read`: Part-Werte
   * `compare(op, operandKind)`: Bedingung für `$filter`
+  * `compare(op, otherProperty)`: Bedingung zwischen zwei Wire-Properties (#129)
   * `operandOf(function)`: Part für Funktionen und Arithmetik
   * `orderBy()`: Sortierschlüssel
 
@@ -114,7 +115,12 @@ Eine Wire-Property steht für Modell-Attribute, ihre *Parts* (#119).
   * Ein PATCH, der Parts leert, wird als Replace des aktuellen Stands geschrieben.
   * Der Handler meldet 400 mit `IllegalArgumentException` und 501 mit
     `UnsupportedOperationException`.
-  * Zwei Wire-Properties im selben Vergleich sowie Wire-Properties in `$apply` ergeben 501.
+  * Zwei Wire-Properties im selben Vergleich gehen über den Handler der linken; seine Bedingung
+    darf die Parts beider nennen (`CompareParts`). Ohne Implementierung: 501 (#129).
+  * Ein Intervall-Literal `start/end` ist kein OData. Die Grammatik akzeptiert es nur als Operand
+    einer Wire-Property (`OperandKind.INTERVAL`, Bedingungen über seine Grenzen mit
+    `CompareBound`), sonst 400 (#129).
+  * Wire-Properties in `$apply` ergeben 501.
 
 ### 6. Nicht in emf.odata
 
@@ -161,5 +167,4 @@ Abnahme ist der STA-TCK (ets-sta10/11) gegen das Pool-Beispiel von emf.streaming
   korrigieren, siehe den Befund zu `result` in emf.streaming#71.
 * Wer das Query-Bundle nutzt, braucht die Wire-API auf dem Klassenpfad.
 * **Offen:** `$metadata` einer Root mit Wire-Properties zeigt weiter das Modell mit seinen Parts
-  (STA verlangt kein `$metadata`). Ein Vergleich zweier Wire-Properties bräuchte eine
-  SPI-Erweiterung (#129, geparkt: ets-sta10 prüft ihn nicht).
+  (STA verlangt kein `$metadata`).

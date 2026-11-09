@@ -249,6 +249,7 @@ profile's `WirePropertyHandler` (`handler(property)`) — the runtime knows no d
 | `write(entity)` | the JSON value (string, number, boolean or `null`) in entities, `$expand`, `GET …/prop`, `/$value` |
 | `read(value)` | the part values from a write (POST, PUT, PATCH, `PUT …/prop`) |
 | `compare(op, operandKind)` | a `$filter` comparison, as a `WireCondition` over the parts |
+| `compare(op, otherProperty)` | a comparison with another wire property (`phenomenonTime lt validTime`); default 501 |
 | `operandOf(function)` | the part a function or arithmetic operator works on (`year(…)`, `length(…)`, `add`) |
 | `orderBy()` | the `$orderby` keys |
 
@@ -261,8 +262,12 @@ model sees the attributes as they are:
   handler's condition — which can name only the parts and the other operand — is pushed down
   to the backend like any filter; nothing is filtered or sorted in memory
 - a merge (PATCH) that clears a part is written as a replace of the current state
-- comparing two wire properties answers 501, as do wire properties in `$apply`; a handler
-  answers 400 with `IllegalArgumentException` and 501 with `UnsupportedOperationException`
+- two wire properties compare through the left one's handler, whose condition may name the
+  parts of both; wire properties in `$apply` answer 501; a handler answers 400 with
+  `IllegalArgumentException` and 501 with `UnsupportedOperationException`
+- an **interval literal** `start/end` (two DateTimeOffsets, not OData) is accepted only as the
+  operand of a wire property (`OperandKind.INTERVAL`); the handler compares parts with its
+  bounds (`WireCondition.compare(part, op, Bound.START)`). Anywhere else it is a 400
 - the ETag stays over the model attributes; `$metadata` still shows the model
 
 JSON-valued properties — a string attribute holding JSON text, such as the SensorThings

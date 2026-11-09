@@ -683,6 +683,13 @@ public interface ODataFilterVisitor<T> extends ParseTreeVisitor<T> {
 	 */
 	T visitGuidLiteral(ODataFilterParser.GuidLiteralContext ctx);
 	/**
+	 * Visit a parse tree produced by the {@code IntervalLiteral}
+	 * labeled alternative in {@link ODataFilterParser#literal}.
+	 * @param ctx the parse tree
+	 * @return the visitor result
+	 */
+	T visitIntervalLiteral(ODataFilterParser.IntervalLiteralContext ctx);
+	/**
 	 * Visit a parse tree produced by the {@code DateTimeOffsetLiteral}
 	 * labeled alternative in {@link ODataFilterParser#literal}.
 	 * @param ctx the parse tree

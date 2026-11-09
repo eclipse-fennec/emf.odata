@@ -226,6 +226,7 @@ literal : STRING          # StringLiteral
         | (TRUE | FALSE)  # BooleanLiteral
         | NULL            # NullLiteral
         | GUID            # GuidLiteral
+        | INTERVAL        # IntervalLiteral
         | DATETIMEOFFSET  # DateTimeOffsetLiteral
         | DATE            # DateLiteral
         | TIMEOFDAY       # TimeOfDayLiteral
@@ -299,7 +300,10 @@ DURATION : 'duration' '\'' ~'\''* '\'' ;
 ENUM     : [a-zA-Z_] [a-zA-Z0-9_]* ('.' [a-zA-Z_] [a-zA-Z0-9_]*)+ '\'' ~'\''* '\'' ;
 GUID     : HEX HEX HEX HEX HEX HEX HEX HEX '-' HEX HEX HEX HEX '-' HEX HEX HEX HEX '-'
            HEX HEX HEX HEX '-' HEX HEX HEX HEX HEX HEX HEX HEX HEX HEX HEX HEX ;
-DATETIMEOFFSET : DATEPART 'T' TIMEPART ('Z' | [+-] [0-9] [0-9] ':' [0-9] [0-9]) ;
+// not OData: an ISO 8601 interval 'start/end' of two DateTimeOffsets, accepted only as the
+// operand of a wire property comparison (emf.odata#129, SensorThings); 400 anywhere else
+INTERVAL : DATEPART 'T' TIMEPART TZ '/' DATEPART 'T' TIMEPART TZ ;
+DATETIMEOFFSET : DATEPART 'T' TIMEPART TZ ;
 DATE     : DATEPART ;
 TIMEOFDAY : TIMEPART ;
 
@@ -314,6 +318,7 @@ ALIAS   : '@' [a-zA-Z_] [a-zA-Z0-9_]* ;
 
 fragment HEX : [0-9a-fA-F] ;
 fragment DATEPART : [0-9] [0-9] [0-9] [0-9] '-' [0-9] [0-9] '-' [0-9] [0-9] ;
+fragment TZ : 'Z' | [+-] [0-9] [0-9] ':' [0-9] [0-9] ;
 fragment TIMEPART : [0-9] [0-9] ':' [0-9] [0-9] (':' [0-9] [0-9] ('.' [0-9]+)?)? ;
 
 fragment A : [aA] ;
