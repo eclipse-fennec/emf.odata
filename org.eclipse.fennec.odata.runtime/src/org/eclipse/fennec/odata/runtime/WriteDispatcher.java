@@ -39,8 +39,10 @@ import org.eclipse.fennec.odata.persistence.api.QueryService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluationException;
+import org.eclipse.fennec.odata.query.ODataQueryNotImplementedException;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ResourcePath;
+import org.eclipse.fennec.odata.query.WireView;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -74,6 +76,8 @@ void execute(HttpServletRequest request, HttpServletResponse response) throws IO
 		servlet.error(response, HttpServletResponse.SC_CONFLICT, e.getMessage());
 	} catch (OclEvaluationException | IllegalArgumentException e) {
 		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
+	} catch (ODataQueryNotImplementedException e) {
+		servlet.error(response, 501, e.getMessage());
 	} catch (UnsupportedOperationException e) {
 		servlet.error(response, 501, "the backend does not support this request");
 	} catch (Exception e) {
@@ -205,11 +209,19 @@ private void dispatchWrite(HttpServletRequest request, HttpServletResponse respo
 			if (payload == null) {
 				return; // error already written
 			}
+			boolean replace = "PUT".equals(request.getMethod());
+			EObject entity = payload.entity();
+			if (!replace && payload.clearsParts()) {
+				entity = path.namedKeys().isEmpty() ? withClearedParts(entityType, path.key(), payload) : null;
+				if (entity == null) {
+					servlet.error(response, 501, "clearing a wire property needs a read backend for the current state");
+					return;
+				}
+				replace = true;
+			}
 			WriteService.WriteResult result = path.namedKeys().isEmpty()
-					? writeService.update(entityType, path.key(),
-							payload.entity(), "PUT".equals(request.getMethod()))
-					: writeService.update(entityType, path.namedKeys(),
-							payload.entity(), "PUT".equals(request.getMethod()));
+					? writeService.update(entityType, path.key(), entity, replace)
+					: writeService.update(entityType, path.namedKeys(), entity, replace);
 			if (!payload.bindings().isEmpty()) {
 				applyBindings(writeService, entityType, path.key(), payload.bindings());
 			}
@@ -253,6 +265,16 @@ private void writeBelowEntity(ResourcePath path, EClass entityType, WriteService
 		return;
 	}
 	EStructuralFeature feature = entityType.getEStructuralFeature(property.name());
+	WireView view = Wire.current().view();
+	if (feature != null && view.partOf(entityType, feature) != null) {
+		feature = null; // a part of a wire property is not addressable (#119)
+	}
+	WireView.Binding wire = feature == null && path.segments().size() == 1 && property.key() == null
+			? view.property(entityType, property.name()) : null;
+	if (wire != null) {
+		wirePropertyWrite(path, entityType, wire, writeService, request, response);
+		return;
+	}
 	if (feature == null) {
 		servlet.error(response, HttpServletResponse.SC_NOT_FOUND,
 				"unknown property '" + ODataJson.sanitize(property.name()) + "'");
@@ -414,6 +436,56 @@ private void propertyWrite(ResourcePath path, EClass entityType, EStructuralFeat
 	response.setStatus(HttpServletResponse.SC_NO_CONTENT);
 }
 
+/**
+ * {@code PATCH/PUT/DELETE Set(key)/wireProperty} (#119): the value document carries the value
+ * under {@code value} or the profile's member; DELETE writes null. Like a property write, a
+ * replace of the current state with the parts changed.
+ */
+private void wirePropertyWrite(ResourcePath path, EClass entityType, WireView.Binding wire,
+		WriteService writeService, HttpServletRequest request, HttpServletResponse response)
+		throws IOException {
+	if (!servlet.preconditionHolds(entityType, path.key(), request, response)) {
+		return; // 428/412 already written
+	}
+	EObject current = servlet.currentEntity(entityType, path.key());
+	if (current == null) {
+		servlet.error(response, 501, "property writes need a read backend for the current state");
+		return;
+	}
+	JsonNode value;
+	switch (request.getMethod()) {
+		case "PATCH", "PUT" -> {
+			JsonNode document = readValueDocument(request, response);
+			if (document == null) {
+				return; // error already written
+			}
+			String member = Wire.current().profile().propertyMember(ODataServlet.wireFeature(wire));
+			value = member != null && document.has(member) ? document.get(member) : document.get("value");
+			if (value == null) {
+				servlet.error(response, HttpServletResponse.SC_BAD_REQUEST,
+						"property updates carry a {\"value\": …} document");
+				return;
+			}
+		}
+		case "DELETE" -> value = null;
+		default -> {
+			servlet.error(response, HttpServletResponse.SC_METHOD_NOT_ALLOWED,
+					"unsupported property method");
+			return;
+		}
+	}
+	EObject payload = EcoreUtil.copy(current);
+	readWire(wire, value).forEach((part, partValue) -> {
+		if (partValue == null) {
+			payload.eUnset(part);
+		} else {
+			payload.eSet(part, partValue);
+		}
+	});
+	writeService.update(entityType, path.key(), payload, true);
+	response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+}
+
 /** The {@code @odata.id} of a {@code $ref} body ({@code {"@odata.id": "…"}}). */
 private String referenceUrlFromBody(HttpServletRequest request, HttpServletResponse response)
 		throws IOException {
@@ -483,7 +555,17 @@ private String refTargetKey(String url, EClass targetType, HttpServletResponse r
 }
 
 /** A decoded write payload: the entity plus {@code @odata.bind} targets per navigation. */
-private record WritePayload(EObject entity, Map<EReference, List<String>> bindings) {}
+/**
+ * @param wireParts the parts the payload's wire properties stand for (#119); a null value
+ *                  clears the part, which a merge cannot express ({@link #withClearedParts})
+ */
+private record WritePayload(EObject entity, Map<EReference, List<String>> bindings,
+		Map<EAttribute, Object> wireParts) {
+
+	boolean clearsParts() {
+		return wireParts.containsValue(null);
+	}
+}
 
 private static final byte[] ODATA_BIND_MARKER = "@odata.bind".getBytes(StandardCharsets.US_ASCII);
 
@@ -683,6 +765,13 @@ private WritePayload readPayload(HttpServletRequest request, HttpServletResponse
 		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "empty payload");
 		return null;
 	}
+	Map<EAttribute, Object> wireParts = new LinkedHashMap<>();
+	if (!Wire.current().view().properties(entityType).isEmpty()) {
+		body = extractWireProperties(body, entityType, wireParts, response);
+		if (body == null) {
+			return null; // error already written
+		}
+	}
 	Map<EReference, List<String>> bindings = new LinkedHashMap<>();
 	if (containsAscii(body, ODATA_BIND_MARKER)) {
 		body = extractBindings(body, entityType, bindings, response);
@@ -710,7 +799,103 @@ private WritePayload readPayload(HttpServletRequest request, HttpServletResponse
 		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
 		return null;
 	}
-	return new WritePayload(entity, bindings);
+	wireParts.forEach((part, value) -> {
+		if (value != null) {
+			entity.eSet(part, value);
+		}
+	});
+	return new WritePayload(entity, bindings, wireParts);
+}
+
+/**
+ * Takes the wire properties out of a payload (#119): each value goes through its handler, the
+ * parts it yields land in {@code parts}; the body comes back without them, so the codec sees
+ * model features only. A part named in the payload is an unknown property, as on the wire.
+ * Null after a written error response.
+ */
+private byte[] extractWireProperties(byte[] body, EClass entityType, Map<EAttribute, Object> parts,
+		HttpServletResponse response) throws IOException {
+	JsonNode document;
+	try {
+		document = ODataServlet.JSON.readTree(body);
+	} catch (Exception e) {
+		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+		return null;
+	}
+	if (!(document instanceof ObjectNode object)) {
+		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+		return null;
+	}
+	WireView view = Wire.current().view();
+	for (String member : object.propertyStream().map(Map.Entry::getKey).toList()) {
+		EStructuralFeature feature = entityType.getEStructuralFeature(member);
+		WireView.Binding wire = view.property(entityType, member);
+		if (wire == null) {
+			if (feature != null && view.partOf(entityType, feature) != null) {
+				servlet.error(response, HttpServletResponse.SC_BAD_REQUEST,
+						"unknown property '" + ODataJson.sanitize(member) + "'");
+				return null;
+			}
+			continue;
+		}
+		parts.putAll(readWire(wire, object.get(member)));
+		object.remove(member);
+	}
+	return ODataServlet.JSON.writeValueAsBytes(object);
+}
+
+/** The parts of one wire value; a JSON object or array reaches the handler as its text. */
+static Map<EAttribute, Object> readWire(WireView.Binding wire, JsonNode value) {
+	Object scalar;
+	if (value == null || value.isNull()) {
+		scalar = null;
+	} else if (value.isString()) {
+		scalar = value.asString();
+	} else if (value.isBoolean()) {
+		scalar = value.booleanValue();
+	} else if (value.isNumber()) {
+		scalar = value.isIntegralNumber() && value.canConvertToLong() ? (Object) value.longValue()
+				: (Object) value.decimalValue();
+	} else {
+		scalar = value.toString();
+	}
+	Map<EAttribute, Object> parts = wire.handler().read(scalar); // IllegalArgument → 400
+	if (parts == null) {
+		return Map.of();
+	}
+	for (EAttribute part : parts.keySet()) {
+		if (!wire.parts().contains(part)) {
+			throw new IllegalStateException("the handler of '" + wire.name()
+					+ "' read an attribute that is not one of its parts");
+		}
+	}
+	return parts;
+}
+
+/**
+ * A merge that clears parts of a wire property as a replace of the current state (#119): a
+ * merge payload cannot say "set to null" in EMF terms ({@code eIsSet} reads as absent). Null
+ * when there is no read backend for the current state.
+ */
+private EObject withClearedParts(EClass entityType, String key, WritePayload payload) {
+	EObject current = servlet.currentEntity(entityType, key);
+	if (current == null) {
+		return null;
+	}
+	EObject merged = EcoreUtil.copy(current);
+	for (EAttribute attribute : entityType.getEAllAttributes()) {
+		if (payload.entity().eIsSet(attribute)) {
+			merged.eSet(attribute, payload.entity().eGet(attribute));
+		}
+	}
+	payload.wireParts().forEach((part, value) -> {
+		if (value == null) {
+			merged.eUnset(part);
+		} else {
+			merged.eSet(part, value);
+		}
+	});
+	return merged;
 }
 
 /**

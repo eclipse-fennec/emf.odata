@@ -15,6 +15,7 @@ package org.eclipse.fennec.odata.runtime;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
+import org.eclipse.fennec.odata.query.WireView;
 import org.eclipse.fennec.odata.wire.api.ControlNames;
 import org.eclipse.fennec.odata.wire.api.WireProfile;
 
@@ -28,11 +29,12 @@ import jakarta.servlet.http.HttpServletRequest;
  * @param profile the root's profile, never null
  * @param names   the control names in effect
  * @param baseUrl the absolute URL of the service root (no trailing slash); null outside a request
+ * @param view    the root's wire properties and key alias (#119)
  */
-record Wire(WireProfile profile, ControlNames names, String baseUrl) {
+record Wire(WireProfile profile, ControlNames names, String baseUrl, WireView view) {
 
 	/** Plain OData outside a request, and for the canonical form of an ETag. */
-	static final Wire ODATA = new Wire(ODataWireProfile.INSTANCE, ControlNames.ODATA, null);
+	static final Wire ODATA = new Wire(ODataWireProfile.INSTANCE, ControlNames.ODATA, null, WireView.NONE);
 
 	/** The wire of the request being served; plain OData outside a request. */
 	static final ThreadLocal<Wire> CURRENT = new ThreadLocal<>();
@@ -42,8 +44,8 @@ record Wire(WireProfile profile, ControlNames names, String baseUrl) {
 		return wire == null ? ODATA : wire;
 	}
 
-	static Wire of(WireProfile profile, String baseUrl) {
-		return new Wire(profile, profile.controls(), baseUrl);
+	static Wire of(WireProfile profile, String baseUrl, WireView view) {
+		return new Wire(profile, profile.controls(), baseUrl, view);
 	}
 
 	/** Whether links are absolute (the profile asks for it and the base URL is known). */
