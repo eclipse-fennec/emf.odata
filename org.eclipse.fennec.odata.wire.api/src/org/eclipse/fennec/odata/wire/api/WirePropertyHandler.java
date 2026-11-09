@@ -35,7 +35,8 @@ import org.osgi.annotation.versioning.ConsumerType;
 public interface WirePropertyHandler {
 
 	/**
-	 * The value on the wire: a {@link String}, {@link Number}, {@link Boolean} or {@code null}.
+	 * The value on the wire: a {@link String}, {@link Number}, {@link Boolean}, {@link WireJson}
+	 * (a JSON object or array, #118) or {@code null}.
 	 *
 	 * @param entity the entity whose parts to read
 	 */
@@ -45,8 +46,8 @@ public interface WirePropertyHandler {
 	 * The parts for a value from the wire (POST, PUT, PATCH, a property write). Every part the
 	 * map leaves out keeps its value; only parts of the property may appear.
 	 *
-	 * @param value a {@link String}, {@link Number}, {@link Boolean} or {@code null}; a JSON
-	 *              object or array arrives as its JSON text
+	 * @param value a {@link String}, {@link Number}, {@link Boolean}, {@code null}, or a
+	 *              {@link WireJson} for a JSON object or array
 	 * @throws IllegalArgumentException when the value is not a valid form (400)
 	 */
 	Map<EAttribute, Object> read(Object value);

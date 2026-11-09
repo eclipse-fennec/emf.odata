@@ -29,6 +29,7 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -73,6 +74,7 @@ import org.eclipse.fennec.odata.operation.api.ODataOperationHandler;
 import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.wire.api.ControlNames;
+import org.eclipse.fennec.odata.wire.api.JsonTextHandler;
 import org.eclipse.fennec.odata.wire.api.ServiceRoot;
 import org.eclipse.fennec.odata.wire.api.OperandKind;
 import org.eclipse.fennec.odata.wire.api.WireCondition;
@@ -190,7 +192,7 @@ class ODataServletTest {
 		servlet.addWriteService(new WriteService() {
 			@Override
 			public boolean supports(EClass entityType) {
-				return writeSupported && entityType == productClass;
+				return writeSupported && (entityType == productClass || writeTypes.contains(entityType));
 			}
 
 			@Override
@@ -199,6 +201,8 @@ class ODataServletTest {
 					throw new WriteConflictException("an entity with this key already exists");
 				}
 				lastWritePayload.set(entity);
+				generateKey(entity);
+				created.add(entity);
 				return entity;
 			}
 
@@ -236,6 +240,11 @@ class ODataServletTest {
 					EObject child) {
 				lastRelated.set(child);
 				lastWriteKey.set(rawKey);
+				generateKey(child);
+				EStructuralFeature childId = child.eClass().getEStructuralFeature("id");
+				if (childId != null) {
+					linkCalls.add(rawKey + "→" + navigation + "+" + child.eGet(childId));
+				}
 				return child;
 			}
 
@@ -253,6 +262,20 @@ class ODataServletTest {
 				return unlinkFound;
 			}
 		});
+	}
+
+	/** Further types the test write backend accepts (deep insert targets, #117). */
+	private final Set<EClass> writeTypes = new HashSet<>();
+	/** Everything the test write backend created, in order. */
+	private final List<EObject> created = new CopyOnWriteArrayList<>();
+	private int generatedKeys;
+
+	/** A store-generated key for an entity created without one (as STA servers do). */
+	private void generateKey(EObject entity) {
+		EStructuralFeature id = entity.eClass().getEStructuralFeature("id");
+		if (id != null && !entity.eIsSet(id)) {
+			entity.eSet(id, "g" + ++generatedKeys);
+		}
 	}
 
 	@AfterEach
@@ -3734,5 +3757,138 @@ class ODataServletTest {
 		servlet.setWireProfile(new LabelProfile((EAttribute) category.getEStructuralFeature("name")));
 		assertTrue(assertThrows(IllegalArgumentException.class, () -> servlet.activate(Map.of()))
 				.getMessage().contains("no attribute of Product"));
+	}
+
+	// --- #117 / #118 / #120: the read side, JSON values, partial collections ---
+
+	@Test
+	@DisplayName("#117: the key value member is the key — a nested one links, a nested entity without key is created")
+	void deepInsertWithKeyValues() throws Exception {
+		speakProfile();
+		writeTypes.add(EcoreHelper.getEClass(pkg, "Category"));
+
+		Response response = callWrite("POST", "/Product", "{\"@iot.id\":\"p9\",\"name\":\"Tea\","
+				+ "\"category\":{\"name\":\"Drinks\"},\"accessories\":[{\"@iot.id\":\"p1\"},{\"name\":\"Cup\"}]}",
+				"application/json");
+		assertEquals(201, response.status(), response.body());
+		assertEquals(List.of("Drinks", "Tea"), created.stream()
+				.map(e -> e.eGet(e.eClass().getEStructuralFeature("name"))).toList(),
+				"the new single-valued target first, then the entity");
+		EObject product = created.get(1);
+		assertEquals("p9", product.eGet(productClass.getEStructuralFeature("id")));
+		EObject category = (EObject) product.eGet(productClass.getEStructuralFeature("category"));
+		assertEquals("g1", category.eGet(category.eClass().getEStructuralFeature("id")),
+				"the entity references the created category by its key");
+		assertEquals(List.of("p1"), accessoriesOf(product).stream()
+				.map(a -> a.eGet(productClass.getEStructuralFeature("id"))).toList(),
+				"the linked accessory stays a reference");
+		assertEquals(List.of("'p9'→accessories+g2"), linkCalls, "the new accessory is created inside the navigation");
+		assertEquals("Cup", lastRelated.get().eGet(productClass.getEStructuralFeature("name")));
+	}
+
+	@Test
+	@DisplayName("#117: linking only, and a key value that contradicts the key")
+	void keyValueLinks() throws Exception {
+		speakProfile();
+		Response linked = callWrite("POST", "/Product", "{\"name\":\"x\",\"category\":{\"@iot.id\":\"c1\"}}",
+				"application/json");
+		assertEquals(201, linked.status(), linked.body());
+		assertEquals(1, created.size(), "nothing but the entity is created");
+		EObject category = (EObject) created.get(0).eGet(productClass.getEStructuralFeature("category"));
+		assertEquals("c1", category.eGet(category.eClass().getEStructuralFeature("id")));
+
+		assertEquals(400, callWrite("POST", "/Product", "{\"@iot.id\":\"p9\",\"id\":\"p8\"}", "application/json")
+				.status());
+	}
+
+	/** A profile that shows {@code name} as JSON (#118). */
+	private final class JsonProfile implements WireProfile {
+		private final WireProperty json = WireMappingFactory.eINSTANCE.createWireProperty();
+
+		JsonProfile() {
+			json.setName("name");
+			json.getParts().add((EAttribute) productClass.getEStructuralFeature("name"));
+		}
+
+		@Override
+		public ControlNames controls() {
+			return testProfile.controls();
+		}
+
+		@Override
+		public String propertyMember(EStructuralFeature property) {
+			return property.getName();
+		}
+
+		@Override
+		public boolean structuredRawValue() {
+			return true;
+		}
+
+		@Override
+		public Optional<WireMapping> mapping() {
+			ClassMapping product = WireMappingFactory.eINSTANCE.createClassMapping();
+			product.setEClass(productClass);
+			product.getProperties().add(json);
+			WireMapping mapping = WireMappingFactory.eINSTANCE.createWireMapping();
+			mapping.getClasses().add(product);
+			return Optional.of(mapping);
+		}
+
+		@Override
+		public Optional<WirePropertyHandler> handler(WireProperty property) {
+			return Optional.of(new JsonTextHandler((EAttribute) productClass.getEStructuralFeature("name")));
+		}
+	}
+
+	@Test
+	@DisplayName("#118: a JSON-valued property is JSON on the wire, read and written as such")
+	void jsonValuedProperty() throws Exception {
+		servlet.setWireProfile(new JsonProfile());
+		servlet.activate(Map.of("odata.max.body.size", "256"));
+		backendResult = List.of(product("p1", "{\"owner\":\"pool\",\"n\":[1,2]}", "1.20", null));
+
+		String body = get("/Product", Map.of()).body();
+		assertTrue(body.contains("\"name\":{\"owner\":\"pool\",\"n\":[1,2]}"), body);
+		assertEquals("{\"name\":{\"owner\":\"pool\",\"n\":[1,2]}}", get("/Product('p1')/name", Map.of()).body());
+		assertEquals("{\"owner\":\"pool\",\"n\":[1,2]}", get("/Product('p1')/name/$value", Map.of()).body());
+		assertEquals(501, get("/Product", Map.of("$filter", "name eq 'x'")).status());
+
+		assertEquals(201, callWrite("POST", "/Product", "{\"id\":\"p9\",\"name\":{\"b\":[true]}}",
+				"application/json").status());
+		assertEquals("{\"b\":[true]}", lastWritePayload.get().eGet(productClass.getEStructuralFeature("name")));
+		assertEquals(400, callWrite("POST", "/Product", "{\"id\":\"p9\",\"name\":\"text\"}", "application/json")
+				.status(), "a JSON-valued property takes an object or an array");
+
+		backendResult = List.of(product("p1", "{\"broken\":", "1.20", null));
+		assertEquals(500, get("/Product('p1')/name", Map.of()).status(), "stored text is never passed on unchecked");
+	}
+
+	@Test
+	@DisplayName("#120: a navigation collection pages with count and next link, an expansion with a next link")
+	void partialCollections() throws Exception {
+		EObject product = product("p1", "Milk", "1.20", null);
+		for (String id : List.of("a1", "a2", "a3")) {
+			accessoriesOf(product).add(product(id, "Accessory " + id, null, null));
+		}
+		backendResult = List.of(product);
+
+		String page = get("/Product('p1')/accessories", Map.of("$top", "2", "$count", "true")).body();
+		assertTrue(page.contains("\"@odata.count\":3"), page);
+		assertTrue(page.contains("\"@odata.nextLink\":\"/odata/Product('p1')/accessories?$skip=2&"), page);
+		assertTrue(page.contains("$top=2"), page);
+		String last = get("/Product('p1')/accessories", Map.of("$top", "2", "$skip", "2")).body();
+		assertFalse(last.contains("nextLink"), "the last page has no next link: " + last);
+
+		String expanded = get("/Product", Map.of("$expand", "accessories($top=1;$orderby=id desc)")).body();
+		assertTrue(expanded.contains("\"accessories@odata.nextLink\":\"Product('p1')/accessories?$skip=1&$top=1"
+				+ "&$orderby=id+desc\""), expanded);
+		assertFalse(get("/Product", Map.of("$expand", "accessories($top=3)")).body().contains("nextLink"),
+				"a complete expansion has no next link");
+
+		speakProfile();
+		String sta = get("/Product", Map.of("$expand", "accessories($top=2)")).body();
+		assertTrue(sta.contains("\"accessories@iot.nextLink\":\"https://h.example/sta/v1.1/Product('p1')/accessories"
+				+ "?$skip=2&$top=2\""), sta);
 	}
 }

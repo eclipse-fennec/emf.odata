@@ -27,7 +27,8 @@ Edit links, `POST` new entities, `POST` related (`createRelated`, containment +
 non-containment), `POST`/`PUT`/`DELETE` `$ref` (single clear + collection member via `$id`,
 and 4.01 key-in-URL), `PATCH`, `DELETE`, `If-Match` (weak ETags; updates/deletes of
 existing entities require it → 428/412), `Location`, `OData-EntityId`, upserts,
-property-level writes (replace-based), and deep inserts of containments.
+property-level writes (replace-based), and deep inserts — containments and new entities in
+non-containment navigations.
 
 ## Known SHOULD/MAY gaps
 
