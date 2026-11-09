@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ecore:EPackage xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" name="mapping" nsURI="https://eclipse.org/fennec/odata/wire/mapping/1.0"
+    nsPrefix="wiremapping">
+  <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+    <details key="documentation" value="How a wire profile shows a model on the wire (ADR-0010, #119): wire properties that stand for one or more model attributes. The mapping belongs to the profile, not to the model: a plain OData root of the same model sees the attributes as they are."/>
+  </eAnnotations>
+  <eClassifiers xsi:type="ecore:EClass" name="WireMapping">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="The mapping of a wire profile: one entry per mapped type."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="classes" upperBound="-1"
+        eType="#//ClassMapping" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ClassMapping">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="The wire properties of a type; they apply to its subtypes as well."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="eClass" lowerBound="1"
+        eType="ecore:EClass platform:/plugin/org.eclipse.emf.ecore/model/Ecore.ecore#//EClass"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="properties" upperBound="-1"
+        eType="#//WireProperty" containment="true"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="WireProperty" abstract="true">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="A property on the wire that stands for model attributes. The attributes it maps are not addressable on the wire: the wire property replaces them in the JSON, $select, $filter and $orderby."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="name" lowerBound="1" eType="ecore:EDataType platform:/plugin/org.eclipse.emf.ecore/model/Ecore.ecore#//EString">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="The name on the wire, e.g. phenomenonTime."/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="IntervalProperty" eSuperTypes="#//WireProperty">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="A time interval over two date attributes, written as ISO 8601 &quot;start/end&quot;, or &quot;start&quot; for an instant (end null or equal to start)."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="start" lowerBound="1"
+        eType="ecore:EClass platform:/plugin/org.eclipse.emf.ecore/model/Ecore.ecore#//EAttribute"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="end" lowerBound="1"
+        eType="ecore:EClass platform:/plugin/org.eclipse.emf.ecore/model/Ecore.ecore#//EAttribute"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="AlternativesProperty" eSuperTypes="#//WireProperty">
+    <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+      <details key="documentation" value="One value held in one of several attributes of different primitive types, e.g. result over a number, a boolean and a text attribute. At most one of them is set."/>
+    </eAnnotations>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="parts" lowerBound="1" upperBound="-1"
+        eType="ecore:EClass platform:/plugin/org.eclipse.emf.ecore/model/Ecore.ecore#//EAttribute">
+      <eAnnotations source="http://www.eclipse.org/emf/2002/GenModel">
+        <details key="documentation" value="The attributes, in the order of $orderby: a value in an earlier part sorts before a value in a later one."/>
+      </eAnnotations>
+    </eStructuralFeatures>
+  </eClassifiers>
+</ecore:EPackage>

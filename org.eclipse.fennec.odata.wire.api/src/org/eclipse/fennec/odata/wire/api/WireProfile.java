@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EStructuralFeature;
+import org.eclipse.fennec.odata.wire.mapping.WireMapping;
 import org.osgi.annotation.versioning.ConsumerType;
 
 /**
@@ -95,6 +96,17 @@ public interface WireProfile {
 	 */
 	default String propertyMember(EStructuralFeature property) {
 		return null;
+	}
+
+	/**
+	 * The wire properties of this profile (#119): properties on the wire that stand for model
+	 * attributes, such as an interval over a start and an end attribute. Empty for the model as
+	 * it is. The mapping belongs to the profile, so a plain OData root of the same model keeps
+	 * seeing the attributes; its {@code eClass} and attribute references point into the model
+	 * packages of the root.
+	 */
+	default Optional<WireMapping> mapping() {
+		return Optional.empty();
 	}
 
 	/** The root document, or empty for the OData service document. */
