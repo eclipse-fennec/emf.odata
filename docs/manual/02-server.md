@@ -191,6 +191,10 @@ What a profile decides:
 - the member of a property value (`propertyMember`): OData writes `{"value":…}` and a complex
   value as the body, SensorThings names it after the property (`GET Things(1)/name` →
   `{"name":…}`)
+- whether `$value` also addresses a structured property (`structuredRawValue()`): OData answers
+  400 for a complex value or a collection, SensorThings writes its JSON
+  (`GET Datastreams(1)/unitOfMeasurement/$value` → `{"name":…,"symbol":…}`); an entity has no
+  `$value` either way
 - the root document and the error body
 
 Under `$select` the control information behaves like properties, as in the SensorThings

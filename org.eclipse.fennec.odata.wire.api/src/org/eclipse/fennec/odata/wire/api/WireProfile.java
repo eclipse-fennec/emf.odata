@@ -118,6 +118,17 @@ public interface WireProfile {
 		return Optional.empty();
 	}
 
+	/**
+	 * Whether {@code $value} also addresses a structured property value (#130): a complex value
+	 * or a collection, written as its JSON ({@code application/json}) without the member around
+	 * it. OData defines {@code $value} for primitive values only ([OData-URL] 4.6) and answers
+	 * 400 otherwise; SensorThings addresses the raw value of any property (STA 1.1, 9.2.5), e.g.
+	 * {@code Datastreams(1)/unitOfMeasurement/$value}. An entity has no {@code $value} either way.
+	 */
+	default boolean structuredRawValue() {
+		return false;
+	}
+
 	/** The root document, or empty for the OData service document. */
 	default Optional<String> serviceDocument(ServiceRoot root) {
 		return Optional.empty();

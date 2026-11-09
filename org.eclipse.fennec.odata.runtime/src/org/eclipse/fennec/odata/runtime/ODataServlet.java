@@ -2126,6 +2126,11 @@ public class ODataServlet extends HttpServlet {
 					// enum values are EObjects in dynamic EMF but primitive for OData purposes
 					boolean structured = (current instanceof EObject && !(current instanceof Enumerator))
 							|| current instanceof List<?>;
+					if (last && structured && addressed != null
+							&& Wire.current().profile().structuredRawValue()) {
+						structuredValue(current, response); // the profile's raw JSON value (#130)
+						return;
+					}
 					if (!last || structured) {
 						error(response, HttpServletResponse.SC_BAD_REQUEST,
 								"$value requires a terminal primitive property");
@@ -2186,6 +2191,47 @@ public class ODataServlet extends HttpServlet {
 			current = pageCollection(orderCollection(filterCollection(collection, request), request), request);
 		}
 		writeWalkedValue(current, declared, addressed, owner + tail, request, response);
+	}
+
+	/**
+	 * The raw value of a structured property for a profile that addresses it with {@code $value}
+	 * (#130): a complex value or a collection as its JSON, no member around it. Entities are no
+	 * property values and stay 400.
+	 */
+	private void structuredValue(Object value, HttpServletResponse response) throws IOException {
+		List<?> items = value instanceof List<?> list ? list : null;
+		for (Object item : items != null ? items : List.of(value)) {
+			if (item instanceof EObject object && !(item instanceof Enumerator)
+					&& !keyAttributes(object.eClass()).isEmpty()) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST,
+						"$value requires a terminal property, not an entity");
+				return;
+			}
+		}
+		StringBuilder json = new StringBuilder();
+		if (items == null) {
+			EObject object = (EObject) value;
+			json.append(formats.entityJson(object, object.eClass(), null, Map.of()));
+		} else {
+			json.append('[');
+			for (int i = 0; i < items.size(); i++) {
+				if (i > 0) {
+					json.append(',');
+				}
+				Object item = items.get(i);
+				if (item instanceof EObject object && !(item instanceof Enumerator)) {
+					json.append(formats.entityJson(object, object.eClass(), null, Map.of()));
+				} else if (item instanceof Enumerator literal) {
+					ODataJson.value(json, literal.getLiteral(), ieee754());
+				} else {
+					ODataJson.value(json, item instanceof Date date
+							? DateTimeFormatter.ISO_INSTANT.format(date.toInstant()) : item, ieee754());
+				}
+			}
+			json.append(']');
+		}
+		response.setContentType(contentTypeJson());
+		response.getWriter().write(json.toString());
 	}
 
 	/**
