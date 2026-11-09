@@ -174,7 +174,11 @@ public class EntityShaper {
 		Map<EObject, Map<String, Long>> counts = new IdentityHashMap<>();
 		EObject copy = shape(entity, Shape.ofPaths(select, expand), narrowed, counts, expandedRoots);
 		if (selectCounts != null && counts.containsKey(copy)) {
-			selectCounts.putAll(counts.get(copy));
+			counts.get(copy).forEach((name, total) -> {
+				if (!name.endsWith(MORE)) {
+					selectCounts.put(name, total);
+				}
+			});
 		}
 		return copy;
 	}
@@ -325,11 +329,22 @@ public class EntityShaper {
 					kept.removeIf(child -> !expansion.cast().isInstance(child));
 					replaceAll(children, kept);
 				}
+				CollectionOptions requested = expansion.options();
+				boolean more = false;
+				if (pushed.paging() && requested.top() >= 0 && children.size() > requested.top()) {
+					// the backend was asked for one beyond the page (ResponseFormatter.expandSpecs)
+					replaceAll(children, new ArrayList<>(children.subList(0, requested.top())));
+					more = true;
+				}
 				if (!remaining.isNone()) {
 					long total = applyOptions(children, remaining);
 					if (remaining.count()) {
 						counts.computeIfAbsent(copy, c -> new LinkedHashMap<>()).put(entry.getKey(), total);
 					}
+					more |= remaining.top() >= 0 && total > (long) remaining.skip() + remaining.top();
+				}
+				if (more) { // a partial expansion carries a next link (#120)
+					counts.computeIfAbsent(copy, c -> new LinkedHashMap<>()).put(entry.getKey() + MORE, 1L);
 				}
 				for (EObject child : values(children)) {
 					finish(child, expansion.shape(), Map.of(), counts);
@@ -377,6 +392,9 @@ public class EntityShaper {
 			}
 		}
 	}
+
+	/** Marks, in the inline counts of a copy, an expansion with more items than its page (#120). */
+	static final String MORE = "\u0000more";
 
 	/**
 	 * Applies {@link CollectionOptions} to a shaped, MUTABLE item list in the OData option

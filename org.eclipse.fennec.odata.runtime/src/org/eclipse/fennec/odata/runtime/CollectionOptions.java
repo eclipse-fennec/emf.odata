@@ -12,6 +12,8 @@
  */
 package org.eclipse.fennec.odata.runtime;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -35,14 +37,22 @@ import org.eclipse.fennec.odata.query.OrderBySegment;
  * @param skip    items to skip ({@code $skip}, 0 = none)
  * @param top     maximum items to keep ({@code $top}, -1 = unlimited)
  * @param count   whether the (filtered, pre-paging) item count is requested ({@code $count})
+ * @param query   the item's {@code $filter}/{@code $search}/{@code $orderby} as URL query
+ *                parameters, for the next link of an expanded collection (#120); empty for none
  */
 public record CollectionOptions(OclExpression filter, List<OrderBySegment> orderBy,
-		int skip, int top, boolean count) {
+		int skip, int top, boolean count, String query) {
 
 	public static final CollectionOptions NONE = new CollectionOptions(null, List.of(), 0, -1, false);
 
 	public CollectionOptions {
 		orderBy = orderBy == null ? List.of() : List.copyOf(orderBy);
+		query = query == null ? "" : query;
+	}
+
+	public CollectionOptions(OclExpression filter, List<OrderBySegment> orderBy, int skip, int top,
+			boolean count) {
+		this(filter, orderBy, skip, top, count, "");
 	}
 
 	/** Only a filter (the pre-existing nested-{@code $filter} shape). */
@@ -52,13 +62,13 @@ public record CollectionOptions(OclExpression filter, List<OrderBySegment> order
 
 	/** The same options minus the item predicate — the backend already applied it (ADR-0008). */
 	public CollectionOptions withoutFilter() {
-		return filter == null ? this : new CollectionOptions(null, orderBy, skip, top, count);
+		return filter == null ? this : new CollectionOptions(null, orderBy, skip, top, count, query);
 	}
 
 	/** The same options minus paging — the backend already applied it (ADR-0008). */
 	public CollectionOptions withoutPaging() {
 		return skip == 0 && top < 0 ? this
-				: new CollectionOptions(filter, orderBy, 0, -1, count);
+				: new CollectionOptions(filter, orderBy, 0, -1, count, query);
 	}
 
 	public boolean isNone() {
@@ -85,6 +95,7 @@ public record CollectionOptions(OclExpression filter, List<OrderBySegment> order
 		private int skip;
 		private int top = -1;
 		private boolean count;
+		private final StringBuilder query = new StringBuilder();
 
 		/** Consumes one nested option; false when it is none of this record's options. */
 		boolean accept(String option, EStructuralFeature feature, EClass context,
@@ -93,18 +104,21 @@ public record CollectionOptions(OclExpression filter, List<OrderBySegment> order
 			if (matcher.find()) {
 				requireCollection(feature, "$filter");
 				fold(parser.filter(option.substring(matcher.end()).trim(), context));
+				remember("$filter", option.substring(matcher.end()).trim());
 				return true;
 			}
 			matcher = SEARCH.matcher(option);
 			if (matcher.find()) {
 				requireCollection(feature, "$search");
 				fold(parser.search(option.substring(matcher.end()).trim(), context));
+				remember("$search", option.substring(matcher.end()).trim());
 				return true;
 			}
 			matcher = ORDERBY.matcher(option);
 			if (matcher.find()) {
 				requireCollection(feature, "$orderby");
 				orderBy = parser.orderBy(option.substring(matcher.end()).trim(), context);
+				remember("$orderby", option.substring(matcher.end()).trim());
 				return true;
 			}
 			matcher = TOP.matcher(option);
@@ -126,6 +140,11 @@ public record CollectionOptions(OclExpression filter, List<OrderBySegment> order
 				return true;
 			}
 			return false;
+		}
+
+		private void remember(String name, String value) {
+			query.append(query.isEmpty() ? "" : "&").append(name).append('=')
+					.append(URLEncoder.encode(value, StandardCharsets.UTF_8));
 		}
 
 		private void fold(OclExpression predicate) {
@@ -160,7 +179,7 @@ public record CollectionOptions(OclExpression filter, List<OrderBySegment> order
 		}
 
 		CollectionOptions build() {
-			return new CollectionOptions(filter, orderBy, skip, top, count);
+			return new CollectionOptions(filter, orderBy, skip, top, count, query.toString());
 		}
 	}
 }

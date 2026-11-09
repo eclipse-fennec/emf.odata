@@ -86,7 +86,7 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 |---|---|
 | `$filter` | full expression surface → OCL IR (see below) |
 | `$orderby` | multi-key, `asc`/`desc` |
-| `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) |
+| `$top` / `$skip` | with a `$top` ceiling and server-driven paging (`@odata.nextLink`) — on entity sets, navigation collections (`Set(k)/nav`, also with `$count`) and expanded collections (`nav@odata.nextLink` when `$top` cut the expansion) |
 | `$count` | `$count=true` inline, the `/$count` segment, filtered/searched counts in expressions (`$count($filter=…)`, `$count($search=…)`) |
 | `$select` | nested `$select` plus `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count` on selected collections (nav collections against the target type, primitive collections via `$it`) |
 | `$expand` | nested `$filter`/`$search`/`$orderby`/`$top`/`$skip`/`$count`, **`$levels`** on self-recursive navigations (1..8 or `max`), **`nav/$ref`** reference expansion, **cast-in-expand** `nav/Ns.Type`, nested **`$select`** and **`$expand`** at any depth (`Datastreams($select=name;$expand=Observations($top=1))`, counts at every level); `$compute` and `nav/$ref` inside `$expand` → 501 |
@@ -133,9 +133,15 @@ PUT    /odata/Product('p1')/category/$ref    # set a reference (single nav)
 DELETE /odata/Product('p1')/category/$ref    # clear / remove
 ```
 
-- **Deep insert** of containment children rides along in the POST body.
+- **Deep insert** rides along in the POST body: containment children, and new entities in
+  non-containment navigations ([OData-Protocol] 11.4.2.2). A nested value **without** its key
+  is created — a single-valued one before the entity and referenced by key, collection members
+  after it, inside the navigation (or with their back reference, when the navigation has a
+  single-valued opposite). A nested value **with** its key references an existing entity (next
+  point). Atomic when the backend is transactional; inside a `$batch` atomicity group it joins
+  that transaction. Deeper new entities nest up to `odata.max.nesting.depth`.
 - **`@odata.bind`**: a `"nav@odata.bind": "Category('c1')"` member links to an existing entity; it is extracted and validated before the codec sees the body, then applied as a reference operation after the write (entity level only).
-- **Nested non-containment members** (`"category": {"id": "c1"}`) reference an EXISTING entity by key: the backend binds the store row; an unknown target is a `400` — never a silent deep insert across a non-containment navigation. An omitted navigation keeps its binding under `PATCH` and `PUT` alike (PUT replace covers structural properties only, Protocol §11.4.3).
+- **Nested non-containment members with a key** (`"category": {"id": "c1"}`) reference an EXISTING entity: the backend binds the store row; an unknown target is a `400`. An omitted navigation keeps its binding under `PATCH` and `PUT` alike (PUT replace covers structural properties only, Protocol §11.4.3).
 - **ETags / If-Match**: weak ETags (SHA-256 over the serialized state) on single-entity GET; updates/deletes of existing entities require `If-Match` → `428`/`412`.
 - **`Prefer: return=minimal`** answers a create with `204` (headers only) and an update with `204`; **`return=representation`** returns the full entity (`201`/`200`). The honoured choice is echoed in `Preference-Applied`.
 - **Composite keys**: entity-level `PATCH`/`PUT`/`DELETE` accept compound predicates (`(k1=v1,k2=v2)`, all key properties named); below-entity composite writes answer 501. Key literals whose form contradicts the key type (quoted vs. numeric) are rejected with 400.
@@ -191,6 +197,10 @@ What a profile decides:
 - the member of a property value (`propertyMember`): OData writes `{"value":…}` and a complex
   value as the body, SensorThings names it after the property (`GET Things(1)/name` →
   `{"name":…}`)
+- the key in request bodies: the profile's key value name (`@iot.id`) is the key wherever it
+  stands — `{"@iot.id":5}` in a navigation links the existing entity, a nested entity without
+  it is created (deep insert, see Writes); for a single key only, and it must agree with the
+  key property when both are sent
 - whether `$value` also addresses a structured property (`structuredRawValue()`): OData answers
   400 for a complex value or a collection, SensorThings writes its JSON
   (`GET Datastreams(1)/unitOfMeasurement/$value` → `{"name":…,"symbol":…}`); an entity has no
@@ -254,6 +264,12 @@ model sees the attributes as they are:
 - comparing two wire properties answers 501, as do wire properties in `$apply`; a handler
   answers 400 with `IllegalArgumentException` and 501 with `UnsupportedOperationException`
 - the ETag stays over the model attributes; `$metadata` still shows the model
+
+JSON-valued properties — a string attribute holding JSON text, such as the SensorThings
+`properties`, `parameters`, `location` and `feature` — take the stock handler
+`JsonTextHandler`: the value is the JSON object or array itself on the wire (`WireJson`),
+checked before it goes into a response, and a write must send an object or an array. Such a
+property is neither filterable (501) nor sortable.
 
 A mapping the runtime cannot serve — a part that is no attribute of the type, a property
 without parts or handler, a name used twice — fails the root when it activates. The profile's

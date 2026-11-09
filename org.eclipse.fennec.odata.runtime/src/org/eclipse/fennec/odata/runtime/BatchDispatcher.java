@@ -144,12 +144,14 @@ void execute(HttpServletRequest request, HttpServletResponse response) throws IO
 			if (!Objects.equals(group, currentGroup)) {
 				finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
 				groupOpen = false;
+				WriteDispatcher.GROUP_TRANSACTION.remove();
 				groupBuffer = new ArrayList<>();
 				groupFailed = false;
 				currentGroup = group;
 				if (group != null) {
 					transactionalWriteServices().forEach(WriteService::begin);
 					groupOpen = true;
+					WriteDispatcher.GROUP_TRANSACTION.set(Boolean.TRUE); // a deep insert joins it
 				}
 			}
 			ObjectNode result = executeBatchRequest(request, response, sub, statusById, failedIds);
@@ -162,6 +164,7 @@ void execute(HttpServletRequest request, HttpServletResponse response) throws IO
 		}
 		finalizeGroup(currentGroup, groupBuffer, groupFailed, responses, statusById, failedIds);
 		groupOpen = false;
+		WriteDispatcher.GROUP_TRANSACTION.remove();
 	} catch (Exception e) {
 		// batch orchestration (commit/rollback, JSON handling) must honour the same sanitized-500
 		// contract as every other path — a raw stack trace must never reach the container error
@@ -169,6 +172,7 @@ void execute(HttpServletRequest request, HttpServletResponse response) throws IO
 		if (groupOpen) {
 			rollbackQuietly();
 		}
+		WriteDispatcher.GROUP_TRANSACTION.remove();
 		LOGGER.log(System.Logger.Level.ERROR,
 				() -> "unhandled failure serving $batch " + request.getRequestURI(), e);
 		servlet.error(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal server error");

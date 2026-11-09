@@ -60,6 +60,7 @@ import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMLResourceFactoryImpl;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataService;
 import org.eclipse.fennec.odata.wire.api.ServiceRoot;
+import org.eclipse.fennec.odata.wire.api.WireJson;
 import org.eclipse.fennec.odata.wire.api.WireProfile;
 import org.eclipse.fennec.m2x.model.ocl.IntegerLiteralExp;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
@@ -2126,6 +2127,16 @@ public class ODataServlet extends HttpServlet {
 					// enum values are EObjects in dynamic EMF but primitive for OData purposes
 					boolean structured = (current instanceof EObject && !(current instanceof Enumerator))
 							|| current instanceof List<?>;
+					if (last && current instanceof WireJson json) { // a JSON-valued wire property (#118)
+						if (!Wire.current().profile().structuredRawValue()) {
+							error(response, HttpServletResponse.SC_BAD_REQUEST,
+									"$value requires a terminal primitive property");
+							return;
+						}
+						response.setContentType(contentTypeJson());
+						response.getWriter().write(checkedJson(json));
+						return;
+					}
 					if (last && structured && addressed != null
 							&& Wire.current().profile().structuredRawValue()) {
 						structuredValue(current, response); // the profile's raw JSON value (#130)
@@ -2187,10 +2198,28 @@ public class ODataServlet extends HttpServlet {
 				tail.setLength(0);
 			}
 		}
+		Page page = null;
 		if (current instanceof List<?> collection) { // terminal nav collection: $filter/$orderby/$skip/$top
-			current = pageCollection(orderCollection(filterCollection(collection, request), request), request);
+			page = page(orderCollection(filterCollection(collection, request), request), request, response);
+			current = page.items();
 		}
-		writeWalkedValue(current, declared, addressed, owner + tail, request, response);
+		writeWalkedValue(current, declared, addressed, owner + tail, page, request, response);
+	}
+
+	/**
+	 * A page of a walked collection with what its envelope needs (#120): the matching total for
+	 * {@code $count} and the next link when more remain — the server page size applies as on an
+	 * entity set, so a partial result always says so ([OData-Protocol] 11.2.5.7).
+	 */
+	private record Page(List<?> items, long total, String nextLink) {
+	}
+
+	private Page page(List<?> matched, HttpServletRequest request, HttpServletResponse response) {
+		int skip = limits.effectiveSkip(option(request, "$skip"));
+		int top = pageSize(request, response, limits.effectiveTop(option(request, "$top")));
+		List<?> rest = matched.subList(Math.min(skip, matched.size()), matched.size());
+		List<?> items = rest.subList(0, Math.min(top, rest.size()));
+		return new Page(items, matched.size(), rest.size() > top ? nextLink(request, skip + top) : null);
 	}
 
 	/**
@@ -2232,6 +2261,18 @@ public class ODataServlet extends HttpServlet {
 		}
 		response.setContentType(contentTypeJson());
 		response.getWriter().write(json.toString());
+	}
+
+	/**
+	 * The JSON of a JSON-valued wire property, parsed and written again: stored text never goes
+	 * into a response unchecked, where it could end the document or add members (#118).
+	 */
+	static String checkedJson(WireJson value) {
+		try {
+			return JSON.writeValueAsString(JSON.readTree(value.json()));
+		} catch (RuntimeException e) {
+			throw new IllegalStateException("a JSON-valued property holds no valid JSON", e);
+		}
 	}
 
 	/**
@@ -2345,7 +2386,8 @@ public class ODataServlet extends HttpServlet {
 	 * @param path     the canonical path of the resource (last entity plus the segments after it)
 	 */
 	private void writeWalkedValue(Object value, EClass declared, EStructuralFeature property,
-			String path, HttpServletRequest request, HttpServletResponse response) throws IOException {
+			String path, Page page, HttpServletRequest request, HttpServletResponse response)
+			throws IOException {
 		boolean shaping = option(request, "$select") != null || option(request, "$expand") != null;
 		if (shaping && declared == null) {
 			error(response, HttpServletResponse.SC_BAD_REQUEST,
@@ -2368,6 +2410,13 @@ public class ODataServlet extends HttpServlet {
 		SelectTree select = declared == null ? null : formats.selectOption(request, declared);
 		Map<String, ResponseFormatter.ExpandItem> expand = declared == null ? Map.of()
 				: formats.expandOption(request, declared);
+		if (value instanceof WireJson raw) { // a JSON-valued wire property (#118): embedded as JSON
+			response.setContentType(contentTypeJson());
+			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
+			envelopeProperty(json).append(valueMember).append(checkedJson(raw)).append('}');
+			response.getWriter().write(json.toString());
+			return;
+		}
 		if (value instanceof Enumerator literal) { // enum property → value document with the literal
 			response.setContentType(contentTypeJson());
 			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
@@ -2401,6 +2450,9 @@ public class ODataServlet extends HttpServlet {
 				return;
 			}
 			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
+			if (page != null && "true".equals(option(request, "$count"))) {
+				envelopeCount(json, page.total());
+			}
 			envelopeProperty(json).append(valueMember).append('[');
 			boolean first = true;
 			for (Object member : collection) {
@@ -2414,7 +2466,11 @@ public class ODataServlet extends HttpServlet {
 					ODataJson.value(json, member, ieee754());
 				}
 			}
-			json.append("]}");
+			json.append(']');
+			if (page != null && page.nextLink() != null) {
+				envelopeNextLink(json, page.nextLink());
+			}
+			json.append('}');
 			response.setContentType(contentTypeJson());
 			response.getWriter().write(json.toString());
 			return;

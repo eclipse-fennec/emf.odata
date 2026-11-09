@@ -103,7 +103,7 @@ Spec documents (OASIS OData **v4.01**):
 | Feature | Spec requires | Support | Reference |
 |---|---|---|---|
 | `POST` create entity → 201 + Location/OData-EntityId | Create | ✅ | Protocol §11.4.2 |
-| Deep insert (containment children) | — | ✅ | Protocol §11.4.2.2 |
+| Deep insert (containment children, new entities in non-containment navigations) | — | ✅ | Protocol §11.4.2.2 |
 | `PATCH` (merge) / `PUT` (replace) | Update | ✅ | Protocol §11.4.3 |
 | Upsert | 4.01 | ✅ | Protocol §11.4.4 |
 | `DELETE` | Delete | ✅ | Protocol §11.4.5 |
@@ -132,7 +132,7 @@ Spec documents (OASIS OData **v4.01**):
 | OData-JSON payloads, `odata.metadata=minimal` (default) | ✅ | JSON Format §3 |
 | `odata.metadata=full` / `none` (via Accept / `$format`) | ✅ (real `none`: no context/discriminators; ETag pinned to the minimal form) | JSON Format §3.1 |
 | `OData-Version` / `OData-MaxVersion` negotiation (4.0/4.01) | ✅ | Protocol §8.1.5/8.2.6 |
-| Server-driven paging `@odata.nextLink` | ✅ | Protocol §11.2.5.7 |
+| Server-driven paging `@odata.nextLink` (entity sets, navigation collections, `nav@odata.nextLink` in `$expand`) | ✅ | Protocol §11.2.5.7 |
 | `#Ns.Type` discriminator for derived types | ✅ | JSON Format §4.5.8 |
 | `IEEE754Compatible=true` (Int64/Decimal as strings: values, `@odata.count`, `$apply` rows; Content-Type echo; payload decode) | ✅ (client opt-in `ieee754()`) | JSON Format §4.3/§8.1 |
 | `$batch` JSON (4.01) | ✅ (server + client) | Protocol §11.7 |

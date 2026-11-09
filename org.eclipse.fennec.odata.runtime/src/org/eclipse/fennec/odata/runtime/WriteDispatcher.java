@@ -43,6 +43,8 @@ import org.eclipse.fennec.odata.query.ODataQueryNotImplementedException;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.ResourcePath;
 import org.eclipse.fennec.odata.query.WireView;
+import org.eclipse.fennec.odata.wire.api.ControlNames;
+import org.eclipse.fennec.odata.wire.api.WireJson;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -62,6 +64,12 @@ final class WriteDispatcher {
 	private static final System.Logger LOGGER = System.getLogger(WriteDispatcher.class.getName());
 
 	private final ODataServlet servlet;
+
+	/**
+	 * Set while a {@code $batch} atomicity group holds a transaction on this thread: a deep insert
+	 * joins it instead of opening its own.
+	 */
+	static final ThreadLocal<Boolean> GROUP_TRANSACTION = new ThreadLocal<>();
 
 	WriteDispatcher(ODataServlet servlet) {
 		this.servlet = servlet;
@@ -184,7 +192,7 @@ private void dispatchWrite(HttpServletRequest request, HttpServletResponse respo
 			if (payload == null) {
 				return; // error already written
 			}
-			EObject created = writeService.create(entityType, payload.entity());
+			EObject created = deepCreate(entityType, writeService, payload.entity());
 			if (!payload.bindings().isEmpty()) {
 				applyBindings(writeService, entityType,
 						rawKeyOf(created, entityType), payload.bindings());
@@ -765,6 +773,14 @@ private WritePayload readPayload(HttpServletRequest request, HttpServletResponse
 		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "empty payload");
 		return null;
 	}
+	ControlNames names = Wire.current().names();
+	if (!Wire.current().odataControls() && names.keyValue() != null
+			&& containsAscii(body, names.keyValue().getBytes(StandardCharsets.UTF_8))) {
+		body = keyValuesToKeys(body, entityType, names.keyValue(), response);
+		if (body == null) {
+			return null; // error already written
+		}
+	}
 	Map<EAttribute, Object> wireParts = new LinkedHashMap<>();
 	if (!Wire.current().view().properties(entityType).isEmpty()) {
 		body = extractWireProperties(body, entityType, wireParts, response);
@@ -805,6 +821,189 @@ private WritePayload readPayload(HttpServletRequest request, HttpServletResponse
 		}
 	});
 	return new WritePayload(entity, bindings, wireParts);
+}
+
+/**
+ * The profile's key value member ({@code @iot.id}) as the key property, in the entity and in
+ * every nested navigation value (#117): {@code {"Datastream":{"@iot.id":5}}} becomes
+ * {@code {"Datastream":{"id":5}}} — a nested value with its key references the existing entity,
+ * one without is created (deep insert). Only for a single key; null after a written error.
+ */
+private byte[] keyValuesToKeys(byte[] body, EClass entityType, String keyValue,
+		HttpServletResponse response) throws IOException {
+	JsonNode document;
+	try {
+		document = ODataServlet.JSON.readTree(body);
+	} catch (Exception e) {
+		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+		return null;
+	}
+	if (!(document instanceof ObjectNode object)) {
+		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed payload");
+		return null;
+	}
+	String problem = keyValuesToKeys(object, entityType, keyValue, 0);
+	if (problem != null) {
+		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, problem);
+		return null;
+	}
+	return ODataServlet.JSON.writeValueAsBytes(object);
+}
+
+private String keyValuesToKeys(ObjectNode object, EClass type, String keyValue, int depth) {
+	if (depth > servlet.limits.maxNestingDepth()) {
+		return "the payload nests too deep";
+	}
+	if (object.has(keyValue)) {
+		List<EAttribute> keys = servlet.keyAttributes(type);
+		if (keys.size() != 1) {
+			return "'" + ODataJson.sanitize(keyValue) + "' needs a single key on " + type.getName();
+		}
+		String key = keys.get(0).getName();
+		JsonNode value = object.remove(keyValue);
+		if (object.has(key) && !object.get(key).equals(value)) {
+			return "'" + ODataJson.sanitize(keyValue) + "' and '" + key + "' disagree";
+		}
+		object.set(key, value);
+	}
+	for (EReference reference : type.getEAllReferences()) {
+		JsonNode member = object.get(reference.getName());
+		List<JsonNode> values = member instanceof ArrayNode array ? array.valueStream().toList()
+				: member == null ? List.of() : List.of(member);
+		for (JsonNode value : values) {
+			if (value instanceof ObjectNode nested) {
+				String problem = keyValuesToKeys(nested, reference.getEReferenceType(), keyValue, depth + 1);
+				if (problem != null) {
+					return problem;
+				}
+			}
+		}
+	}
+	return null;
+}
+
+/**
+ * Creates an entity with its deep insert ([OData-Protocol] 11.4.2.2, #117): a nested value of a
+ * navigation that carries no key is a new entity. Single-valued ones are created first and
+ * referenced by key, collection members after the entity, inside its navigation — or with
+ * their back reference set, when the navigation has a single-valued opposite. Atomic when the
+ * backend is transactional; inside a {@code $batch} group it joins that transaction.
+ */
+EObject deepCreate(EClass entityType, WriteService writeService, EObject entity) {
+	if (!hasNewNested(entity, 0)) {
+		return writeService.create(entityType, entity);
+	}
+	boolean own = writeService.transactional() && GROUP_TRANSACTION.get() == null;
+	if (own) {
+		writeService.begin();
+	}
+	try {
+		EObject created = create(entityType, writeService, entity, 0);
+		if (own) {
+			writeService.commit();
+		}
+		return created;
+	} catch (RuntimeException e) {
+		if (own) {
+			writeService.rollback();
+		}
+		throw e;
+	}
+}
+
+private record Pending(EReference reference, EObject child) {
+}
+
+private EObject create(EClass type, WriteService writeService, EObject entity, int depth) {
+	List<Pending> later = prepare(entity, depth);
+	EObject created = writeService.create(type, entity);
+	createInside(type, writeService, created, later, depth);
+	return created;
+}
+
+/**
+ * Creates the new single-valued targets of an entity and references them by key; takes the
+ * new collection members out, to be created after the entity.
+ */
+@SuppressWarnings("unchecked")
+private List<Pending> prepare(EObject entity, int depth) {
+	if (depth > servlet.limits.maxNestingDepth()) {
+		throw new IllegalArgumentException("the deep insert nests too deep");
+	}
+	List<Pending> later = new ArrayList<>();
+	for (EReference reference : entity.eClass().getEAllReferences()) {
+		if (reference.isContainment() || reference.isContainer() || !entity.eIsSet(reference)) {
+			continue;
+		}
+		if (reference.isMany()) {
+			List<EObject> members = (List<EObject>) entity.eGet(reference);
+			for (EObject member : List.copyOf(members)) {
+				if (isNew(member)) {
+					members.remove(member);
+					later.add(new Pending(reference, member));
+				}
+			}
+		} else if (entity.eGet(reference) instanceof EObject target && isNew(target)) {
+			EObject created = create(target.eClass(), writeServiceFor(target.eClass()), target, depth + 1);
+			entity.eSet(reference, keyStub(created));
+		}
+	}
+	return later;
+}
+
+private void createInside(EClass ownerType, WriteService ownerService, EObject owner,
+		List<Pending> pending, int depth) {
+	for (Pending item : pending) {
+		EObject child = item.child();
+		EReference opposite = item.reference().getEOpposite();
+		if (opposite != null && !opposite.isMany() && !opposite.isContainment()) {
+			child.eSet(opposite, keyStub(owner)); // created with its back reference
+			create(child.eClass(), writeServiceFor(child.eClass()), child, depth + 1);
+			continue;
+		}
+		List<Pending> later = prepare(child, depth + 1);
+		EObject created = ownerService.createRelated(ownerType, rawKeyOf(owner, ownerType),
+				item.reference().getName(), child);
+		createInside(child.eClass(), writeServiceFor(child.eClass()), created, later, depth + 1);
+	}
+}
+
+/** Whether a payload holds a new entity in a navigation, at any depth. */
+private boolean hasNewNested(EObject entity, int depth) {
+	if (depth > servlet.limits.maxNestingDepth()) {
+		return true; // prepare() refuses it
+	}
+	for (EReference reference : entity.eClass().getEAllReferences()) {
+		if (reference.isContainment() || reference.isContainer() || !entity.eIsSet(reference)) {
+			continue;
+		}
+		for (Object value : reference.isMany() ? (List<?>) entity.eGet(reference) : List.of(entity.eGet(reference))) {
+			if (value instanceof EObject target && (isNew(target) || hasNewNested(target, depth + 1))) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/** A navigation value without its key is a new entity; with it, a reference. */
+private boolean isNew(EObject value) {
+	List<EAttribute> keys = servlet.keyAttributes(value.eClass());
+	return !keys.isEmpty() && keys.stream().noneMatch(value::eIsSet);
+}
+
+/** The entity as a reference: its type with nothing but its key. */
+private EObject keyStub(EObject entity) {
+	EObject stub = EcoreUtil.create(entity.eClass());
+	for (EAttribute key : servlet.keyAttributes(entity.eClass())) {
+		stub.eSet(key, entity.eGet(key));
+	}
+	return stub;
+}
+
+private WriteService writeServiceFor(EClass type) {
+	return servlet.writeServices.stream().filter(s -> s.supports(type)).findFirst()
+			.orElseThrow(() -> new IllegalArgumentException("no backend writes " + type.getName()));
 }
 
 /**
@@ -857,7 +1056,7 @@ static Map<EAttribute, Object> readWire(WireView.Binding wire, JsonNode value) {
 		scalar = value.isIntegralNumber() && value.canConvertToLong() ? (Object) value.longValue()
 				: (Object) value.decimalValue();
 	} else {
-		scalar = value.toString();
+		scalar = new WireJson(value.toString()); // a JSON object or array (#118)
 	}
 	Map<EAttribute, Object> parts = wire.handler().read(scalar); // IllegalArgument → 400
 	if (parts == null) {

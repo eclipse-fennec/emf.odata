@@ -50,6 +50,7 @@ import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.query.WireView;
+import org.eclipse.fennec.odata.wire.api.WireJson;
 import org.eclipse.fennec.odata.wire.api.ControlNames;
 
 import tools.jackson.databind.DeserializationFeature;
@@ -379,7 +380,9 @@ static List<ExpandSpec> expandSpecs(Map<String, ExpandItem> expand) {
 		boolean leaf = item.expand().isEmpty() && item.levels() <= 1;
 		specs.add(leaf
 				? new ExpandSpec(name, options.filter(), options.orderBy(),
-						countable ? 0 : options.skip(), countable ? -1 : options.top())
+						countable ? 0 : options.skip(),
+						// one beyond the page tells whether a next link is due (#120)
+						countable || options.top() < 0 ? -1 : options.top() + 1)
 				: ExpandSpec.of(name));
 		for (String path : shapePaths(Map.of(name, item))) {
 			if (!path.equals(name)) {
@@ -590,8 +593,20 @@ private void retainShaped(ObjectNode node, EObject copy, EntityShaper.Shape shap
 	}
 	Map<String, Long> inline = counts.get(copy);
 	String countName = Wire.current().names().count();
-	if (inline != null && countName != null) {
+	if (inline != null) {
 		inline.forEach((name, total) -> {
+			if (name.endsWith(EntityShaper.MORE)) {
+				String navigation = name.substring(0, name.length() - EntityShaper.MORE.length());
+				String link = expandNextLink(copy, navigation, shape.expand().get(navigation));
+				String nextName = Wire.current().names().nextLink();
+				if (link != null && nextName != null) {
+					node.put(navigation + nextName, link);
+				}
+				return;
+			}
+			if (countName == null) {
+				return;
+			}
 			if (ODataServlet.ieee754()) {
 				node.put(name + countName, String.valueOf(total));
 			} else {
@@ -648,9 +663,32 @@ static JsonNode wireValue(ObjectNode factory, WireView.Binding binding, EObject 
 	case Byte number -> factory.numberNode(number);
 	case Double number -> factory.numberNode(number);
 	case Float number -> factory.numberNode(number);
+	case WireJson json -> {
+		try {
+			yield EXACT_JSON.readTree(json.json());
+		} catch (RuntimeException e) {
+			throw new IllegalStateException("the handler of '" + binding.name() + "' wrote no valid JSON", e);
+		}
+	}
 	default -> throw new IllegalStateException("the handler of '" + binding.name()
 			+ "' wrote a " + value.getClass().getSimpleName() + ", not a JSON scalar");
 	};
+}
+
+/**
+ * The next link of a partial expanded collection (#120): the navigation of the entity with the
+ * item's own filter, search and order, and the page after this one. Absolute when the wire is.
+ */
+private String expandNextLink(EObject copy, String navigation, EntityShaper.Expansion expansion) {
+	String path = servlet.entityPathOf(copy);
+	if (path == null || expansion == null) {
+		return null;
+	}
+	CollectionOptions options = expansion.options();
+	Wire wire = Wire.current();
+	return (wire.absoluteLinks() ? wire.baseUrl() + "/" : "") + path + "/" + navigation
+			+ "?$skip=" + (options.skip() + options.top()) + "&$top=" + options.top()
+			+ (options.query().isEmpty() ? "" : "&" + options.query());
 }
 
 /**
