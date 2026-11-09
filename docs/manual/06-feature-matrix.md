@@ -59,7 +59,7 @@ Spec documents (OASIS OData **v4.01**):
 | Derived-type cast `Set/Ns.Type[(key)]` | Type-cast segments | ✅ (one cast per step) | URL Conv. §4.11 |
 | Container singleton `GET /Me[/…]` | Address a singleton | ✅ (declared via EPackage annotation; backend supplies the instance) | URL Conv. §4.3; CSDL §13.5 |
 | Media entity stream `GET/PUT Set(key)/$value` | HasStream types serve/replace their binary stream | ✅ (via the `MediaService` SPI; 501 without a backend) | Protocol §11.2.4/11.4.7 |
-| `/$ref` | Reference to an entity | ✅ reads (single, collection with `$filter`/paging) and writes | URL Conv. §4.9 |
+| `/$ref` | Reference to an entity | ✅ reads (single, navigation collection with `$filter`/paging, entity set `Set/$ref` pushed down like the set) and writes | URL Conv. §4.4/4.9 |
 | Key-as-segment (`Set/key`, also for writes and bound functions) | MAY | ✅ (client opt-in `keyAsSegment()`) | URL Conv. §4.3.1 |
 | Key aliases `Set(@k)` (value from a query parameter) | 4.01 | ✅ | URL Conv. §4.3.1 |
 | Inline `/$filter(…)` path segment | 4.01 | ✅ (in-memory; keyed → 501) | URL Conv. §4.13 |

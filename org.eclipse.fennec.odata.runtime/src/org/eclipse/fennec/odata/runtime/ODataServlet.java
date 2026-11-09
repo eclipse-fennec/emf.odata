@@ -1112,9 +1112,31 @@ public class ODataServlet extends HttpServlet {
 
 	private void entitySet(String setName, String castName, EClass castType,
 			HttpServletRequest request, HttpServletResponse response) throws IOException {
+		entitySet(setName, castName, castType, false, request, response);
+	}
+
+	/** Query options a collection of references takes ([OData-URL] 4.4, 5.1; #126). */
+	private static final Set<String> REF_OPTIONS = Set.of("$filter", "$search", "$orderby", "$top",
+			"$skip", "$count", "$format");
+
+	/**
+	 * An entity set (or a cast of it), as entities or — {@code refs}, {@code Set/$ref} ([OData-URL]
+	 * 4.4, #126) — as entity references, paged and filtered the same way on the backend.
+	 */
+	private void entitySet(String setName, String castName, EClass castType, boolean refs,
+			HttpServletRequest request, HttpServletResponse response) throws IOException {
 		Target target = resolveTarget(setName, response);
 		if (target == null) {
 			return;
+		}
+		if (refs) {
+			for (String option : SUPPORTED_OPTIONS) {
+				if (!REF_OPTIONS.contains(option) && option(request, option) != null) {
+					error(response, HttpServletResponse.SC_BAD_REQUEST,
+							option + " does not apply to entity references");
+					return;
+				}
+			}
 		}
 		// compute in entity space is the $compute option in $apply spelling (#44): the result is
 		// still the entity set with extra members, so it belongs on the entity path, not the row
@@ -1182,7 +1204,7 @@ public class ODataServlet extends HttpServlet {
 		// backend AND a 4.01 client — 4.0 REQUIRES the flattened delta payload we do not emit.
 		// The token is taken BEFORE the query runs — a write racing the read is re-reported in
 		// the first delta rather than lost.
-		DeltaService candidate = DeltaDispatcher.trackChangesRequested(request)
+		DeltaService candidate = !refs && DeltaDispatcher.trackChangesRequested(request)
 				? deltas.deltaService(target.entityType(), target.queryService()) : null;
 		DeltaService deltaService = candidate != null && (expand.isEmpty()
 				|| (candidate.supportsExpandTracking() && !"4.0".equals(negotiateVersion(request))))
@@ -1195,6 +1217,24 @@ public class ODataServlet extends HttpServlet {
 		boolean hasMore = result.entities().size() > top;
 		List<EObject> page = hasMore ? result.entities().subList(0, top) : result.entities();
 
+		if (refs) {
+			StringBuilder json = envelopeHead(contextRoot(request) + "/$metadata#Collection($ref)");
+			if (result.totalCount() >= 0) {
+				envelopeCount(json, result.totalCount());
+			}
+			envelopeProperty(json).append("\"value\":[");
+			for (int i = 0; i < page.size(); i++) {
+				json.append(i > 0 ? "," : "").append(referenceJson(page.get(i)));
+			}
+			json.append(']');
+			if (hasMore) {
+				envelopeNextLink(json, nextLink(request, skip + top));
+			}
+			json.append('}');
+			response.setContentType(contentTypeJson());
+			response.getWriter().write(json.toString());
+			return;
+		}
 		if (xml) { // XMI is a non-OData projection — trimmed, but without an embedded link
 			formats.writeXmi(response, formats.shapeAll(page, select, expand, narrowed));
 			return;
@@ -1300,7 +1340,22 @@ public class ODataServlet extends HttpServlet {
 			throw new UnsupportedOperationException(
 					"the type '" + entity.eClass().getName() + "' has no key — no entity reference");
 		}
-		return setNameOf(entity.eClass()) + "(" + keyLiteral(keyValues) + ")";
+		return setNameOf(entity.eClass()) + "(" + Wire.current().profile().keyLiteral(keyValues) + ")";
+	}
+
+	/**
+	 * One entity reference ([OData-JSON] 14): {@code {"@odata.id":"Set(key)"}}, or under a profile
+	 * with a self link that link (#126, SensorThings {@code {"@iot.selfLink":"http://…/Set(key)"}}).
+	 */
+	String referenceJson(EObject entity) {
+		Wire wire = Wire.current();
+		String id = entityIdOf(entity);
+		String selfLink = wire.names().selfLink();
+		if (selfLink == null) {
+			return "{\"@odata.id\":\"" + ODataJson.sanitize(id) + "\"}";
+		}
+		String link = wire.absoluteLinks() ? wire.baseUrl() + "/" + id : id;
+		return "{\"" + ODataJson.sanitize(selfLink) + "\":\"" + ODataJson.sanitize(link) + "\"}";
 	}
 
 	/** The container set name serving the given type — honours annotated and configured renames. */
@@ -1483,6 +1538,9 @@ public class ODataServlet extends HttpServlet {
 			} else if (path.segments().size() == 1
 					&& path.segments().get(0) instanceof ResourcePath.CountSegment) {
 				setCount(path.entitySet(), null, request, response); // Set/$count (with optional $filter)
+			} else if (path.segments().size() == 1
+					&& path.segments().get(0) instanceof ResourcePath.RefSegment) {
+				entitySet(path.entitySet(), null, null, true, request, response); // Set/$ref (#126)
 			} else {
 				error(response, HttpServletResponse.SC_NOT_FOUND,
 						"navigation requires an entity key");
@@ -1639,6 +1697,10 @@ public class ODataServlet extends HttpServlet {
 		}
 		if (rest.size() == 1 && rest.get(0) instanceof ResourcePath.CountSegment) {
 			setCount(path.entitySet(), castType, request, response);
+			return;
+		}
+		if (rest.size() == 1 && rest.get(0) instanceof ResourcePath.RefSegment) {
+			entitySet(path.entitySet(), cast.qualifiedName(), castType, true, request, response);
 			return;
 		}
 		error(response, HttpServletResponse.SC_NOT_FOUND, "navigation requires an entity key");
@@ -1938,6 +2000,7 @@ public class ODataServlet extends HttpServlet {
 		// what the context URL is built from: the declared type of the addressed resource, and
 		// the canonical path of the last entity on the way plus the segments after it
 		EClass declared = root.eClass();
+		EStructuralFeature addressed = null; // the last property on the way (#125)
 		String owner = path.key() == null ? path.entitySet() : entityPathOf(root);
 		if (owner == null) {
 			owner = path.entitySet() + "(" + path.key() + ")";
@@ -1967,6 +2030,7 @@ public class ODataServlet extends HttpServlet {
 						return;
 					}
 					current = object.eGet(feature);
+					addressed = feature;
 					declared = feature.getEType() instanceof EClass target ? target : null;
 					tail.append('/').append(property.name());
 					if (property.key() != null) {
@@ -2069,9 +2133,7 @@ public class ODataServlet extends HttpServlet {
 							if (r > 0) {
 								json.append(',');
 							}
-							json.append("{\"@odata.id\":\"")
-									.append(ODataJson.sanitize(entityIdOf((EObject) shaped.get(r))))
-									.append("\"}");
+							json.append(referenceJson((EObject) shaped.get(r)));
 						}
 						json.append("]}");
 						response.setContentType(contentTypeJson());
@@ -2081,7 +2143,7 @@ public class ODataServlet extends HttpServlet {
 					if (current instanceof EObject entity && !(entity instanceof Enumerator)) {
 						response.setContentType(contentTypeJson());
 						response.getWriter().write(withContext(contextRoot(request) + "/$metadata#$ref",
-								"{\"@odata.id\":\"" + ODataJson.sanitize(entityIdOf(entity)) + "\"}"));
+								referenceJson(entity)));
 						return;
 					}
 					error(response, HttpServletResponse.SC_BAD_REQUEST,
@@ -2099,7 +2161,7 @@ public class ODataServlet extends HttpServlet {
 		if (current instanceof List<?> collection) { // terminal nav collection: $filter/$orderby/$skip/$top
 			current = pageCollection(orderCollection(filterCollection(collection, request), request), request);
 		}
-		writeWalkedValue(current, declared, owner + tail, request, response);
+		writeWalkedValue(current, declared, addressed, owner + tail, request, response);
 	}
 
 	/** Applies {@code $filter} to a walked entity collection (in-memory; already materialized). */
@@ -2198,10 +2260,11 @@ public class ODataServlet extends HttpServlet {
 	 * shape the addressed entities (or complex values) like on an entity set.
 	 *
 	 * @param declared the declared type of the addressed resource, null for a primitive one
+	 * @param property the last property on the path, null when the path addresses no property
 	 * @param path     the canonical path of the resource (last entity plus the segments after it)
 	 */
-	private void writeWalkedValue(Object value, EClass declared, String path,
-			HttpServletRequest request, HttpServletResponse response) throws IOException {
+	private void writeWalkedValue(Object value, EClass declared, EStructuralFeature property,
+			String path, HttpServletRequest request, HttpServletResponse response) throws IOException {
 		boolean shaping = option(request, "$select") != null || option(request, "$expand") != null;
 		if (shaping && declared == null) {
 			error(response, HttpServletResponse.SC_BAD_REQUEST,
@@ -2213,6 +2276,10 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		boolean entities = declared != null && !keyAttributes(declared).isEmpty();
+		// the member of a property value: the profile's (#125, STA {"name":…}) or OData's
+		String profileMember = entities || property == null ? null
+				: Wire.current().profile().propertyMember(property);
+		String valueMember = "\"" + ODataJson.sanitize(profileMember != null ? profileMember : "value") + "\":";
 		String set = entities ? entitySetServing(declared) : null;
 		String target = set != null ? set : path;
 		String context = contextRoot(request) + "/$metadata#" + target
@@ -2223,7 +2290,7 @@ public class ODataServlet extends HttpServlet {
 		if (value instanceof Enumerator literal) { // enum property → value document with the literal
 			response.setContentType(contentTypeJson());
 			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
-			envelopeProperty(json).append("\"value\":\"")
+			envelopeProperty(json).append(valueMember).append('"')
 					.append(ODataJson.sanitize(literal.getLiteral())).append("\"}");
 			response.getWriter().write(json.toString());
 			return;
@@ -2234,8 +2301,14 @@ public class ODataServlet extends HttpServlet {
 				return;
 			}
 			String json = formats.entityJson(object, declared, select, expand);
+			if (profileMember != null) { // a complex value under the profile's member
+				StringBuilder wrapped = envelopeHead(ODataJson.sanitize(context));
+				json = envelopeProperty(wrapped).append(valueMember).append(json).append('}').toString();
+			} else {
+				json = withContext(ODataJson.sanitize(context), json);
+			}
 			response.setContentType(contentTypeJson());
-			response.getWriter().write(withContext(ODataJson.sanitize(context), json));
+			response.getWriter().write(json);
 			return;
 		}
 		if (value instanceof List<?> collection) {
@@ -2247,7 +2320,7 @@ public class ODataServlet extends HttpServlet {
 				return;
 			}
 			StringBuilder json = envelopeHead(ODataJson.sanitize(context));
-			envelopeProperty(json).append("\"value\":[");
+			envelopeProperty(json).append(valueMember).append('[');
 			boolean first = true;
 			for (Object member : collection) {
 				if (!first) {
@@ -2266,7 +2339,7 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		StringBuilder json = envelopeHead(ODataJson.sanitize(context));
-		envelopeProperty(json).append("\"value\":");
+		envelopeProperty(json).append(valueMember);
 		ODataJson.value(json, value instanceof Date date
 				? DateTimeFormatter.ISO_INSTANT.format(date.toInstant()) : value,
 				ieee754());

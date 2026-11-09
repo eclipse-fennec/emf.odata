@@ -474,14 +474,11 @@ private String withExpandedRefs(String entityJson, EObject entity,
 				if (i > 0) {
 					members.append(',');
 				}
-				members.append("{\"@odata.id\":\"")
-						.append(ODataJson.sanitize(servlet.entityIdOf((EObject) children.get(i))))
-						.append("\"}");
+				members.append(servlet.referenceJson((EObject) children.get(i)));
 			}
 			members.append(']');
 		} else if (entity.eGet(feature) instanceof EObject child) {
-			members.append("{\"@odata.id\":\"")
-					.append(ODataJson.sanitize(servlet.entityIdOf(child))).append("\"}");
+			members.append(servlet.referenceJson(child));
 		} else {
 			members.append("null"); // no related entity ([OData-JSON] expanded references)
 		}
