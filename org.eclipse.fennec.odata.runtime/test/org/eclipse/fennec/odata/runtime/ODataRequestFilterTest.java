@@ -25,7 +25,9 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
+import org.eclipse.fennec.odata.wire.api.WireProfile;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -71,6 +73,23 @@ class ODataRequestFilterTest {
 		HttpServletRequest custom = request(Map.of("custom", "z".repeat(100)));
 		filter.doFilter(custom, response(new StringWriter()), chain);
 		verify(chain).doFilter(same(custom), any());
+	}
+
+	@Test
+	@DisplayName("#123: the 400 is written by the wire profile of the guarded root")
+	void errorThroughProfile() throws Exception {
+		filter.setWireProfile(new WireProfile() {
+			@Override
+			public Optional<String> errorBody(int status, String message) {
+				return Optional.of("{\"code\":" + status + ",\"message\":\"" + message + "\"}");
+			}
+		});
+		filter.activate(Map.of("odata.max.expression.length", "64"));
+		FilterChain chain = mock(FilterChain.class);
+		StringWriter body = new StringWriter();
+		filter.doFilter(request(Map.of("$filter", "x".repeat(65))), response(body), chain);
+		verify(chain, never()).doFilter(any(), any());
+		assertTrue(body.toString().startsWith("{\"code\":400,\"message\":"), body.toString());
 	}
 
 	private void assertRejected(HttpServletRequest request) throws Exception {

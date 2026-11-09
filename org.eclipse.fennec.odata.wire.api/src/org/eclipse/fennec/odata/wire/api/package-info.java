@@ -12,9 +12,9 @@
  */
 /**
  * The wire profile of an OData service root (ADR-0010): how an OData dialect such as OGC
- * SensorThings writes control information, keys, links and its root document. A root selects
- * at most one {@link org.eclipse.fennec.odata.wire.api.WireProfile} by configuration; without
- * one it speaks plain OData.
+ * SensorThings writes control information, keys, links and its root document. A root binds
+ * exactly one {@link org.eclipse.fennec.odata.wire.api.WireProfile}, selected by configuration;
+ * the default is the plain OData profile.
  */
 @org.osgi.annotation.bundle.Export
 @org.osgi.annotation.versioning.Version("1.0.0")

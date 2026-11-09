@@ -22,16 +22,17 @@ import jakarta.servlet.http.HttpServletRequest;
 
 /**
  * The wire format of the current request (ADR-0010): the one place that knows the names of the
- * control information. Request-scoped like the metadata level; {@code null} profile = plain
- * OData. With a profile the links are absolute, built from the base URL of the root.
+ * control information. Request-scoped like the metadata level; every root has a profile, plain
+ * OData by default.
  *
- * @param profile the root's profile, or null for plain OData
+ * @param profile the root's profile, never null
  * @param names   the control names in effect
- * @param baseUrl the absolute URL of the service root (no trailing slash); null for plain OData
+ * @param baseUrl the absolute URL of the service root (no trailing slash); null outside a request
  */
 record Wire(WireProfile profile, ControlNames names, String baseUrl) {
 
-	static final Wire ODATA = new Wire(null, ControlNames.ODATA, null);
+	/** Plain OData outside a request, and for the canonical form of an ETag. */
+	static final Wire ODATA = new Wire(ODataWireProfile.INSTANCE, ControlNames.ODATA, null);
 
 	/** The wire of the request being served; plain OData outside a request. */
 	static final ThreadLocal<Wire> CURRENT = new ThreadLocal<>();
@@ -41,15 +42,29 @@ record Wire(WireProfile profile, ControlNames names, String baseUrl) {
 		return wire == null ? ODATA : wire;
 	}
 
-	boolean profiled() {
-		return profile != null;
+	static Wire of(WireProfile profile, String baseUrl) {
+		return new Wire(profile, profile.controls(), baseUrl);
+	}
+
+	/** Whether links are absolute (the profile asks for it and the base URL is known). */
+	boolean absoluteLinks() {
+		return baseUrl != null && profile.absoluteLinks();
+	}
+
+	/**
+	 * Whether the OData metadata levels apply ({@code odata.metadata=full}): only with the OData
+	 * control names — a profile with its own names writes its own control information.
+	 */
+	boolean odataControls() {
+		return ControlNames.ODATA.equals(names);
 	}
 
 	/**
 	 * The absolute service root URL of a request: the configured {@code odata.base.url}, else
-	 * the {@code X-Forwarded-*} headers when the root trusts them, else the request itself.
-	 * Untrusted forwarding headers are ignored — they would let any client choose the host of
-	 * every link the server writes.
+	 * the {@code X-Forwarded-*} headers when the root trusts them, else the request itself (which
+	 * a container-side proxy customizer may already have rewritten). Untrusted forwarding
+	 * headers are ignored — they would let any client choose the host of every link the server
+	 * writes.
 	 */
 	static String baseUrl(HttpServletRequest request, String configured, boolean trustForwarded) {
 		if (configured != null && !configured.isBlank()) {

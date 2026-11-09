@@ -13,11 +13,13 @@
 package org.eclipse.fennec.odata.wire.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,13 +27,17 @@ import org.junit.jupiter.api.Test;
 @DisplayName("WireProfile defaults")
 class WireProfileTest {
 
-	private final WireProfile profile = () -> ControlNames.ODATA;
+	private final WireProfile profile = new WireProfile() {
+	};
 
 	@Test
 	@DisplayName("the default key literal is the OData one")
 	void keyLiteral() {
 		assertEquals("42", profile.keyLiteral(Map.of("id", 42)));
 		assertEquals("'it''s'", profile.keyLiteral(Map.of("id", "it's")));
+		UUID guid = UUID.fromString("01234567-89ab-cdef-0123-456789abcdef");
+		assertEquals(guid.toString(), profile.keyLiteral(Map.of("id", guid)),
+				"a GUID is an unquoted literal, like the servlet's own key predicates");
 		Map<String, Object> composite = new LinkedHashMap<>();
 		composite.put("a", 1);
 		composite.put("b", "x");
@@ -39,11 +45,18 @@ class WireProfileTest {
 	}
 
 	@Test
-	@DisplayName("without overrides a profile changes nothing but the names")
+	@DisplayName("without overrides a profile is plain OData")
 	void defaults() {
+		assertEquals(ControlNames.ODATA, profile.controls());
 		assertTrue(profile.keyInBody(null));
-		assertEquals(null, profile.keyQueryName(null));
+		assertFalse(profile.absoluteLinks(), "OData keeps its links relative (#121 D8)");
 		assertTrue(profile.serviceDocument(new ServiceRoot("http://h/r", List.of(), List.of())).isEmpty());
 		assertTrue(profile.errorBody(400, "x").isEmpty());
+	}
+
+	@Test
+	@DisplayName("a root without a target binds the plain OData profile")
+	void defaultTarget() {
+		assertEquals("(odata.wire.profile=odata)", WireProfile.DEFAULT_TARGET);
 	}
 }

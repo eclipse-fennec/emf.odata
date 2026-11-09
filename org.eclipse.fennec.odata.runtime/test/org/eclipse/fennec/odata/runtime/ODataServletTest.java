@@ -2620,6 +2620,11 @@ class ODataServletTest {
 		}
 
 		@Override
+		public boolean absoluteLinks() {
+			return true;
+		}
+
+		@Override
 		public Optional<String> serviceDocument(ServiceRoot root) {
 			return Optional.of("{\"value\":[" + root.entitySets().stream()
 					.map(set -> "{\"name\":\"" + set.name() + "\",\"url\":\"" + set.url() + "\"}")
@@ -2634,14 +2639,12 @@ class ODataServletTest {
 
 	private final TestProfile testProfile = new TestProfile();
 
-	private void speakProfile(boolean bound) {
+	/** What DS does for a root configured with {@code wireProfile.target=(odata.wire.profile=sta)}. */
+	private void speakProfile() {
+		servlet.setWireProfile(testProfile);
 		servlet.activate(Map.of("odata.max.top", "50",
 				"odata.max.expression.length", "128", "odata.max.nesting.depth", "8",
-				"odata.max.body.size", "256", WireProfile.ROOT_PROPERTY, "sta",
-				"odata.base.url", "https://h.example/sta/v1.1/"));
-		if (bound) {
-			servlet.bindWireProfile(testProfile, Map.of(WireProfile.PROFILE_PROPERTY, "sta"));
-		}
+				"odata.max.body.size", "256", "odata.base.url", "https://h.example/sta/v1.1/"));
 	}
 
 	private List<EObject> dairyProducts() {
@@ -2655,7 +2658,7 @@ class ODataServletTest {
 	@Test
 	@DisplayName("ADR-0010: a profile renames the control information and links every entity")
 	void wireProfileCollection() throws Exception {
-		speakProfile(true);
+		speakProfile();
 		backendResult = dairyProducts();
 
 		Response page = get("/Product", Map.of("$count", "true", "$top", "1"));
@@ -2678,20 +2681,67 @@ class ODataServletTest {
 				+ "\"@iot.selfLink\":\"https://h.example/sta/v1.1/Category('c1')\""),
 				"expanded entities are decorated too: " + expanded.body());
 
-		Response nameOnly = get("/Product", Map.of("$select", "name"));
-		assertFalse(nameOnly.body().contains("@iot.id"), "key not selected: " + nameOnly.body());
-		assertFalse(nameOnly.body().contains("navigationLink"), nameOnly.body());
-		Response withKey = get("/Product", Map.of("$select", "id,name"));
-		assertTrue(withKey.body().contains("\"@iot.id\":\"p1\""), withKey.body());
-
 		Response navigated = get("/Product('p1')/category", Map.of());
 		assertTrue(navigated.body().startsWith("{\"@iot.id\":\"c1\""), navigated.body());
 	}
 
 	@Test
+	@DisplayName("#121 D4: under $select the control information behaves like properties (as FROST)")
+	void wireProfileSelect() throws Exception {
+		speakProfile();
+		backendResult = dairyProducts();
+
+		String nameOnly = get("/Product", Map.of("$select", "name")).body();
+		assertTrue(nameOnly.contains("\"value\":[{\"name\":\"Milk\"}"), "only the name: " + nameOnly);
+
+		String withKey = get("/Product", Map.of("$select", "id,name")).body();
+		assertTrue(withKey.contains("{\"@iot.id\":\"p1\",\"name\":\"Milk\"}"), withKey);
+		assertFalse(withKey.contains("@iot.selfLink"), "the self link is not tied to the key: " + withKey);
+
+		Response self = get("/Product", Map.of("$select", "@iot.selfLink,name"));
+		assertEquals(200, self.status(), self.body());
+		assertTrue(self.body().contains("{\"@iot.selfLink\":\"https://h.example/sta/v1.1/Product('p1')\","
+				+ "\"name\":\"Milk\"}"), self.body());
+
+		String expandedOnly = get("/Product", Map.of("$select", "name", "$expand", "category")).body();
+		assertTrue(expandedOnly.contains("\"category\":{"), expandedOnly);
+		assertFalse(expandedOnly.contains("category@iot.navigationLink"),
+				"expanded but not selected: no navigation link: " + expandedOnly);
+		String selectedAndExpanded = get("/Product",
+				Map.of("$select", "name,category", "$expand", "category")).body();
+		assertTrue(selectedAndExpanded.contains("\"category@iot.navigationLink\":"
+				+ "\"https://h.example/sta/v1.1/Product('p1')/category\""), selectedAndExpanded);
+
+		String nested = get("/Product('p1')", Map.of("$select", "name",
+				"$expand", "category($select=@iot.selfLink)")).body();
+		assertTrue(nested.contains("\"category\":{\"@iot.selfLink\":"
+				+ "\"https://h.example/sta/v1.1/Category('c1')\"}"), nested);
+	}
+
+	@Test
+	@DisplayName("#121 D4: plain OData knows no selectable control information")
+	void odataSelectsNoControls() throws Exception {
+		backendResult = dairyProducts();
+		assertEquals(400, get("/Product", Map.of("$select", "@iot.selfLink")).status());
+	}
+
+	@Test
+	@DisplayName("#121 D1: plain OData is a profile too — nothing changes for a root without a target")
+	void odataProfileIsPlainOData() throws Exception {
+		backendResult = dairyProducts();
+		String before = get("/Product", Map.of("$top", "1", "$expand", "category")).body();
+		servlet.setWireProfile(new ODataWireProfile());
+		servlet.activate(Map.of("odata.max.top", "50", "odata.max.expression.length", "128",
+				"odata.max.nesting.depth", "8", "odata.max.body.size", "256"));
+		String after = get("/Product", Map.of("$top", "1", "$expand", "category")).body();
+		assertEquals(before, after);
+		assertFalse(after.contains("http"), "links stay relative (#121 D8): " + after);
+	}
+
+	@Test
 	@DisplayName("ADR-0010: root document and error body come from the profile")
 	void wireProfileDocuments() throws Exception {
-		speakProfile(true);
+		speakProfile();
 		Response root = get("/", Map.of());
 		assertEquals(200, root.status(), root.body());
 		assertTrue(root.body().contains("{\"name\":\"Product\",\"url\":\"https://h.example/sta/v1.1/Product\"}"),
@@ -2703,23 +2753,11 @@ class ODataServletTest {
 	}
 
 	@Test
-	@DisplayName("ADR-0010: a root whose profile is missing answers 503, not plain OData")
-	void wireProfileMissing() throws Exception {
-		speakProfile(false);
-		backendResult = dairyProducts();
-		assertEquals(503, get("/Product", Map.of()).status());
-		servlet.bindWireProfile(testProfile, Map.of(WireProfile.PROFILE_PROPERTY, "sta"));
-		assertEquals(200, get("/Product", Map.of()).status());
-		servlet.unbindWireProfile(testProfile, Map.of(WireProfile.PROFILE_PROPERTY, "sta"));
-		assertEquals(503, get("/Product", Map.of()).status());
-	}
-
-	@Test
 	@DisplayName("ADR-0010: the ETag is over the OData form, whatever the wire")
 	void wireProfileKeepsTheETag() throws Exception {
 		backendResult = dairyProducts();
 		String odata = get("/Product('p1')", Map.of()).headers().get("ETag");
-		speakProfile(true);
+		speakProfile();
 		assertEquals(odata, get("/Product('p1')", Map.of()).headers().get("ETag"));
 	}
 

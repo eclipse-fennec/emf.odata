@@ -14,6 +14,7 @@ package org.eclipse.fennec.odata.runtime;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,10 +37,14 @@ import org.eclipse.fennec.odata.query.ODataQueryParseException;
  * <p>Validation happens during parsing against the context {@link EClass}, recursively
  * against the target type of each structured property — unknown names fail the parse
  * (400 at the protocol layer).
+ *
+ * <p>A wire profile may make control information selectable (ADR-0010, e.g. SensorThings
+ * {@code @iot.selfLink}): such names are no properties, they are kept apart from the selected
+ * properties and asked for with {@link #selectsControl}.
  */
 public final class SelectTree {
 
-	private static final SelectTree LEAF = new SelectTree(Map.of(), CollectionOptions.NONE);
+	private static final SelectTree LEAF = new SelectTree(Map.of(), CollectionOptions.NONE, Set.of());
 	/** Nested option name incl. 4.01 variants: {@code $select=} / {@code select=} / case-insensitive. */
 	private static final Pattern NESTED_SELECT = Pattern.compile("(?i)^\\$?select=");
 	private static final Pattern NESTED_KNOWN = Pattern.compile(
@@ -48,10 +53,13 @@ public final class SelectTree {
 	private final Map<String, SelectTree> children;
 	/** Nested collection options over this selected collection's items. */
 	private final CollectionOptions options;
+	/** The selected control information names on this level (wire profile, ADR-0010). */
+	private final Set<String> controls;
 
-	private SelectTree(Map<String, SelectTree> children, CollectionOptions options) {
+	private SelectTree(Map<String, SelectTree> children, CollectionOptions options, Set<String> controls) {
 		this.children = children;
 		this.options = options;
+		this.controls = controls;
 	}
 
 	/** Parses and validates a {@code $select} value; expression-valued nested options → 501. */
@@ -66,7 +74,18 @@ public final class SelectTree {
 	 * whose items are addressed as {@code $it}); {@code null} rejects them as unimplemented.
 	 */
 	public static SelectTree parse(String select, EClass entityType, NestedOptionParser optionParser) {
-		return new SelectTree(items(select, entityType, optionParser, 0), CollectionOptions.NONE);
+		return parse(select, entityType, optionParser, Set.of());
+	}
+
+	/**
+	 * {@link #parse(String, EClass, NestedOptionParser)} also accepting the control information
+	 * names a wire profile makes selectable (ADR-0010) as plain items on every level.
+	 */
+	public static SelectTree parse(String select, EClass entityType, NestedOptionParser optionParser,
+			Set<String> controlNames) {
+		Set<String> controls = new LinkedHashSet<>();
+		Map<String, SelectTree> items = items(select, entityType, optionParser, 0, controlNames, controls);
+		return new SelectTree(items, CollectionOptions.NONE, Set.copyOf(controls));
 	}
 
 	/** The sub-tree selected under {@code name}, or null when the property is not selected. */
@@ -77,6 +96,11 @@ public final class SelectTree {
 	/** A leaf selection takes the property value as a whole. */
 	public boolean isLeaf() {
 		return children.isEmpty();
+	}
+
+	/** Whether the control information {@code name} is selected on this level (ADR-0010). */
+	public boolean selectsControl(String name) {
+		return name != null && controls.contains(name);
 	}
 
 	/** The selected property names on this level. */
@@ -90,12 +114,16 @@ public final class SelectTree {
 	}
 
 	private static Map<String, SelectTree> items(String value, EClass type,
-			NestedOptionParser optionParser, int depth) {
+			NestedOptionParser optionParser, int depth, Set<String> controlNames, Set<String> controls) {
 		Map<String, SelectTree> items = new LinkedHashMap<>();
 		for (String item : splitTopLevel(value, ',')) {
 			String trimmed = item.trim();
 			if (trimmed.isEmpty()) {
 				throw new ODataQueryParseException("empty $select item");
+			}
+			if (controlNames.contains(trimmed)) {
+				controls.add(trimmed);
+				continue;
 			}
 			int paren = trimmed.indexOf('(');
 			if (paren < 0) {
@@ -109,7 +137,7 @@ public final class SelectTree {
 			String name = trimmed.substring(0, paren).trim();
 			EStructuralFeature feature = feature(type, name);
 			items.put(name, nested(trimmed.substring(paren + 1, trimmed.length() - 1),
-					feature, optionParser, depth));
+					feature, optionParser, depth, controlNames));
 		}
 		return items;
 	}
@@ -119,8 +147,9 @@ public final class SelectTree {
 	 * properties, the collection options on collection-valued ones.
 	 */
 	private static SelectTree nested(String optionList, EStructuralFeature feature,
-			NestedOptionParser optionParser, int depth) {
+			NestedOptionParser optionParser, int depth, Set<String> controlNames) {
 		Map<String, SelectTree> nested = null;
+		Set<String> controls = new LinkedHashSet<>();
 		CollectionOptions.Accumulator options = new CollectionOptions.Accumulator();
 		boolean any = false;
 		// navigation collections evaluate against the target type; primitive collections have
@@ -138,7 +167,8 @@ public final class SelectTree {
 				if (nested != null) {
 					throw new ODataQueryParseException("duplicate nested $select");
 				}
-				nested = items(trimmed.substring(select.end()), target, optionParser, depth + 1);
+				nested = items(trimmed.substring(select.end()), target, optionParser, depth + 1,
+						controlNames, controls);
 				any = true;
 				continue;
 			}
@@ -167,7 +197,7 @@ public final class SelectTree {
 			throw new UnsupportedOperationException(
 					"$count on nested selections below the top level is not implemented");
 		}
-		return new SelectTree(nested == null ? Map.of() : nested, built);
+		return new SelectTree(nested == null ? Map.of() : nested, built, Set.copyOf(controls));
 	}
 
 	private static EStructuralFeature feature(EClass type, String name) {
