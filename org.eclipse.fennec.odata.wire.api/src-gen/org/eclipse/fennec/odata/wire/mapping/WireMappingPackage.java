@@ -34,14 +34,14 @@ import org.osgi.annotation.versioning.ProviderType;
  * </ul>
  * <!-- end-user-doc -->
  * <!-- begin-model-doc -->
- * How a wire profile shows a model on the wire (ADR-0010, #119): wire properties that stand for one or more model attributes. The mapping belongs to the profile, not to the model: a plain OData root of the same model sees the attributes as they are.
+ * How a wire profile shows a model on the wire (ADR-0010, #119): wire properties that stand for one or more model attributes, given meaning by the profile. The mapping belongs to the profile, not to the model: a plain OData root of the same model sees the attributes as they are.
  * <!-- end-model-doc -->
  * @see org.eclipse.fennec.odata.wire.mapping.WireMappingFactory
  * @model kind="package"
  * @generated
  */
 @ProviderType
-@EPackage(uri = WireMappingPackage.eNS_URI, fingerprint = "fp1:580a4f3d171eb15f9a7d5a6b1d1662c799d9d3573c52c50985dbeb6564e78845", genModel = "/model/wire-mapping.genmodel", genModelSourceLocations = {"model/wire-mapping.genmodel","org.eclipse.fennec.odata.wire.api/model/wire-mapping.genmodel"}, ecore = "/model/wire-mapping.ecore", ecoreSourceLocations = "/model/wire-mapping.ecore")
+@EPackage(uri = WireMappingPackage.eNS_URI, fingerprint = "fp1:a5eb418e88cbf185738ed5c9428e4aa2b0085463d34e3a150f50b5e17f8b7985", genModel = "/model/wire-mapping.genmodel", genModelSourceLocations = {"model/wire-mapping.genmodel","org.eclipse.fennec.odata.wire.api/model/wire-mapping.genmodel"}, ecore = "/model/wire-mapping.ecore", ecoreSourceLocations = "/model/wire-mapping.ecore")
 public interface WireMappingPackage extends org.eclipse.emf.ecore.EPackage {
 	/**
 	 * The package name.
@@ -178,13 +178,22 @@ public interface WireMappingPackage extends org.eclipse.emf.ecore.EPackage {
 	int WIRE_PROPERTY__NAME = 0;
 
 	/**
+	 * The feature id for the '<em><b>Parts</b></em>' reference list.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 * @ordered
+	 */
+	int WIRE_PROPERTY__PARTS = 1;
+
+	/**
 	 * The number of structural features of the '<em>Wire Property</em>' class.
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
 	 * @generated
 	 * @ordered
 	 */
-	int WIRE_PROPERTY_FEATURE_COUNT = 1;
+	int WIRE_PROPERTY_FEATURE_COUNT = 2;
 
 	/**
 	 * The number of operations of the '<em>Wire Property</em>' class.
@@ -194,107 +203,6 @@ public interface WireMappingPackage extends org.eclipse.emf.ecore.EPackage {
 	 * @ordered
 	 */
 	int WIRE_PROPERTY_OPERATION_COUNT = 0;
-
-	/**
-	 * The meta object id for the '{@link org.eclipse.fennec.odata.wire.mapping.impl.IntervalPropertyImpl <em>Interval Property</em>}' class.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @see org.eclipse.fennec.odata.wire.mapping.impl.IntervalPropertyImpl
-	 * @see org.eclipse.fennec.odata.wire.mapping.impl.WireMappingPackageImpl#getIntervalProperty()
-	 * @generated
-	 */
-	int INTERVAL_PROPERTY = 3;
-
-	/**
-	 * The feature id for the '<em><b>Name</b></em>' attribute.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int INTERVAL_PROPERTY__NAME = WIRE_PROPERTY__NAME;
-
-	/**
-	 * The feature id for the '<em><b>Start</b></em>' reference.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int INTERVAL_PROPERTY__START = WIRE_PROPERTY_FEATURE_COUNT + 0;
-
-	/**
-	 * The feature id for the '<em><b>End</b></em>' reference.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int INTERVAL_PROPERTY__END = WIRE_PROPERTY_FEATURE_COUNT + 1;
-
-	/**
-	 * The number of structural features of the '<em>Interval Property</em>' class.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int INTERVAL_PROPERTY_FEATURE_COUNT = WIRE_PROPERTY_FEATURE_COUNT + 2;
-
-	/**
-	 * The number of operations of the '<em>Interval Property</em>' class.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int INTERVAL_PROPERTY_OPERATION_COUNT = WIRE_PROPERTY_OPERATION_COUNT + 0;
-
-	/**
-	 * The meta object id for the '{@link org.eclipse.fennec.odata.wire.mapping.impl.AlternativesPropertyImpl <em>Alternatives Property</em>}' class.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @see org.eclipse.fennec.odata.wire.mapping.impl.AlternativesPropertyImpl
-	 * @see org.eclipse.fennec.odata.wire.mapping.impl.WireMappingPackageImpl#getAlternativesProperty()
-	 * @generated
-	 */
-	int ALTERNATIVES_PROPERTY = 4;
-
-	/**
-	 * The feature id for the '<em><b>Name</b></em>' attribute.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ALTERNATIVES_PROPERTY__NAME = WIRE_PROPERTY__NAME;
-
-	/**
-	 * The feature id for the '<em><b>Parts</b></em>' reference list.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ALTERNATIVES_PROPERTY__PARTS = WIRE_PROPERTY_FEATURE_COUNT + 0;
-
-	/**
-	 * The number of structural features of the '<em>Alternatives Property</em>' class.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ALTERNATIVES_PROPERTY_FEATURE_COUNT = WIRE_PROPERTY_FEATURE_COUNT + 1;
-
-	/**
-	 * The number of operations of the '<em>Alternatives Property</em>' class.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 * @ordered
-	 */
-	int ALTERNATIVES_PROPERTY_OPERATION_COUNT = WIRE_PROPERTY_OPERATION_COUNT + 0;
 
 
 	/**
@@ -372,57 +280,15 @@ public interface WireMappingPackage extends org.eclipse.emf.ecore.EPackage {
 	EAttribute getWireProperty_Name();
 
 	/**
-	 * Returns the meta object for class '{@link org.eclipse.fennec.odata.wire.mapping.IntervalProperty <em>Interval Property</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for class '<em>Interval Property</em>'.
-	 * @see org.eclipse.fennec.odata.wire.mapping.IntervalProperty
-	 * @generated
-	 */
-	EClass getIntervalProperty();
-
-	/**
-	 * Returns the meta object for the reference '{@link org.eclipse.fennec.odata.wire.mapping.IntervalProperty#getStart <em>Start</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for the reference '<em>Start</em>'.
-	 * @see org.eclipse.fennec.odata.wire.mapping.IntervalProperty#getStart()
-	 * @see #getIntervalProperty()
-	 * @generated
-	 */
-	EReference getIntervalProperty_Start();
-
-	/**
-	 * Returns the meta object for the reference '{@link org.eclipse.fennec.odata.wire.mapping.IntervalProperty#getEnd <em>End</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for the reference '<em>End</em>'.
-	 * @see org.eclipse.fennec.odata.wire.mapping.IntervalProperty#getEnd()
-	 * @see #getIntervalProperty()
-	 * @generated
-	 */
-	EReference getIntervalProperty_End();
-
-	/**
-	 * Returns the meta object for class '{@link org.eclipse.fennec.odata.wire.mapping.AlternativesProperty <em>Alternatives Property</em>}'.
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @return the meta object for class '<em>Alternatives Property</em>'.
-	 * @see org.eclipse.fennec.odata.wire.mapping.AlternativesProperty
-	 * @generated
-	 */
-	EClass getAlternativesProperty();
-
-	/**
-	 * Returns the meta object for the reference list '{@link org.eclipse.fennec.odata.wire.mapping.AlternativesProperty#getParts <em>Parts</em>}'.
+	 * Returns the meta object for the reference list '{@link org.eclipse.fennec.odata.wire.mapping.WireProperty#getParts <em>Parts</em>}'.
 	 * <!-- begin-user-doc -->
 	 * <!-- end-user-doc -->
 	 * @return the meta object for the reference list '<em>Parts</em>'.
-	 * @see org.eclipse.fennec.odata.wire.mapping.AlternativesProperty#getParts()
-	 * @see #getAlternativesProperty()
+	 * @see org.eclipse.fennec.odata.wire.mapping.WireProperty#getParts()
+	 * @see #getWireProperty()
 	 * @generated
 	 */
-	EReference getAlternativesProperty_Parts();
+	EReference getWireProperty_Parts();
 
 	/**
 	 * Returns the factory that creates the instances of the model.
@@ -510,48 +376,12 @@ public interface WireMappingPackage extends org.eclipse.emf.ecore.EPackage {
 		EAttribute WIRE_PROPERTY__NAME = eINSTANCE.getWireProperty_Name();
 
 		/**
-		 * The meta object literal for the '{@link org.eclipse.fennec.odata.wire.mapping.impl.IntervalPropertyImpl <em>Interval Property</em>}' class.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @see org.eclipse.fennec.odata.wire.mapping.impl.IntervalPropertyImpl
-		 * @see org.eclipse.fennec.odata.wire.mapping.impl.WireMappingPackageImpl#getIntervalProperty()
-		 * @generated
-		 */
-		EClass INTERVAL_PROPERTY = eINSTANCE.getIntervalProperty();
-
-		/**
-		 * The meta object literal for the '<em><b>Start</b></em>' reference feature.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @generated
-		 */
-		EReference INTERVAL_PROPERTY__START = eINSTANCE.getIntervalProperty_Start();
-
-		/**
-		 * The meta object literal for the '<em><b>End</b></em>' reference feature.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @generated
-		 */
-		EReference INTERVAL_PROPERTY__END = eINSTANCE.getIntervalProperty_End();
-
-		/**
-		 * The meta object literal for the '{@link org.eclipse.fennec.odata.wire.mapping.impl.AlternativesPropertyImpl <em>Alternatives Property</em>}' class.
-		 * <!-- begin-user-doc -->
-		 * <!-- end-user-doc -->
-		 * @see org.eclipse.fennec.odata.wire.mapping.impl.AlternativesPropertyImpl
-		 * @see org.eclipse.fennec.odata.wire.mapping.impl.WireMappingPackageImpl#getAlternativesProperty()
-		 * @generated
-		 */
-		EClass ALTERNATIVES_PROPERTY = eINSTANCE.getAlternativesProperty();
-
-		/**
 		 * The meta object literal for the '<em><b>Parts</b></em>' reference list feature.
 		 * <!-- begin-user-doc -->
 		 * <!-- end-user-doc -->
 		 * @generated
 		 */
-		EReference ALTERNATIVES_PROPERTY__PARTS = eINSTANCE.getAlternativesProperty_Parts();
+		EReference WIRE_PROPERTY__PARTS = eINSTANCE.getWireProperty_Parts();
 
 	}
 

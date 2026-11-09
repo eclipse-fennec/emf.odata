@@ -68,8 +68,7 @@ public class WireMappingFactoryImpl extends EFactoryImpl implements WireMappingF
 		switch (eClass.getClassifierID()) {
 			case WireMappingPackage.WIRE_MAPPING: return createWireMapping();
 			case WireMappingPackage.CLASS_MAPPING: return createClassMapping();
-			case WireMappingPackage.INTERVAL_PROPERTY: return createIntervalProperty();
-			case WireMappingPackage.ALTERNATIVES_PROPERTY: return createAlternativesProperty();
+			case WireMappingPackage.WIRE_PROPERTY: return createWireProperty();
 			default:
 				throw new IllegalArgumentException("The class '" + eClass.getName() + "' is not a valid classifier");
 		}
@@ -103,20 +102,9 @@ public class WireMappingFactoryImpl extends EFactoryImpl implements WireMappingF
 	 * @generated
 	 */
 	@Override
-	public IntervalProperty createIntervalProperty() {
-		IntervalPropertyImpl intervalProperty = new IntervalPropertyImpl();
-		return intervalProperty;
-	}
-
-	/**
-	 * <!-- begin-user-doc -->
-	 * <!-- end-user-doc -->
-	 * @generated
-	 */
-	@Override
-	public AlternativesProperty createAlternativesProperty() {
-		AlternativesPropertyImpl alternativesProperty = new AlternativesPropertyImpl();
-		return alternativesProperty;
+	public WireProperty createWireProperty() {
+		WirePropertyImpl wireProperty = new WirePropertyImpl();
+		return wireProperty;
 	}
 
 	/**

@@ -53,6 +53,7 @@ class WireProfileTest {
 		assertTrue(profile.serviceDocument(new ServiceRoot("http://h/r", List.of(), List.of())).isEmpty());
 		assertTrue(profile.errorBody(400, "x").isEmpty());
 		assertTrue(profile.mapping().isEmpty(), "no wire properties: the model as it is (#119)");
+		assertTrue(profile.handler(null).isEmpty());
 	}
 
 	@Test

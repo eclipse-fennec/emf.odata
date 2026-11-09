@@ -12,12 +12,19 @@
  */
 package org.eclipse.fennec.odata.wire.mapping.impl;
 
+import java.util.Collection;
+
 import org.eclipse.emf.common.notify.Notification;
 
+import org.eclipse.emf.common.util.EList;
+
+import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 
 import org.eclipse.emf.ecore.impl.ENotificationImpl;
 import org.eclipse.emf.ecore.impl.MinimalEObjectImpl;
+
+import org.eclipse.emf.ecore.util.EObjectResolvingEList;
 
 import org.eclipse.fennec.odata.wire.mapping.WireMappingPackage;
 import org.eclipse.fennec.odata.wire.mapping.WireProperty;
@@ -31,11 +38,12 @@ import org.eclipse.fennec.odata.wire.mapping.WireProperty;
  * </p>
  * <ul>
  *   <li>{@link org.eclipse.fennec.odata.wire.mapping.impl.WirePropertyImpl#getName <em>Name</em>}</li>
+ *   <li>{@link org.eclipse.fennec.odata.wire.mapping.impl.WirePropertyImpl#getParts <em>Parts</em>}</li>
  * </ul>
  *
  * @generated
  */
-public abstract class WirePropertyImpl extends MinimalEObjectImpl.Container implements WireProperty {
+public class WirePropertyImpl extends MinimalEObjectImpl.Container implements WireProperty {
 	/**
 	 * The default value of the '{@link #getName() <em>Name</em>}' attribute.
 	 * <!-- begin-user-doc -->
@@ -55,6 +63,16 @@ public abstract class WirePropertyImpl extends MinimalEObjectImpl.Container impl
 	 * @ordered
 	 */
 	protected String name = NAME_EDEFAULT;
+
+	/**
+	 * The cached value of the '{@link #getParts() <em>Parts</em>}' reference list.
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @see #getParts()
+	 * @generated
+	 * @ordered
+	 */
+	protected EList<EAttribute> parts;
 
 	/**
 	 * <!-- begin-user-doc -->
@@ -104,10 +122,25 @@ public abstract class WirePropertyImpl extends MinimalEObjectImpl.Container impl
 	 * @generated
 	 */
 	@Override
+	public EList<EAttribute> getParts() {
+		if (parts == null) {
+			parts = new EObjectResolvingEList<EAttribute>(EAttribute.class, this, WireMappingPackage.WIRE_PROPERTY__PARTS);
+		}
+		return parts;
+	}
+
+	/**
+	 * <!-- begin-user-doc -->
+	 * <!-- end-user-doc -->
+	 * @generated
+	 */
+	@Override
 	public Object eGet(int featureID, boolean resolve, boolean coreType) {
 		switch (featureID) {
 			case WireMappingPackage.WIRE_PROPERTY__NAME:
 				return getName();
+			case WireMappingPackage.WIRE_PROPERTY__PARTS:
+				return getParts();
 		}
 		return super.eGet(featureID, resolve, coreType);
 	}
@@ -117,11 +150,16 @@ public abstract class WirePropertyImpl extends MinimalEObjectImpl.Container impl
 	 * <!-- end-user-doc -->
 	 * @generated
 	 */
+	@SuppressWarnings("unchecked")
 	@Override
 	public void eSet(int featureID, Object newValue) {
 		switch (featureID) {
 			case WireMappingPackage.WIRE_PROPERTY__NAME:
 				setName((String)newValue);
+				return;
+			case WireMappingPackage.WIRE_PROPERTY__PARTS:
+				getParts().clear();
+				getParts().addAll((Collection<? extends EAttribute>)newValue);
 				return;
 		}
 		super.eSet(featureID, newValue);
@@ -138,6 +176,9 @@ public abstract class WirePropertyImpl extends MinimalEObjectImpl.Container impl
 			case WireMappingPackage.WIRE_PROPERTY__NAME:
 				setName(NAME_EDEFAULT);
 				return;
+			case WireMappingPackage.WIRE_PROPERTY__PARTS:
+				getParts().clear();
+				return;
 		}
 		super.eUnset(featureID);
 	}
@@ -152,6 +193,8 @@ public abstract class WirePropertyImpl extends MinimalEObjectImpl.Container impl
 		switch (featureID) {
 			case WireMappingPackage.WIRE_PROPERTY__NAME:
 				return NAME_EDEFAULT == null ? name != null : !NAME_EDEFAULT.equals(name);
+			case WireMappingPackage.WIRE_PROPERTY__PARTS:
+				return parts != null && !parts.isEmpty();
 		}
 		return super.eIsSet(featureID);
 	}

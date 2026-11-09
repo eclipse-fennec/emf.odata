@@ -90,14 +90,6 @@ public class WireMappingAdapterFactory extends AdapterFactoryImpl {
 				return createWirePropertyAdapter();
 			}
 			@Override
-			public Adapter caseIntervalProperty(IntervalProperty object) {
-				return createIntervalPropertyAdapter();
-			}
-			@Override
-			public Adapter caseAlternativesProperty(AlternativesProperty object) {
-				return createAlternativesPropertyAdapter();
-			}
-			@Override
 			public Adapter defaultCase(EObject object) {
 				return createEObjectAdapter();
 			}
@@ -156,34 +148,6 @@ public class WireMappingAdapterFactory extends AdapterFactoryImpl {
 	 * @generated
 	 */
 	public Adapter createWirePropertyAdapter() {
-		return null;
-	}
-
-	/**
-	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.wire.mapping.IntervalProperty <em>Interval Property</em>}'.
-	 * <!-- begin-user-doc -->
-	 * This default implementation returns null so that we can easily ignore cases;
-	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
-	 * <!-- end-user-doc -->
-	 * @return the new adapter.
-	 * @see org.eclipse.fennec.odata.wire.mapping.IntervalProperty
-	 * @generated
-	 */
-	public Adapter createIntervalPropertyAdapter() {
-		return null;
-	}
-
-	/**
-	 * Creates a new adapter for an object of class '{@link org.eclipse.fennec.odata.wire.mapping.AlternativesProperty <em>Alternatives Property</em>}'.
-	 * <!-- begin-user-doc -->
-	 * This default implementation returns null so that we can easily ignore cases;
-	 * it's useful to ignore a case when inheritance will catch all the cases anyway.
-	 * <!-- end-user-doc -->
-	 * @return the new adapter.
-	 * @see org.eclipse.fennec.odata.wire.mapping.AlternativesProperty
-	 * @generated
-	 */
-	public Adapter createAlternativesPropertyAdapter() {
 		return null;
 	}
 

@@ -16,15 +16,9 @@
       <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//ClassMapping/eClass"/>
       <genFeatures property="None" children="true" createChild="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//ClassMapping/properties"/>
     </genClasses>
-    <genClasses image="false" ecoreClass="wire-mapping.ecore#//WireProperty">
+    <genClasses ecoreClass="wire-mapping.ecore#//WireProperty">
       <genFeatures createChild="false" ecoreFeature="ecore:EAttribute wire-mapping.ecore#//WireProperty/name"/>
-    </genClasses>
-    <genClasses ecoreClass="wire-mapping.ecore#//IntervalProperty">
-      <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//IntervalProperty/start"/>
-      <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//IntervalProperty/end"/>
-    </genClasses>
-    <genClasses ecoreClass="wire-mapping.ecore#//AlternativesProperty">
-      <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//AlternativesProperty/parts"/>
+      <genFeatures notify="false" createChild="false" propertySortChoices="true" ecoreFeature="ecore:EReference wire-mapping.ecore#//WireProperty/parts"/>
     </genClasses>
   </genPackages>
 </genmodel:GenModel>
