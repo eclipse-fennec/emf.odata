@@ -325,6 +325,7 @@ public final class CsdlJsonReader {
 				if (member.hasNonNull("$EntitySet")) {
 					imp.setEntitySet(member.path("$EntitySet").asString());
 				}
+				annotations(member, imp.getAnnotation()::add);
 				container.getFunctionImport().add(imp);
 			} else if (member.hasNonNull("$Action")) {
 				TActionImport imp = edm.createTActionImport();
@@ -333,18 +334,21 @@ public final class CsdlJsonReader {
 				if (member.hasNonNull("$EntitySet")) {
 					imp.setEntitySet(member.path("$EntitySet").asString());
 				}
+				annotations(member, imp.getAnnotation()::add);
 				container.getActionImport().add(imp);
 			} else if (member.path("$Collection").asBoolean(false)) {
 				TEntitySet set = edm.createTEntitySet();
 				set.setName(entry.getKey());
 				set.setEntityType(member.path("$Type").asString(null));
 				bindings(member, set.getNavigationPropertyBinding()::add);
+				annotations(member, set.getAnnotation()::add);
 				container.getEntitySet().add(set);
 			} else if (member.hasNonNull("$Type")) { // no $Collection → a singleton
 				TSingleton singleton = edm.createTSingleton();
 				singleton.setName(entry.getKey());
 				singleton.setType(member.path("$Type").asString());
 				bindings(member, singleton.getNavigationPropertyBinding()::add);
+				annotations(member, singleton.getAnnotation()::add);
 				container.getSingleton().add(singleton);
 			}
 		});

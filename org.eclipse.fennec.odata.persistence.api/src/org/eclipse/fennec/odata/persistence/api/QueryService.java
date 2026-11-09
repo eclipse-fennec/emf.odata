@@ -46,6 +46,15 @@ public interface QueryService {
 	}
 
 	/**
+	 * What {@link #executeApply} can execute, announced in {@code $metadata} as
+	 * {@code Aggregation.ApplySupported} (#103). A backend that overrides {@link #executeApply}
+	 * should override this too; the default announces nothing.
+	 */
+	default ApplySupport applySupport() {
+		return ApplySupport.NONE;
+	}
+
+	/**
 	 * The single instance backing a container singleton (e.g. {@code Me}) of the given type, or
 	 * {@link Optional#empty()} when the singleton has no instance ({@code 404}). Optional capability —
 	 * the default maps to {@code 501 Not Implemented} at the protocol layer.

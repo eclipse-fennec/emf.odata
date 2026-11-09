@@ -50,6 +50,7 @@ import org.eclipse.fennec.model.query.Query;
 import org.eclipse.fennec.model.query.builder.Expressions;
 import org.eclipse.fennec.model.query.builder.QueryBuilder;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.ChangeJournal;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
@@ -264,6 +265,12 @@ public class CommandPersistenceService implements QueryService, WriteService, De
 		} catch (IOException e) {
 			throw refused(entityType, resource, errorsBefore, e, Phase.READ);
 		}
+	}
+
+	/** The command stage model's {@code $apply} subset (#103). */
+	@Override
+	public ApplySupport applySupport() {
+		return ApplyQueries.SUPPORT;
 	}
 
 	/**

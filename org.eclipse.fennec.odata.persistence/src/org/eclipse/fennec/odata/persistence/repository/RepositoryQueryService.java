@@ -32,6 +32,7 @@ import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.fennec.model.expression.Expression;
 import org.eclipse.fennec.model.query.Query;
 import org.eclipse.fennec.odata.persistence.api.ApplyQuery;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport;
 import org.eclipse.fennec.odata.persistence.api.ApplyResult;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
 import org.eclipse.fennec.odata.persistence.api.QueryResult;
@@ -169,6 +170,12 @@ public class RepositoryQueryService implements QueryService {
 			ReadPlans.raise(validate(irQuery, entityType, repository));
 			return repository.count(irQuery);
 		});
+	}
+
+	/** The command stage model's {@code $apply} subset (#103). */
+	@Override
+	public ApplySupport applySupport() {
+		return ApplyQueries.SUPPORT;
 	}
 
 	/**

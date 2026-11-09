@@ -117,9 +117,17 @@ GET /odata/Product?$apply=groupby((category/name),aggregate(price with sum as To
 Transformations: `groupby` (incl. `rollup` grouping sets), `aggregate`
 (`sum`/`min`/`max`/`average`/`countdistinct`/`$count`), `compute`, `filter`,
 `topcount`/`topsum`/`toppercent`/`bottom*`, `concat`, `top`/`skip`, `orderby`, `identity`
-(in-memory; the JPA backend pushes `groupby`/`aggregate`/`filter`/`compute` down and answers 501
-for the rest). It combines with `$filter`/`$orderby`/`$skip`/`$top`/`$count`, which run
-*after* the pipeline (aggregate/compute aliases are in scope).
+(in-memory; the command and repository backends push `groupby`/`aggregate`/`filter`/`compute`/
+`topcount`/`bottomcount`/`identity` down and answer 501 for the rest). It combines with
+`$filter`/`$orderby`/`$skip`/`$top`/`$count`, which run *after* the pipeline (aggregate/compute
+aliases are in scope).
+
+`$metadata` announces what the backends execute with `Aggregation.ApplySupported`
+(`Transformations`, `Rollup`), taken from `QueryService.applySupport()`: on the container when all
+published sets' backends agree, otherwise on each set whose backend runs `$apply`. A backend that
+reports nothing gets no annotation. The announcement is coarse — a listed transformation can still
+answer 501 in a position its backend does not support (e.g. `compute` before a grouping on the
+command backend).
 
 ## Write (Updatable Service)
 

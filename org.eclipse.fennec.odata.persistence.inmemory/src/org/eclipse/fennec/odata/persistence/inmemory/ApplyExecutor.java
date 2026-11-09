@@ -26,6 +26,8 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport.Rollup;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.apply.AggregateExpression;
 import org.eclipse.fennec.odata.query.apply.AggregateTransformation;
@@ -60,6 +62,15 @@ import org.eclipse.fennec.odata.query.apply.TopTransformation;
  * aggregates and every transformation outside the submodel.
  */
 public class ApplyExecutor {
+
+	/**
+	 * Everything {@link #stage} executes, announced in {@code $metadata} (#103); several
+	 * {@code rollup}s in one {@code groupby} combine as a cartesian product of grouping sets.
+	 */
+	public static final ApplySupport SUPPORT = new ApplySupport(List.of("aggregate", "groupby",
+			"filter", "compute", "identity", "concat", "orderby", "top", "skip", "topcount",
+			"topsum", "toppercent", "bottomcount", "bottomsum", "bottompercent"),
+			Rollup.MULTIPLE_HIERARCHIES);
 
 	private final OclEvaluator evaluator = new OclEvaluator();
 

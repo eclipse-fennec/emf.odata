@@ -59,6 +59,8 @@ import org.eclipse.fennec.m2x.model.ocl.OperationCallExp;
 import org.eclipse.fennec.m2x.model.ocl.PropertyCallExp;
 import org.eclipse.fennec.m2x.model.ocl.StringLiteralExp;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataWhiteboard;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport;
+import org.eclipse.fennec.odata.persistence.api.ApplySupport.Rollup;
 import org.eclipse.fennec.odata.persistence.api.DeltaGoneException;
 import org.eclipse.fennec.odata.persistence.api.DeltaService;
 import org.eclipse.fennec.odata.persistence.api.EntityQuery;
@@ -116,6 +118,7 @@ class ODataServletTest {
 	private EObject singletonResult;
 	private List<Map<String, Object>> applyResult = List.of();
 	private boolean applySupported = true;
+	private ApplySupport fixtureApplySupport = ApplySupport.NONE;
 	private final AtomicReference<org.eclipse.fennec.odata.persistence.api.ApplyQuery> lastApplyQuery =
 			new AtomicReference<>();
 	private final AtomicReference<EObject> lastWritePayload = new AtomicReference<>();
@@ -182,6 +185,11 @@ class ODataServletTest {
 				}
 				return new org.eclipse.fennec.odata.persistence.api.ApplyResult(applyResult,
 						query.count() ? applyResult.size() : -1);
+			}
+
+			@Override
+			public ApplySupport applySupport() {
+				return fixtureApplySupport;
 			}
 
 			@Override
@@ -3552,6 +3560,83 @@ class ODataServletTest {
 				metadata.body());
 		assertTrue(metadata.body().contains("\"Supported\"")
 				|| metadata.body().contains("Property=\"Supported\""), metadata.body());
+	}
+
+	// --- #103: Aggregation.ApplySupported from what the backends report ---
+
+	@Test
+	@DisplayName("$metadata: no ApplySupported and no Aggregation reference while no backend reports $apply")
+	void metadataWithoutApplySupport() throws Exception {
+		Response xml = get("/$metadata", Map.of());
+		assertFalse(xml.body().contains("Org.OData.Aggregation.V1"), xml.body());
+	}
+
+	@Test
+	@DisplayName("$metadata: sets whose backends differ carry their own ApplySupported, in XML and JSON")
+	void metadataApplySupportedPerSet() throws Exception {
+		fixtureApplySupport = new ApplySupport(List.of("aggregate", "groupby"), Rollup.NONE);
+
+		String xml = get("/$metadata", Map.of()).body();
+		assertTrue(xml.contains("Org.OData.Aggregation.V1.xml")
+				&& xml.contains("Namespace=\"Org.OData.Aggregation.V1\""), "vocabulary reference: " + xml);
+		String productSet = element(xml, "<edm:EntitySet EntityType=\"webshop.Product\" Name=\"Product\"", "</edm:EntitySet>");
+		assertTrue(productSet.contains("Term=\"Org.OData.Aggregation.V1.ApplySupported\""), productSet);
+		assertTrue(productSet.contains("<edm:String>aggregate</edm:String>")
+				&& productSet.contains("<edm:String>groupby</edm:String>")
+				&& !productSet.contains("<edm:String>concat</edm:String>"), productSet);
+		assertTrue(productSet.contains("Org.OData.Aggregation.V1.RollupType/None"), productSet);
+		String container = xml.substring(xml.indexOf("<edm:EntityContainer"));
+		assertEquals(1, container.split("Aggregation.V1.ApplySupported", -1).length - 1,
+				"only the Product set: the other sets have no backend for $apply: " + container);
+
+		String json = get("/$metadata", Map.of("$format", "json")).body().replaceAll("\\s", "");
+		assertTrue(json.contains("\"@Org.OData.Aggregation.V1.ApplySupported\":{"), json);
+		assertTrue(json.contains("\"Transformations\":[\"aggregate\",\"groupby\"]"), json);
+		assertTrue(json.contains("Org.OData.Aggregation.V1.RollupType/None"), json);
+	}
+
+	@Test
+	@DisplayName("$metadata: one ApplySupported on the container when every set's backend agrees")
+	void metadataApplySupportedOnContainer() throws Exception {
+		ApplySupport support = new ApplySupport(List.of("aggregate", "groupby", "concat"),
+				Rollup.MULTIPLE_HIERARCHIES);
+		fixtureApplySupport = support;
+		QueryService others = new QueryService() {
+			@Override
+			public boolean supports(EClass entityType) {
+				return entityType != productClass;
+			}
+
+			@Override
+			public QueryResult execute(EntityQuery query) {
+				return new QueryResult(List.of(), -1);
+			}
+
+			@Override
+			public ApplySupport applySupport() {
+				return support;
+			}
+		};
+		servlet.bindQueryService(others, Map.of());
+		try {
+			String xml = get("/$metadata", Map.of()).body();
+			String container = element(xml, "<edm:EntityContainer", "</edm:EntityContainer>");
+			assertEquals(1, container.split("Aggregation.V1.ApplySupported", -1).length - 1, container);
+			String head = container.substring(0, container.indexOf("<edm:EntitySet"));
+			String tail = container.substring(container.lastIndexOf("</edm:EntitySet>"));
+			assertTrue((head + tail).contains("Aggregation.V1.ApplySupported"),
+					"the annotation sits on the container, not on a set: " + container);
+			assertTrue(container.contains("Org.OData.Aggregation.V1.RollupType/MultipleHierarchies"),
+					container);
+		} finally {
+			servlet.unbindQueryService(others);
+		}
+	}
+
+	private static String element(String xml, String start, String end) {
+		int from = xml.indexOf(start);
+		assertTrue(from >= 0, start + " in " + xml);
+		return xml.substring(from, xml.indexOf(end, from) + end.length());
 	}
 
 	private static Path findResource(String... candidatesRelative) {
