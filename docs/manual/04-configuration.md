@@ -40,14 +40,31 @@ an instance lives; the `odata.model.*` keys select what it publishes.
 | The HTTP runtime to bind to (filter on the `HttpServiceRuntime` properties) | `osgi.http.whiteboard.target` | all runtimes |
 | The servlet context to bind to | `osgi.http.whiteboard.context.select` | the default context |
 | Packages (nsURIs) published as schemas | `odata.model.packages` | every bound `EPackage` |
-| Entity sets published: `[SetName=]nsURI#EClass` or `[SetName=]EClass` | `odata.model.entitysets` | every concrete class, named by type (or its `@OData` rename annotation) |
+| Entity sets published: `[SetName=]TypeIRI`, `[SetName=]nsURI#EClass` or `[SetName=]EClass` | `odata.model.entitysets` | every concrete class, named by type (or its `@OData` rename annotation) |
 
 Multi-valued keys take a `String[]`, a collection, or one comma/whitespace-separated string.
 Both allowlists apply consistently to `$metadata` (schemas, container sets, navigation
 bindings), the service document, entity-set routing (an unlisted set is a **404**), cast and
 operation resolution — so `QueryService`/`WriteService` selection only ever sees published
 types. An `odata.model.entitysets` entry whose package is not (yet) bound is skipped with a
-warning and picked up when the package arrives.
+warning that names the packages currently published, and is picked up when the package arrives.
+
+#### Naming a class in an entity-set entry
+
+A qualified entry is read as the **type IRI** first: the package's nsURI with the type name
+appended, exactly as RDF builds a term IRI. That is the spelling to use for a **hash namespace**,
+whose nsURI already ends in `#` — the older `nsURI#EClass` form splits on that same `#` and would
+compare `http://www.w3.org/ns/dcat` against `http://www.w3.org/ns/dcat#`, so it can never match:
+
+| Package nsURI | Entry |
+|---|---|
+| `http://www.w3.org/ns/dcat#` (hash) | `http://www.w3.org/ns/dcat#Dataset` |
+| `http://purl.org/dc/terms/` (slash) | `http://purl.org/dc/terms/LicenseDocument` |
+| `http://example.org/webshop` (no separator) | `http://example.org/webshop#Product` |
+
+In every row the entry is just nsURI + type name, so there is one rule to remember rather than
+three. A bare `EClass` resolves against every published package and stays available for the cases
+where the class name is unambiguous.
 
 ### What `$metadata` describes
 
