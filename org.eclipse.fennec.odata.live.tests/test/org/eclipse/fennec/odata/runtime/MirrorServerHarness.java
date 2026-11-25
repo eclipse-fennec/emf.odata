@@ -36,7 +36,7 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.fennec.codec.util.MetadataServiceFactory;
 import org.eclipse.fennec.emf.osgi.metadata.MetadataWhiteboard;
 import org.eclipse.fennec.odata.persistence.inmemory.InMemoryBackends;
-import org.eclipse.fennec.odata.persistence.inmemory.MemoryWriteRepository;
+import org.eclipse.fennec.odata.persistence.inmemory.write.MemoryWriteRepository;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;

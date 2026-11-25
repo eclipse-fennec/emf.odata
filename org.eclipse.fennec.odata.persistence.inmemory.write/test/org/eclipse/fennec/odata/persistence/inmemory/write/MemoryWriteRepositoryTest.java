@@ -10,7 +10,7 @@
  * Contributors:
  *   Data In Motion Consulting - initial implementation
  */
-package org.eclipse.fennec.odata.persistence.inmemory;
+package org.eclipse.fennec.odata.persistence.inmemory.write;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -37,7 +37,7 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EcoreFactory;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
-import org.eclipse.fennec.odata.persistence.api.EntityQuery;
+import org.eclipse.fennec.odata.persistence.api.EntityRepository;
 import org.eclipse.fennec.odata.persistence.api.MediaService;
 import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService.WriteResult;
@@ -57,19 +57,16 @@ class MemoryWriteRepositoryTest {
 	private EcoreHelper ecoreHelper;
 	private EClass productClass;
 	private MemoryWriteRepository repository;
-	private InMemoryQueryService queryService;
 	private EPackage pkg;
 
 	@BeforeEach
 	void setUp() throws Exception {
 		ecoreHelper = new EcoreHelper();
 		pkg = ecoreHelper.loadEcore(findResource("testdata/webshop.ecore",
-				"org.eclipse.fennec.odata.persistence.inmemory/testdata/webshop.ecore"));
+				"org.eclipse.fennec.odata.persistence.inmemory.write/testdata/webshop.ecore"));
 		productClass = EcoreHelper.getEClass(pkg, "Product");
 		repository = new MemoryWriteRepository();
 		repository.addEPackage(pkg);
-		queryService = new InMemoryQueryService();
-		queryService.addRepository(repository);
 	}
 
 	@AfterEach
@@ -423,7 +420,7 @@ class MemoryWriteRepositoryTest {
 		// the base Product set MUST include the DiscountedProduct (stored under its exact eClass)
 		assertEquals(2, read().size(), "base-set query omits the derived instance");
 		// the derived set sees only the derived instance
-		assertEquals(1, queryService.execute(EntityQuery.all(discountedClass)).entities().size());
+		assertEquals(1, repository.entities(discountedClass).size());
 	}
 
 	@Test
@@ -457,8 +454,14 @@ class MemoryWriteRepositoryTest {
 				"the sibling sharing the id component survives");
 	}
 
+	/**
+	 * Reads back through {@link EntityRepository#entities(EClass)} — the SPI the in-memory
+	 * QueryService itself consumes, so this asserts exactly what a query would see. It is
+	 * deliberately NOT routed through {@code InMemoryQueryService}: that lives in the read
+	 * bundle now, and its DS bind method is package-private, as a bind method should be.
+	 */
 	private List<EObject> read() {
-		return queryService.execute(EntityQuery.all(productClass)).entities();
+		return repository.entities(productClass);
 	}
 
 	private EObject product(String id, String name, String price) {

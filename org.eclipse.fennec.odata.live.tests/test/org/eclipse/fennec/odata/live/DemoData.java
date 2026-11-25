@@ -23,7 +23,7 @@ import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EEnum;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
-import org.eclipse.fennec.odata.persistence.inmemory.MemoryWriteRepository;
+import org.eclipse.fennec.odata.persistence.inmemory.write.MemoryWriteRepository;
 
 /**
  * Synthetic demo data for the mirror server: for every concrete, keyed entity type of the

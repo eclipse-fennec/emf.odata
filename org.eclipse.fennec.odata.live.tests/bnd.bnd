@@ -15,6 +15,7 @@ Bundle-Description: Live interop suite (@Tag "live", gradle task liveTest — NO
 	org.eclipse.fennec.odata.wire.api;version=project,\
 	org.eclipse.fennec.odata.persistence.api;version=project,\
 	org.eclipse.fennec.odata.persistence.inmemory;version=project,\
+	org.eclipse.fennec.odata.persistence.inmemory.write;version=project,\
 	org.eclipse.fennec.odata.operation.api;version=project,\
 	org.apache.felix.http.servlet-api;version=latest,\
 	org.osgi.service.servlet;version=latest,\

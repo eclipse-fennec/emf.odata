@@ -10,7 +10,7 @@
  * Contributors:
  *   Data In Motion Consulting - initial implementation
  */
-package org.eclipse.fennec.odata.persistence.inmemory;
+package org.eclipse.fennec.odata.persistence.inmemory.write;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -40,6 +40,7 @@ import org.eclipse.fennec.odata.persistence.api.WriteConflictException;
 import org.eclipse.fennec.odata.persistence.api.WriteService;
 import org.eclipse.fennec.odata.ocl.evaluator.OclEvaluator;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.ConfigurationPolicy;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
@@ -53,11 +54,37 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  * <p>PATCH applies exactly the payload's set features; PUT resets all other features to
  * their defaults (key excluded); updates with unknown keys create (OData upsert). Everything
  * synchronizes on the per-class map — reference semantics, not a transactional store.
+ *
+ * <p><strong>Opt-in, twice over (#149).</strong> This component is a DEMO/TEST backend, and
+ * being bound has two effects a deployment may not want: the service becomes writable, and —
+ * because it is also an {@link EntityRepository} — whatever was written is served back inside
+ * the entity sets, indistinguishable from the real backend's data. It used to activate as soon
+ * as its bundle started, which made a deliberately read-only service silently writable and its
+ * reads silently polluted. Now it needs BOTH:
+ * <ul>
+ * <li>its own bundle to be installed — this class is deliberately not in the bundle that
+ *     carries the in-memory {@code QueryService}, so declining the write side no longer means
+ *     declining the query engine every in-memory deployment needs;</li>
+ * <li>a configuration for PID {@value #PID} — {@code ConfigurationPolicy.REQUIRE}, so the
+ *     component configuration only becomes satisfied with a corresponding {@code Configuration}
+ *     object ([OSGi Cmpn] §112.13.6.2: "There must be a corresponding Configuration object for
+ *     the component configuration to become satisfied"), exactly as the sibling
+ *     {@code FileEntityRepository} is gated. An empty configuration is enough; no property is
+ *     read — the PID exists to be declared, not to carry settings.</li>
+ * </ul>
+ * The bundle gate is the stronger one — a bundle that is not installed cannot be mis-configured
+ * — but the PID gate is what protects a deployment that upgrades without changing its bundle
+ * list.
  */
 @Component(service = { EntityRepository.class, WriteService.class, MediaService.class,
-		DeltaService.class })
+		DeltaService.class },
+		configurationPid = MemoryWriteRepository.PID,
+		configurationPolicy = ConfigurationPolicy.REQUIRE)
 public class MemoryWriteRepository
 		implements EntityRepository, WriteService, MediaService, DeltaService {
+
+	/** Factory-less PID a deployment must configure to enable this store (#149). */
+	public static final String PID = "org.eclipse.fennec.odata.repository.memory";
 
 	private final List<EPackage> packages = new CopyOnWriteArrayList<>();
 	private final Map<EClass, Map<String, EObject>> store = new ConcurrentHashMap<>();

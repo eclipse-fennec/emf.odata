@@ -51,7 +51,8 @@ SPI. The client mirrors the server's codec and metadata wiring.
 | `odata.query` | E4 | ANTLR4 grammar → OCL IR, `$apply` submodel, standalone type resolver (ADR-0004), `OclEvaluator`, LRU cache |
 | `odata.operation.api` | E4 | `ODataOperationHandler` SPI — pluggable function/action implementations |
 | `odata.persistence.api` | E5 | `QueryService` / `ApplyQuery` / `WriteService` / `MediaService` / `DeltaService` SPIs + `EntityRepository` data-source abstraction |
-| `odata.persistence.inmemory` | E5 | Reference backend: in-memory query + `ApplyExecutor`, `FileEntityRepository`, `MemoryWriteRepository` (write + media + change journal) |
+| `odata.persistence.inmemory` | E5 | Reference **read** backend: in-memory `QueryService` + `ApplyExecutor`, and `FileEntityRepository` (XMI/XML from one configured directory, loaded into memory at activation) |
+| `odata.persistence.inmemory.write` | E5 | Reference **write** backend: `MemoryWriteRepository` (write + media + change journal). A separate bundle on purpose — see below |
 | `odata.persistence` | E5 | Fennec Persistence backends: the **command** backend (`CommandPersistenceService`: `QueryService`/`WriteService`/`DeltaService` over a persistence unit's `QueryableResource`/`CommandResource`) and the **repository** backend (`RepositoryQueryService`: `QueryService` over the emf.persistence-jpa `ReadRepository` facade, #79); both share the OCL-IR → `Query`/`Expression` translation (`ReadQueries`, `ReadPlans`, `ApplyQueries`) |
 | `odata.runtime` | E6/E7 | `ODataServlet` catch-all + `RequestLimits` / `EntityShaper` / `ODataJson` / resource-path parser |
 | `odata.wire.api` | — | `WireProfile` SPI — the wire format of a root for OData dialects such as SensorThings (ADR-0010) |

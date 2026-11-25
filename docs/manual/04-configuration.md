@@ -143,11 +143,35 @@ create it again.
 | Setting | PID / key | Default |
 |---|---|---|
 | File repository directory (read once at activation; never influenced by request input) | `org.eclipse.fennec.odata.repository.file` · `directory` | — |
+| In-memory **write** store — enables it; reads no property | `org.eclipse.fennec.odata.repository.memory` | — (off) |
 | Command backend (factory): persistence unit, e.g. `jpa://shop` or `mongodb://assets` | `org.eclipse.fennec.odata.persistence.command` · `backend.uri` | — (required) |
 | Command backend: packages served (nsURIs); without it every keyed EClass is claimed | · `emf.nsURIs` | all |
 | Command backend: server-driven page cap for unbounded reads (`<= 0` = unlimited) | · `max.page.size` | 1000 |
 | Repository backend (factory): the emf.persistence-jpa `ReadRepository` to serve, as a DS target on its `persistence.repository.id` | `org.eclipse.fennec.odata.persistence.repository` · `repository.target` | — (required) |
 | Repository backend: packages served (nsURIs) / page cap | · `emf.nsURIs` / `max.page.size` | all / 1000 |
+
+### The in-memory write store is off unless you ask for it
+
+`MemoryWriteRepository` is a demo/test backend, and binding it has two effects a real deployment
+rarely wants: the service becomes **writable**, and — because the same component is also an
+`EntityRepository` — whatever a client POSTs is **served back inside the entity sets**, counted in
+`@odata.count` and indistinguishable from the real backend's data. In a multi-replica deployment
+it is visible only on the replica that accepted the write, and gone on restart.
+
+It is therefore opt-in twice:
+
+1. install `org.eclipse.fennec.odata.persistence.inmemory.write` — it is a separate bundle from
+   the read side, so declining it does not cost you the in-memory `QueryService`;
+2. declare a configuration for `org.eclipse.fennec.odata.repository.memory`. The PID carries no
+   properties; an empty object is the whole configuration.
+
+```json
+"org.eclipse.fennec.odata.repository.memory": {}
+```
+
+A service that provides no `WriteService` answers **405** to a write, which is the intended
+behaviour for a read-only deployment — before this was gated, such a service silently answered
+**201** instead.
 
 The repository backend reads through the facade only (`find`/`count`, `$apply` as a pipeline
 query); capabilities are gated exactly as the command backend gates them (undeclared feature →
