@@ -104,6 +104,66 @@ class ServiceModelTest {
 	}
 
 	@Test
+	@DisplayName("a hash namespace is addressed by its type IRI — the nsURI already ends in '#' (#147)")
+	void hashNamespaceResolvesByTypeIri() {
+		// five of the seven packages of a DCAT-AP model end in '#'; the namespace IRI plus the
+		// local name IS the term IRI, so the trailing '#' is not a defect to work around
+		EPackage dcat = pkg("dcat", "http://www.w3.org/ns/dcat#", "Catalog", "Dataset");
+
+		ServiceModel model = ServiceModel.of(List.of(dcat), ServiceModel.Selection.fromConfiguration(
+				Map.of(ServiceModel.ENTITY_SETS_KEY, "http://www.w3.org/ns/dcat#Catalog")));
+
+		assertEquals(List.of("Catalog"), model.entitySetNames(),
+				"splitting on '#' used to compare '…/dcat' against '…/dcat#' and silently drop it");
+		assertSame(dcat.getEClassifier("Catalog"), model.entityType("Catalog"));
+	}
+
+	@Test
+	@DisplayName("a slash namespace is addressed by its type IRI too, and the set can be renamed")
+	void slashNamespaceResolvesByTypeIri() {
+		EPackage terms = pkg("terms", "http://purl.org/dc/terms/", "LicenseDocument");
+
+		ServiceModel model = ServiceModel.of(List.of(terms), ServiceModel.Selection.fromConfiguration(
+				Map.of(ServiceModel.ENTITY_SETS_KEY, "Licenses=http://purl.org/dc/terms/LicenseDocument")));
+
+		assertEquals(List.of("Licenses"), model.entitySetNames());
+		assertSame(terms.getEClassifier("LicenseDocument"), model.entityType("Licenses"));
+	}
+
+	@Test
+	@DisplayName("the nsURI#Name and bare forms keep resolving to the same class as before")
+	void establishedFormsAreUnchanged() {
+		EPackage dcat = pkg("dcat", "http://www.w3.org/ns/dcat#", "Catalog");
+
+		// the slash-namespace separator form the example and the manual use
+		assertEquals(List.of("Product"), ServiceModel.of(List.of(shop, atlas),
+				ServiceModel.Selection.fromConfiguration(Map.of(ServiceModel.ENTITY_SETS_KEY,
+						"http://example.org/shop#Product"))).entitySetNames());
+		// the bare form, which was the only workaround for a hash namespace
+		assertEquals(List.of("Catalog"), ServiceModel.of(List.of(dcat, shop),
+				ServiceModel.Selection.fromConfiguration(Map.of(ServiceModel.ENTITY_SETS_KEY,
+						"Catalog"))).entitySetNames());
+		// an nsURI that matches no published package still resolves to nothing
+		assertEquals(List.of(), ServiceModel.of(List.of(dcat, shop),
+				ServiceModel.Selection.fromConfiguration(Map.of(ServiceModel.ENTITY_SETS_KEY,
+						"http://www.w3.org/ns/dcat#Nowhere"))).entitySetNames());
+	}
+
+	@Test
+	@DisplayName("an abstract class is not a set, whichever spelling names it")
+	void abstractClassIsNeverASet() {
+		EPackage dcat = pkg("dcat", "http://www.w3.org/ns/dcat#", "Catalog");
+		EClass resource = EcoreFactory.eINSTANCE.createEClass();
+		resource.setName("Resource");
+		resource.setAbstract(true);
+		dcat.getEClassifiers().add(resource);
+
+		assertEquals(List.of(), ServiceModel.of(List.of(dcat), ServiceModel.Selection.fromConfiguration(
+				Map.of(ServiceModel.ENTITY_SETS_KEY, "http://www.w3.org/ns/dcat#Resource")))
+				.entitySetNames(), "the type IRI path must apply the same concreteness rule");
+	}
+
+	@Test
 	@DisplayName("package rename annotations apply where no configured name overrides them")
 	void annotatedRenames() {
 		EAnnotation sets = EcoreFactory.eINSTANCE.createEAnnotation();

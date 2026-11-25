@@ -46,15 +46,19 @@ import org.eclipse.fennec.odata.csdl.ODataAnnotationConstants;
  * <ul>
  *   <li>{@code odata.model.packages} — nsURIs of the packages to publish. A bound package outside
  *       the list contributes NO schema, entity set, singleton, cast type or operation.</li>
- *   <li>{@code odata.model.entitysets} — entries {@code [SetName=]nsURI#EClass} or
- *       {@code [SetName=]EClass}: exactly these entity sets are published (in the container and
- *       for routing), under the configured name where one is given. Without the list every
+ *   <li>{@code odata.model.entitysets} — entries {@code [SetName=]TypeIRI},
+ *       {@code [SetName=]nsURI#EClass} or {@code [SetName=]EClass}: exactly these entity sets
+ *       are published (in the container and for routing), under the configured name where one
+ *       is given. Without the list every
  *       concrete class of every published package is a set, named by the package's
  *       {@link ODataAnnotationConstants#ENTITY_SETS_SOURCE} rename annotation or its type name.</li>
  * </ul>
  * Both keys accept a {@code String[]}, a {@link Collection} or a single comma/whitespace separated
- * string. An entity-set entry that resolves to no (published) class is skipped with a warning:
- * the packages arrive dynamically, so the entry resolves once its package is bound.
+ * string. A qualified entry is matched as the TYPE IRI first (the nsURI with the type name
+ * appended) — the only spelling that addresses a hash namespace, whose nsURI ends in the very
+ * {@code '#'} the other form separates on (#147). An entity-set entry that resolves to no
+ * (published) class is skipped with a warning: the packages arrive dynamically, so an entry whose
+ * package is not bound yet resolves once it is.
  *
  * <p>With {@code odata.model.entitysets} the schemas are narrowed as well (emf.odata#91): they
  * describe the {@linkplain #describes type closure} of the published sets and singletons, not the
@@ -159,10 +163,16 @@ final class ServiceModel {
 				String reference = equals > 0 ? entry.substring(equals + 1).trim() : entry;
 				EClass type = resolve(reference, published);
 				if (type == null) {
+					// naming the published nsURIs is the whole diagnosis: a qualified entry that
+					// looks right but misses by a trailing separator is indistinguishable, from
+					// the message alone, from a package that has simply not bound yet (#147)
 					LOGGER.log(System.Logger.Level.WARNING,
 							() -> ENTITY_SETS_KEY + " entry '" + entry
-									+ "' names no concrete entity type of a published package — skipped"
-									+ " (it resolves once its package is bound)");
+									+ "' names no concrete entity type of a published package — skipped."
+									+ " Published: " + published.stream().map(EPackage::getNsURI).toList()
+									+ ". A qualified entry is the type IRI (the nsURI with the type name"
+									+ " appended, keeping a hash namespace's '#') or nsURI#Name; if the"
+									+ " package is not in that list, the entry resolves once it binds.");
 					continue;
 				}
 				String name = configuredName != null ? configuredName : annotatedSetName(type, published);
@@ -259,8 +269,32 @@ final class ServiceModel {
 		}
 	}
 
-	/** {@code nsURI#Name} or a bare {@code Name} → the concrete class among the published packages. */
+	/**
+	 * A configured reference → the concrete class among the published packages. Three spellings,
+	 * tried in this order:
+	 * <ol>
+	 *   <li>the TYPE IRI — the nsURI with the type name appended. This is the RDF spelling, and
+	 *       the only one that can address a HASH namespace: such an nsURI already ends in the
+	 *       {@code '#'} that form 2 uses as its separator, so splitting on it would eat the
+	 *       terminator and compare {@code …/dcat} against {@code …/dcat#} (#147). It covers a
+	 *       slash namespace in the same breath ({@code …/dc/terms/} + {@code LicenseDocument}),
+	 *       because concatenation is how RDF builds a term IRI either way.</li>
+	 *   <li>{@code nsURI#Name}, the documented form for a namespace that does not itself end in
+	 *       a separator.</li>
+	 *   <li>a bare {@code Name}, resolved against every published package.</li>
+	 * </ol>
+	 */
 	private static EClass resolve(String reference, List<EPackage> published) {
+		for (EPackage pkg : published) {
+			String nsUri = pkg.getNsURI();
+			if (nsUri == null || reference.length() <= nsUri.length() || !reference.startsWith(nsUri)) {
+				continue;
+			}
+			EClass type = concrete(pkg, reference.substring(nsUri.length()));
+			if (type != null) {
+				return type;
+			}
+		}
 		int hash = reference.indexOf('#');
 		String nsUri = hash >= 0 ? reference.substring(0, hash) : null;
 		String localName = hash >= 0 ? reference.substring(hash + 1) : reference;
@@ -268,11 +302,17 @@ final class ServiceModel {
 			if (nsUri != null && !nsUri.equals(pkg.getNsURI())) {
 				continue;
 			}
-			if (pkg.getEClassifier(localName) instanceof EClass type && !type.isAbstract()) {
+			EClass type = concrete(pkg, localName);
+			if (type != null) {
 				return type;
 			}
 		}
 		return null;
+	}
+
+	/** The named classifier of the package, when it is a class that can BE a set (never abstract). */
+	private static EClass concrete(EPackage pkg, String name) {
+		return pkg.getEClassifier(name) instanceof EClass type && !type.isAbstract() ? type : null;
 	}
 
 	/** The set name the packages' rename annotations declare for the type, or its type name. */
