@@ -15,6 +15,8 @@ package org.eclipse.fennec.odata.persistence.inmemory;
 import java.util.List;
 
 import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.fennec.odata.persistence.inmemory.write.MemoryWriteRepository;
+import org.eclipse.fennec.odata.persistence.inmemory.write.WriteBackends;
 
 /**
  * Test-harness access to the in-memory backend's package-private DS wiring (the OSGi runtime
@@ -30,8 +32,7 @@ public final class InMemoryBackends {
 	}
 
 	public static Wiring wire(List<EPackage> packages) {
-		MemoryWriteRepository repository = new MemoryWriteRepository();
-		packages.forEach(repository::addEPackage);
+		MemoryWriteRepository repository = WriteBackends.repository(packages);
 		InMemoryQueryService queryService = new InMemoryQueryService();
 		queryService.addRepository(repository);
 		return new Wiring(repository, queryService);

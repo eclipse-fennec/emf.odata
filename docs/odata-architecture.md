@@ -66,7 +66,8 @@ Conformance-Stand: **OData 4.0 und 4.01, Minimal bis Advanced, vollständig bean
 | `odata.query` | E4 | ANTLR4-Grammatik → OCL-IR, Resource-Path-Parser, `$apply`-Submodell, `OclTypeResolver` (ADR-0004), LRU-Cache; `ODataQueryParseException` erbt von der neutralen `OclEvaluationException` |
 | `odata.operation.api` | E4 | `ODataOperationHandler`-SPI (Functions/Actions) |
 | `odata.persistence.api` | E5 | `QueryService`/`ApplyQuery`/`WriteService`/`MediaService`/`DeltaService`-SPIs, `ChangeJournal`, `EntityRepository` |
-| `odata.persistence.inmemory` | E5 | Referenz-Backend, `ApplyExecutor`, `FileEntityRepository` (XMI-Dir), `MemoryWriteRepository` (Write+Media+Journal) |
+| `odata.persistence.inmemory` | E5 | Referenz-**Lese**-Backend: `InMemoryQueryService`, `ApplyExecutor`, `FileEntityRepository` (XMI-Dir, beim Activate in den Speicher geladen) |
+| `odata.persistence.inmemory.write` | E5 | Referenz-**Schreib**-Backend: `MemoryWriteRepository` (Write+Media+Journal). Eigenes Bundle (#149) |
 | `odata.persistence` | #13/#11 | Backend-neutrale Query+Write+Delta+$apply über die Fennec-Persistence-SPI (`CommandPersistenceService`: Reads via `OclToExpr`→`QueryableResource.query` mit Capability-Vorvalidierung, Writes via Insert/Update/DeleteCommand + ChangeSet-Templates, Change-Tracking via Service-Layer-`ChangeJournal` + `key IN`-Requery durch den Read-Path; Nichtübersetzbares → 501) — bedient JPA UND Mongo, Nachfolger des handgebauten `odata.persistence.jpa` (RETIRED 2026-08-05, Bundle entfernt) |
 | `odata.runtime` | E6/E7 | `ODataServlet` + `ODataRequestFilter`/`RequestLimits`/`EntityShaper`/`ODataJson` |
 | `odata.schema.api` | E8 | Client-Schema-Registry-SPI (Reader/Registrar/Resolver, ADR-0007) |

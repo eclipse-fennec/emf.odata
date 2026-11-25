@@ -3,6 +3,12 @@
 	":configurator:symbolicname": "org.eclipse.fennec.odata.example",
 	":configurator:version": "0.0.0",
 
+	// The in-memory WRITE store is opt-in twice over (#149): its bundle must be installed AND
+	// this configuration must exist. It is a demo/test backend — anything it accepts over HTTP
+	// is served straight back inside the entity sets, so a real deployment that must not be
+	// writable simply omits BOTH. No property is read; the PID only has to be present.
+	"org.eclipse.fennec.odata.repository.memory": {},
+
 	"org.eclipse.fennec.odata.servlet": {
 
 		// --- DoS / request limits (secure defaults shown explicitly) ---

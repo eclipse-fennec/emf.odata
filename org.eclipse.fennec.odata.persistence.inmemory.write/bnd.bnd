@@ -1,0 +1,24 @@
+Bundle-Name: Fennec OData In-Memory Write Backend
+Bundle-Description: Writable in-memory store (WriteService/MediaService/DeltaService + EntityRepository) — the reference backend for the WRITE path, and a demo/test store. Deliberately a bundle of its own: a deployment that must not be writable simply does not install it, instead of having to decline a component that ships beside the query engine it does need. Opt-in twice — install the bundle AND configure PID org.eclipse.fennec.odata.repository.memory.
+
+-library: enableEMF
+
+# Production needs only the SPI it implements and the evaluator it filters with — notably NOT
+# the query parser and NOT the read bundle: the store shares no code with the read side, which
+# is what makes it separable at all.
+-buildpath: \
+	org.osgi.service.condition;version=latest,\
+	org.eclipse.fennec.m2x.ocl.model;version=latest,\
+	org.eclipse.fennec.odata.ocl.evaluator;version=project,\
+	org.eclipse.fennec.odata.persistence.api;version=project,\
+	org.eclipse.fennec.emf.osgi.api;version=latest
+
+# Test-only: EntityKeys (persistence.api) resolves the identity through CompositeIds and needs
+# the helper on the classpath (at runtime the OSGi wiring of persistence.api provides it); the
+# delta tests parse real $filter expressions, which pulls the parser and its ANTLR runtime.
+-testpath: \
+	org.eclipse.fennec.persistence;version=latest,\
+	org.eclipse.fennec.odata.query;version=project,\
+	org.eclipse.fennec.odata.wire.api;version=project,\
+	org.antlr.antlr4-runtime;version=latest,\
+	org.eclipse.emf.ecore.xmi;version=latest

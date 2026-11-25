@@ -64,7 +64,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * The full E1–E7 slice over REAL HTTP: webshop EPackage → metadata whiteboard, XMI data files →
- * {@code FileEntityRepository} (via ConfigurationAdmin), in-memory QueryService, ODataServlet on
+ * {@code FileEntityRepository} (via ConfigurationAdmin), in-memory QueryService and — for the
+ * write paths — the opt-in in-memory write store (#149), ODataServlet on
  * the Jetty HTTP whiteboard. Happy paths plus the destructive contract from the outside:
  * injection-style filters, unknown resources, parser bombs, method restrictions — all must be
  * clean OData errors without internals.
@@ -85,6 +86,7 @@ public class ODataHttpIntegrationTest {
 	private EPackage pkg;
 	private ServiceRegistration<EPackage> packageRegistration;
 	private Configuration repositoryConfiguration;
+	private Configuration writeStoreConfiguration;
 	private Path dataDirectory;
 
 	@BeforeAll
@@ -105,6 +107,12 @@ public class ODataHttpIntegrationTest {
 		properties.put("directory", dataDirectory.toString());
 		repositoryConfiguration.update(properties);
 
+		// the write tests below need a WriteService, and the in-memory store is opt-in since
+		// #149 — its bundle plus a configuration for its PID. Nothing is read from it.
+		writeStoreConfiguration = configurationAdmin
+				.getConfiguration("org.eclipse.fennec.odata.repository.memory", "?");
+		writeStoreConfiguration.update(new Hashtable<>());
+
 		awaitReady();
 	}
 
@@ -112,6 +120,9 @@ public class ODataHttpIntegrationTest {
 	void tearDownStack() throws Exception {
 		if (repositoryConfiguration != null) {
 			repositoryConfiguration.delete();
+		}
+		if (writeStoreConfiguration != null) {
+			writeStoreConfiguration.delete();
 		}
 		if (packageRegistration != null) {
 			packageRegistration.unregister();

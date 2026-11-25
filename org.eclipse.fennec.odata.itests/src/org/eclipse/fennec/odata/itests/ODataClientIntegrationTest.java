@@ -74,6 +74,7 @@ public class ODataClientIntegrationTest {
 	private EPackage pkg;
 	private ServiceRegistration<EPackage> packageRegistration;
 	private Configuration repositoryConfiguration;
+	private Configuration writeStoreConfiguration;
 	private Path dataDirectory;
 
 	@BeforeAll
@@ -93,6 +94,12 @@ public class ODataClientIntegrationTest {
 		properties.put("directory", dataDirectory.toString());
 		repositoryConfiguration.update(properties);
 
+		// the client writes and follows a delta link, so this run needs the WriteService and
+		// DeltaService of the in-memory store — opt-in since #149 (bundle + this PID)
+		writeStoreConfiguration = configurationAdmin
+				.getConfiguration("org.eclipse.fennec.odata.repository.memory", "?");
+		writeStoreConfiguration.update(new Hashtable<>());
+
 		awaitReady();
 	}
 
@@ -100,6 +107,9 @@ public class ODataClientIntegrationTest {
 	void tearDownStack() throws Exception {
 		if (repositoryConfiguration != null) {
 			repositoryConfiguration.delete();
+		}
+		if (writeStoreConfiguration != null) {
+			writeStoreConfiguration.delete();
 		}
 		if (packageRegistration != null) {
 			packageRegistration.unregister();

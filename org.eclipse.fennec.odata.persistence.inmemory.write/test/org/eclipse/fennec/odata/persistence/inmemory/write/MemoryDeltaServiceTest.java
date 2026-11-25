@@ -10,7 +10,7 @@
  * Contributors:
  *   Data In Motion Consulting - initial implementation
  */
-package org.eclipse.fennec.odata.persistence.inmemory;
+package org.eclipse.fennec.odata.persistence.inmemory.write;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -55,7 +55,7 @@ class MemoryDeltaServiceTest {
 	void setUp() throws Exception {
 		ecoreHelper = new EcoreHelper();
 		pkg = ecoreHelper.loadEcore(findResource("testdata/webshop.ecore",
-				"org.eclipse.fennec.odata.persistence.inmemory/testdata/webshop.ecore"));
+				"org.eclipse.fennec.odata.persistence.inmemory.write/testdata/webshop.ecore"));
 		productClass = EcoreHelper.getEClass(pkg, "Product");
 		repository = new MemoryWriteRepository();
 		repository.addEPackage(pkg);
