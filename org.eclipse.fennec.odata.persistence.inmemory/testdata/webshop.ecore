@@ -17,6 +17,12 @@
         eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="released"
         eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EDate"/>
+    <!-- XSD-generated datatypes (#144): published as Edm.Date / Edm.Duration, so $filter and
+         $orderby must evaluate them by value, not by their lexical form -->
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="archivedOn"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2003/XMLType#//Date"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="shelfLife"
+        eType="ecore:EDataType http://www.eclipse.org/emf/2003/XMLType#//Duration"/>
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="color" eType="#//Color"/>
     <eStructuralFeatures xsi:type="ecore:EReference" name="accessories" upperBound="-1"
         eType="#//Product"/>

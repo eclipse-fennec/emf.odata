@@ -82,6 +82,58 @@ the key from the resolved profile (`ODataClassProfile.getKeyPropertyNames()`), a
 from the same declaration via `CompositeIds`. A type with no key at all is a **complex type**, not
 an entity type.
 
+## Primitive types
+
+`EdmTypes` maps the datatype of an attribute to the `Edm.*` primitive `$metadata` declares, and
+the JSON codec writes each value in the form of THAT type — so the declared type and the payload
+never disagree. Both the Ecore primitives and the XSD datatypes of `XMLTypePackage` are mapped;
+the latter matter because an Ecore **generated from an XSD** types nearly every feature with them.
+
+| Attribute datatype | `Edm.*` |
+|---|---|
+| `EString`, `EChar`; `xs:string` and its restrictions (`anyURI`, `token`, `NCName`, `ID`, …), `xs:QName`, the list types (`IDREFS`, `NMTOKENS`, …), `xs:gYear`/`gMonth`/`gDay`/`gMonthDay`/`gYearMonth` | `Edm.String` |
+| `EBoolean`, `xs:boolean` | `Edm.Boolean` |
+| `EByte` / `xs:byte` · `EShort` / `xs:short` · `EInt` / `xs:int`, `xs:unsignedShort` · `ELong` / `xs:long`, `xs:unsignedInt` | `Edm.SByte` · `Edm.Int16` · `Edm.Int32` · `Edm.Int64` |
+| `xs:unsignedByte` (0…255) | `Edm.Byte` |
+| `EBigDecimal`, `xs:decimal`; `EBigInteger`, `xs:integer` and its restrictions (`nonNegativeInteger`, `positiveInteger`, …), `xs:unsignedLong` | `Edm.Decimal` |
+| `EFloat` / `xs:float` · `EDouble` / `xs:double` | `Edm.Single` · `Edm.Double` |
+| `EByteArray`, `xs:base64Binary`, `xs:hexBinary` | `Edm.Binary` (base64url) |
+| `EDate`, `xs:dateTime` · `xs:date` · `xs:time` · `xs:duration` | `Edm.DateTimeOffset` · `Edm.Date` · `Edm.TimeOfDay` · `Edm.Duration` |
+
+Two rules behind the table: an attribute never gets an Edm type whose range its values could
+exceed — the unbounded integer families stay `Edm.Decimal`, which carries them exactly and still
+travels as a JSON **number**, so consumers compare numerically rather than lexicographically; and
+a datatype with no Edm counterpart stays `Edm.String` instead of being declared as something it
+cannot serialize. `@OData.Type` on the attribute overrides the mapping where a model knows better
+(e.g. a string attribute that holds `Edm.Guid`).
+
+The reverse direction — reading a foreign `$metadata` into Ecore — stays on the Ecore primitives:
+`Edm.Decimal` becomes `EBigDecimal`, never an XSD datatype.
+
+### Comparing primitive values
+
+A declared type is a promise about ordering too, so `$filter` and `$orderby` evaluate these values
+**by value, never by representation**:
+
+- The date and time types compare as **instants**. The same moment written in two offsets is one
+  value — `2024-05-03T12:15:30+02:00 eq 2024-05-03T10:15:30Z` is true. A date-only value ignores a
+  timezone it happens to carry, because `Edm.Date` has none and the payload shows the date alone.
+- The component functions (`year`, `month`, `day`, `hour`, `minute`, `second`, `date`, `time`)
+  read a value **in its own time zone**, as [OData-URL] 5.1.1.8.4 requires — so `hour()` of the
+  value above is 12, while the comparison above still treats it as 10:15 UTC.
+- A duration compares by its **length**: `duration'PT10H' gt duration'PT9H'` is true, although as
+  text `PT10H` sorts first. A duration in years or months has no fixed length (`P1M` is neither
+  longer nor shorter than `P30D`), so the service answers **400** instead of ranking it on a guess.
+  Such values can only come from `xs:duration` data; `Edm.Duration` itself is day-time only.
+  Equality is decidable even there — `P1M eq P1M` is true and `P1M eq P30D` is simply false — so
+  only `lt`/`gt`/`$orderby` refuse.
+- `$orderby` derives its sort key from the same semantics, so sorting and filtering cannot
+  disagree. An absent value ranks first ascending and last descending.
+
+One consequence worth knowing: an `Edm.Duration` forced onto a *string* attribute via
+`@OData.Type` still compares as a string, because its runtime value is one. Model a duration with
+`xs:duration` to get length comparison.
+
 ## Request lifecycle (`GET /odata/{Set}?…`)
 
 1. **`OData-Version` negotiation** — responds 4.01 unless the client pins `OData-MaxVersion: 4.0`; non-GET on read paths → 405.

@@ -227,6 +227,33 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
 - XMI unter `$select` ist eine PROJEKTION: unset ≠ Default nicht unterscheidbar, Pflicht-
   Features fehlen ggf. — ladbar, aber nicht Diagnostician-valide (Key überlebt immer).
 
+**Primitive Typen / XSD-Modelle (#144):**
+- `EdmTypes` bildet NEBEN den `EcorePackage`-Primitiven auch die XSD-Datentypen aus
+  `XMLTypePackage` ab — eine aus einem XSD generierte Ecore typisiert fast jedes Feature damit,
+  und der frühere `Edm.String`-Default hat für numerische, temporale und binäre Daten einen
+  String-Kontrakt veröffentlicht (`byteSize gt 1000` verglich lexikographisch: erfolgreich und
+  falsch). Die XSD-Einträge sind VORWÄRTS-ONLY; der kanonische Rückweg (fremdes `$metadata`
+  lesen) bleibt auf den Ecore-Primitiven.
+- Kein Attribut bekommt einen Edm-Typ, dessen Wertebereich es überschreiten könnte: die
+  BigInteger-Familien und `xs:unsignedLong` bleiben `Edm.Decimal` (als JSON-NUMBER serialisiert,
+  also weiterhin numerisch vergleichbar). Typen ohne Edm-Gegenstück (`gYear`, `gMonth`, …)
+  bleiben `Edm.String`, statt als etwas deklariert zu werden, das sie nicht serialisieren können.
+- GOTCHA: die Wertklassen der XSD-Zeittypen sind `XMLGregorianCalendar` bzw.
+  `javax.xml.datatype.Duration` — BEIDE implementieren `Comparable` NICHT. Ein deklarierter
+  `Edm.Date`/`Edm.Duration` ohne Behandlung im `OclEvaluator` heißt: `$metadata` verspricht eine
+  Ordnung, die der Service nicht auswerten kann (400 statt Ergebnis). Der Evaluator vergleicht
+  diese Werte deshalb über den INSTANT bzw. die LÄNGE in Sekunden, nie über die Repräsentation;
+  `ZonedDateTime.compareTo` taugt dafür nicht, weil es bei gleichem Moment auf Lokalzeit und
+  Zonen-Id zurückfällt (10:15Z ≠ 12:15+02:00).
+- `$orderby`-Sortierschlüssel kommen aus `OclEvaluator.orderingKey(…)` — dieselbe Semantik wie
+  die Relationaloperatoren. Eigene `asComparable`-Kopien in Backends driften sonst von `$filter`
+  ab (die In-Memory-Backends hatten zwei).
+- Eine Duration in Jahren/Monaten hat KEINE feste Länge (P1M ist weder länger noch kürzer als
+  P30D) und wird für `lt`/`gt`/`$orderby` abgelehnt statt geraten. GLEICHHEIT bleibt entscheidbar
+  (`P1M eq P1M` wahr, `P1M eq P30D` schlicht falsch = XSD-INDETERMINATE) — `eq`/`ne` dürfen nicht
+  verweigern, was nur die Ordnung muss. `Edm.Duration` ist day-time-only; solche Werte können nur
+  aus `xs:duration`-Daten stammen.
+
 **Servlet/Container:**
 - Der Container RECYCELT Request/Response, sobald der annehmende Thread zurückkehrt —
   Hintergrund-Worker (async) arbeiten auf einem Snapshot (`BatchHttpRequest.asyncSnapshot`),

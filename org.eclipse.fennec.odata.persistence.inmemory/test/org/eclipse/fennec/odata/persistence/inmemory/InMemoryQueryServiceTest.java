@@ -26,12 +26,15 @@ import java.util.Map;
 
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EDataType;
 import org.eclipse.emf.ecore.EEnum;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
+import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.emf.ecore.xml.type.XMLTypePackage;
 import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.fennec.emf.osgi.helper.EcoreHelper;
 import org.eclipse.fennec.m2x.model.ocl.OclFactory;
@@ -86,7 +89,13 @@ class InMemoryQueryServiceTest {
 		ecoreHelper.releaseAll();
 	}
 
-	/** Milk 1.20, Cheese 4.50 (rating 5, Green, reviews 5/4), Bread 2.80, Salt without price. */
+	/**
+	 * Milk 1.20, Cheese 4.50 (rating 5, Green, reviews 5/4), Bread 2.80, Salt without price.
+	 *
+	 * <p>The XSD-typed values are chosen so that their LEXICAL order differs from their value
+	 * order (#144): "PT9H" sorts above "PT10H" as text but is the shorter duration, and Salt is
+	 * left without either so the null placement stays covered.
+	 */
 	private void writeDataFile() throws Exception {
 		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
 		EClass reviewClass = EcoreHelper.getEClass(pkg, "Review");
@@ -97,15 +106,18 @@ class InMemoryQueryServiceTest {
 
 		EObject milk = create(productClass, "id", "p1", "name", "Milk", "price", new BigDecimal("1.20"),
 				"rating", 3, "active", true, "category", dairy,
-				"released", Date.from(Instant.parse("2024-05-03T10:15:30Z")));
+				"released", Date.from(Instant.parse("2024-05-03T10:15:30Z")),
+				"archivedOn", xsd("Date", "2024-05-03"), "shelfLife", xsd("Duration", "PT9H"));
 		EObject cheese = create(productClass, "id", "p2", "name", "Cheese", "price", new BigDecimal("4.50"),
 				"rating", 5, "active", true, "category", dairy,
-				"color", color.getEEnumLiteral("Green"));
+				"color", color.getEEnumLiteral("Green"),
+				"archivedOn", xsd("Date", "2023-11-20"), "shelfLife", xsd("Duration", "PT10H"));
 		cheese.eSet(productClass.getEStructuralFeature("reviews"), List.of(
 				create(reviewClass, "stars", 5, "comment", "great"),
 				create(reviewClass, "stars", 4, "comment", "good")));
 		EObject bread = create(productClass, "id", "p3", "name", "Bread", "price", new BigDecimal("2.80"),
-				"rating", 4, "active", false, "category", bakery);
+				"rating", 4, "active", false, "category", bakery,
+				"archivedOn", xsd("Date", "2024-01-09"), "shelfLife", xsd("Duration", "P1DT2H"));
 		EObject salt = create(productClass, "id", "p4", "name", "Salt"); // no price → null semantics
 
 		ResourceSet rs = new ResourceSetImpl();
@@ -114,6 +126,12 @@ class InMemoryQueryServiceTest {
 		Resource resource = rs.createResource(URI.createFileURI(dataDirectory.resolve("webshop-data.xmi").toString()));
 		resource.getContents().addAll(List.of(dairy, bakery, milk, cheese, bread, salt));
 		resource.save(null);
+	}
+
+	/** A value of an XSD datatype, built by the datatype's own factory (as EMF itself does). */
+	private static Object xsd(String datatype, String literal) {
+		return EcoreUtil.createFromString(
+				(EDataType) XMLTypePackage.eINSTANCE.getEClassifier(datatype), literal);
 	}
 
 	private EObject create(EClass type, Object... featureValuePairs) {
@@ -396,5 +414,29 @@ class InMemoryQueryServiceTest {
 			}
 		}
 		throw new IllegalStateException("test resource not found from " + start);
+	}
+
+	@Test
+	@DisplayName("the XSD-typed properties filter and sort by value, through the backend (#144)")
+	void xsdTypedPropertiesFilterAndSortByValue() {
+		// the value classes are XMLGregorianCalendar and javax.xml.datatype.Duration, neither of
+		// which is Comparable — $orderby used to answer 400 "key is not comparable"
+		// Salt has neither value; an absent key ranks first ascending (this service's choice —
+		// [OData-URL] 5.1.4 leaves the placement to the service) and last descending
+		assertEquals(List.of("Salt", "Milk", "Cheese", "Bread"),
+				names(query(null, "shelfLife asc", 0, -1, false)),
+				"PT9H < PT10H < P1DT2H by LENGTH; as text PT10H would come first");
+		assertEquals(List.of("Bread", "Cheese", "Milk", "Salt"),
+				names(query(null, "shelfLife desc", 0, -1, false)));
+		assertEquals(List.of("Salt", "Cheese", "Bread", "Milk"),
+				names(query(null, "archivedOn asc", 0, -1, false)));
+		assertEquals(List.of("Milk", "Bread", "Cheese", "Salt"),
+				names(query(null, "archivedOn desc", 0, -1, false)));
+
+		assertEquals(List.of("Milk"),
+				names(query("archivedOn ge 2024-05-03 and archivedOn lt 2024-05-04", null, 0, -1, false)));
+		assertEquals(List.of("Milk", "Cheese"),
+				names(query("shelfLife lt duration'P1D'", "shelfLife asc", 0, -1, false)),
+				"and $filter reads the same order $orderby does");
 	}
 }
