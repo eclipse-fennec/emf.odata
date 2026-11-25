@@ -50,7 +50,8 @@ import org.eclipse.fennec.odata.csdl.profile.ProfileFactory;
  * {@link EcoreToEdmConverter} builder then serializes the profile 1:1 to an EDM/EDMX instance —
  * it never touches Ecore.
  *
- * <p>Plain-Ecore defaults: {@code isID}→key, {@code lowerBound==0}→nullable,
+ * <p>Plain-Ecore defaults: {@code isID}→key, {@code lowerBound==0}→nullable (EXCEPT on a key
+ * property, which is never nullable — see {@code forceKeyPropertiesNonNullable}),
  * {@code isContainment}→ContainsTarget, an {@code eOpposite}→Partner, an EClass with a key→entity,
  * each {@link EOperation}→a <em>bound</em> Function/Action (void return→Action, else Function).
  * Annotation overrides on top: OpenType, HasStream, explicit Key, Computed/Immutable, Type override,
@@ -138,7 +139,34 @@ public class OdataResolver {
 		for (EOperation op : cl.getEOperations()) {
 			c.getOperations().add(operation(op, c.getQualifiedName(), ns));
 		}
+		forceKeyPropertiesNonNullable(c);
 		return c;
+	}
+
+	/**
+	 * [OData-CSDL], Key: <em>"Key properties MUST NOT be nullable"</em> — so the key
+	 * declaration wins over the {@code lowerBound == 0} rule that typed every other property.
+	 * (The section number differs between CSDL versions; the sentence does not.)
+	 *
+	 * <p>The bound is not a mistake in such a model: a type whose key is MINTED at the write
+	 * boundary has to keep {@code lowerBound="0"} in Ecore, or EMF validation would reject
+	 * exactly the bodies the service accepts on POST (#143). Only the published contract has to
+	 * say the key is always there — and it is, in every response and every key predicate.
+	 *
+	 * <p>Works off the resolved {@link ODataClassProfile#getKeyPropertyNames()}, so it covers all
+	 * three key forms ({@code isID}, {@code @OData.Key}, composite {@code idFeatures}) without
+	 * deriving the key a second time. Both $metadata representations follow: the XML writer takes
+	 * {@code Nullable} from here, and the JSON writer omits {@code $Nullable} (default false).
+	 */
+	private static void forceKeyPropertiesNonNullable(ODataClassProfile c) {
+		if (c.getKeyPropertyNames().isEmpty()) {
+			return; // a complex type has no key
+		}
+		for (ODataPropertyProfile p : c.getProperties()) {
+			if (c.getKeyPropertyNames().contains(p.getName())) {
+				p.setNullable(false);
+			}
+		}
 	}
 
 	private ODataPropertyProfile property(EAttribute a, String ns) {

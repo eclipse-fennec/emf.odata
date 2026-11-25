@@ -210,6 +210,17 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
   aufgelösten Profil (`ODataClassProfile.getKeyPropertyNames()`), Backends über
   `EntityKeys`/`CompositeIds` aus derselben Deklaration. Kein `isID`-Scan mehr im Stack —
   vorher waren es 15 uneinheitliche Ableitungen (#35).
+- Ein KEY-Property ist NIE nullable ([OData-CSDL]: „Key properties MUST NOT be nullable"), auch
+  wenn sein Ecore-`lowerBound` 0 ist: `OdataResolver.forceKeyPropertiesNonNullable` überschreibt
+  die `lowerBound==0`-Regel nach dem Auflösen der Key-Namen (#143). Der Bound ist in solchen
+  Modellen KEIN Fehler — wird der Key erst an der Write-Boundary gemünzt (DCAT: `rdf:about` beim
+  POST), erzwänge `lowerBound="1"` eine EMF-Validierung, die genau die Bodies ablehnt, die der
+  Service annimmt. Das Flag ist reine Metadaten-Information: `isNullable()` wird AUSSCHLIESSLICH
+  in `csdl/src` gelesen (beide `$metadata`-Writer + der Rückweg), nie im Request-Pfad — Forcieren
+  ändert also nichts daran, was der Service akzeptiert. Beide Repräsentationen sind damit erledigt:
+  der XML-Writer nimmt `Nullable` von dort, der JSON-Writer lässt `$Nullable` weg (Default false).
+  ACHTUNG Rückweg: `EdmToEcoreConverter.applyBounds` macht daraus wieder `lowerBound=1` — korrekt
+  als OData-Kontrakt, aber ein Client-seitiges Ecore akzeptiert den keylosen POST-Body dann nicht.
 - `ODataServlet.profiles` cacht Profile pro EPackage (WeakHashMap, keine Invalidierung).
   Ein Modell, das seinen Key zur Laufzeit ändert, wird aus dem alten Profil beantwortet —
   in Tests deshalb pro Test frisches Package, nicht mitten im Test mutieren.
