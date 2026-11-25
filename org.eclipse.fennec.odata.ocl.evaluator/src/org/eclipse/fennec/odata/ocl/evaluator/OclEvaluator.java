@@ -29,6 +29,12 @@ import java.util.Map;
 import java.math.RoundingMode;
 import java.math.BigInteger;
 import java.time.LocalTime;
+
+import javax.xml.datatype.DatatypeConstants;
+import javax.xml.datatype.DatatypeFactory;
+import javax.xml.datatype.Duration;
+import javax.xml.datatype.XMLGregorianCalendar;
+
 import org.eclipse.emf.common.util.Enumerator;
 import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EObject;
@@ -93,6 +99,43 @@ public class OclEvaluator {
 		} catch (RuntimeException e) {
 			throw asClientError(e);
 		}
+	}
+
+	/**
+	 * The ordering key of a value, for a backend that sorts $orderby in memory. It is the same
+	 * order the relational operators above define, so sorting and filtering cannot disagree:
+	 * numbers order numerically across Integer/BigDecimal/…, the XSD calendar types by their
+	 * INSTANT, a duration by its length in seconds, everything else by its natural order (#144).
+	 *
+	 * <p>{@code null} maps to {@code null} — where an absent value ranks is the caller's
+	 * decision ([OData-URL] 5.1.4 leaves it to the service). Keys of different kinds are left to
+	 * clash as a {@link ClassCastException} during the sort, which a caller reports as a client
+	 * error rather than guessing an order across them.
+	 *
+	 * @throws IllegalArgumentException if the value has no order at all (e.g. a duration in
+	 *         years or months, whose length depends on the calendar it is measured against)
+	 */
+	@SuppressWarnings("unchecked")
+	public static Comparable<Object> orderingKey(Object value) {
+		if (value == null) {
+			return null;
+		}
+		if (value instanceof Number number) { // uniform numeric ordering across Integer/BigDecimal/...
+			return (Comparable<Object>) (Comparable<?>) new BigDecimal(number.toString());
+		}
+		if (value instanceof XMLGregorianCalendar calendar) {
+			return (Comparable<Object>) (Comparable<?>) (isPartialCalendar(calendar)
+					? calendar.toXMLFormat()
+					: calendarDateTime(calendar).toInstant());
+		}
+		if (value instanceof Duration duration) {
+			return (Comparable<Object>) (Comparable<?>) durationSeconds(duration);
+		}
+		if (value instanceof Comparable<?> comparable) {
+			return (Comparable<Object>) comparable;
+		}
+		throw new IllegalArgumentException(
+				"the value is not comparable: " + value.getClass().getSimpleName());
 	}
 
 	/**
@@ -438,7 +481,14 @@ public class OclEvaluator {
 		if (right instanceof Enumerator) {
 			return equalTo(right, left);
 		}
-		if (left instanceof Date || right instanceof Date) {
+		if (left instanceof Duration || right instanceof Duration) {
+			// EQUALITY is decidable even where the ORDER is not: P1M equals P1M, and P1M vs P30D
+			// is merely not-equal (XSD INDETERMINATE) — eq/ne must not refuse what only lt/gt has to
+			return DatatypeConstants.EQUAL == duration(left).compare(duration(right));
+		}
+		if (isTemporal(left) || isTemporal(right)) {
+			// equality of a temporal value is equality of the instant — never of the
+			// representation, so a value and its literal agree
 			return comparison(left, right) == 0;
 		}
 		return left.equals(right);
@@ -452,8 +502,12 @@ public class OclEvaluator {
 		if (left instanceof Number && right instanceof Number) {
 			return decimal(left).compareTo(decimal(right));
 		}
-		if (left instanceof Date || right instanceof Date) {
-			return dateTime(left).compareTo(dateTime(right));
+		if (left instanceof Duration || right instanceof Duration) {
+			return durationSeconds(duration(left)).compareTo(durationSeconds(duration(right)));
+		}
+		if (left instanceof Date || right instanceof Date
+				|| left instanceof XMLGregorianCalendar || right instanceof XMLGregorianCalendar) {
+			return calendarComparison(left, right);
 		}
 		if (left instanceof String l && right instanceof String r) {
 			return l.compareTo(r);
@@ -525,6 +579,9 @@ public class OclEvaluator {
 		if (value instanceof Date date) {
 			return date.toInstant().atZone(ZoneOffset.UTC);
 		}
+		if (value instanceof XMLGregorianCalendar calendar) {
+			return calendarDateTime(calendar);
+		}
 		if (value instanceof String text) { // pre-typed Date/DateTimeOffset/TimeOfDay literals stay strings
 			// TimeOfDay ("13:20[:00[.f]]"): no date part, no zone designator — anchor it on the epoch
 			// date so hour/minute/second and time comparisons work (a length heuristic mis-parsed it)
@@ -538,6 +595,129 @@ public class OclEvaluator {
 			return OffsetDateTime.parse(text).toZonedDateTime();
 		}
 		throw new IllegalArgumentException("not a date value: " + value);
+	}
+
+	// === XSD temporal values (javax.xml.datatype) ============================================
+	// An Ecore generated from an XSD types its temporal features with XMLTypePackage, whose value
+	// classes are XMLGregorianCalendar and Duration (#144). EdmTypes publishes those as
+	// Edm.Date/DateTimeOffset/TimeOfDay/Duration, so a comparison against the matching literal
+	// has to work here — otherwise $metadata declares an order the service cannot evaluate.
+
+	/** Shared factory; the default instance is not swappable by a system property. */
+	private static final DatatypeFactory DURATIONS = DatatypeFactory.newDefaultInstance();
+
+	private static final BigDecimal SECONDS_PER_MINUTE = BigDecimal.valueOf(60);
+	private static final BigDecimal SECONDS_PER_HOUR = BigDecimal.valueOf(3600);
+	private static final BigDecimal SECONDS_PER_DAY = BigDecimal.valueOf(86400);
+
+	/** A value whose order is its instant or its length, not its representation. */
+	private static boolean isTemporal(Object value) {
+		return value instanceof Date || value instanceof XMLGregorianCalendar
+				|| value instanceof Duration;
+	}
+
+	/**
+	 * Compares the date/time types. The partial XSD calendars (gYear, gMonth, gDay, gMonthDay,
+	 * gYearMonth) denote no instant; they are published as Edm.String and their XSD lexical form
+	 * is zero-padded, so it already orders like the value.
+	 */
+	private static int calendarComparison(Object left, Object right) {
+		if (isPartialCalendar(left) || isPartialCalendar(right)) {
+			return lexicalForm(left).compareTo(lexicalForm(right));
+		}
+		// by INSTANT: ZonedDateTime.compareTo falls back to the local time and the zone id, which
+		// would rank 10:15Z below 12:15+02:00 although they are the same moment
+		return dateTime(left).toInstant().compareTo(dateTime(right).toInstant());
+	}
+
+	private static boolean isPartialCalendar(Object value) {
+		return value instanceof XMLGregorianCalendar calendar
+				&& !hasDate(calendar) && !hasTime(calendar);
+	}
+
+	private static String lexicalForm(Object value) {
+		return value instanceof XMLGregorianCalendar calendar ? calendar.toXMLFormat() : text(value);
+	}
+
+	/**
+	 * An XSD calendar value as an instant: an xs:date has no time (midnight), an xs:time no date
+	 * (anchored on the epoch, like the TimeOfDay literals), and a value without a timezone is read
+	 * as UTC — Edm.DateTimeOffset has no local form. A DATE-ONLY value ignores its timezone even
+	 * when it carries one, because Edm.Date has none and the JSON codec writes the date fields
+	 * alone: filter and payload must not disagree about the same value.
+	 */
+	private static ZonedDateTime calendarDateTime(XMLGregorianCalendar calendar) {
+		if (!hasDate(calendar) && !hasTime(calendar)) {
+			throw new IllegalArgumentException("not a date value: " + calendar.toXMLFormat());
+		}
+		LocalDate date = hasDate(calendar)
+				? LocalDate.of(calendar.getYear(), calendar.getMonth(), calendar.getDay())
+				: LocalDate.EPOCH;
+		LocalTime time = hasTime(calendar) ? localTime(calendar) : LocalTime.MIDNIGHT;
+		ZoneOffset zone = hasTime(calendar) ? zoneOf(calendar) : ZoneOffset.UTC;
+		return ZonedDateTime.of(date, time, zone);
+	}
+
+	private static boolean hasDate(XMLGregorianCalendar calendar) {
+		return calendar.getYear() != DatatypeConstants.FIELD_UNDEFINED
+				&& calendar.getMonth() != DatatypeConstants.FIELD_UNDEFINED
+				&& calendar.getDay() != DatatypeConstants.FIELD_UNDEFINED;
+	}
+
+	private static boolean hasTime(XMLGregorianCalendar calendar) {
+		return calendar.getHour() != DatatypeConstants.FIELD_UNDEFINED
+				&& calendar.getMinute() != DatatypeConstants.FIELD_UNDEFINED;
+	}
+
+	private static LocalTime localTime(XMLGregorianCalendar calendar) {
+		int second = calendar.getSecond() == DatatypeConstants.FIELD_UNDEFINED ? 0 : calendar.getSecond();
+		BigDecimal fraction = calendar.getFractionalSecond();
+		int nanos = fraction == null ? 0 : fraction.movePointRight(9).intValue();
+		return LocalTime.of(calendar.getHour(), calendar.getMinute(), second, nanos);
+	}
+
+	private static ZoneOffset zoneOf(XMLGregorianCalendar calendar) {
+		return calendar.getTimezone() == DatatypeConstants.FIELD_UNDEFINED
+				? ZoneOffset.UTC
+				: ZoneOffset.ofTotalSeconds(calendar.getTimezone() * 60);
+	}
+
+	/** A Duration value, or a {@code duration'…'} literal (which stays a string). */
+	private static Duration duration(Object value) {
+		if (value instanceof Duration duration) {
+			return duration;
+		}
+		if (value instanceof String text) {
+			try {
+				return DURATIONS.newDuration(text);
+			} catch (IllegalArgumentException | UnsupportedOperationException e) {
+				throw new IllegalArgumentException("not a duration value: " + text, e);
+			}
+		}
+		throw new IllegalArgumentException("not a duration value: " + value);
+	}
+
+	/**
+	 * The length of a duration in seconds. Years and months have NO fixed length — P1M is neither
+	 * longer nor shorter than P30D — so such a value is refused rather than ordered on a guess
+	 * about the calendar it is measured against. Edm.Duration is day-time only ([OData-ABNF]
+	 * {@code duration}); a year/month value can only come from xs:duration data.
+	 */
+	private static BigDecimal durationSeconds(Duration duration) {
+		if (duration.isSet(DatatypeConstants.YEARS) || duration.isSet(DatatypeConstants.MONTHS)) {
+			throw new IllegalArgumentException("a duration with years or months has no fixed length"
+					+ " and cannot be compared: " + duration.toString());
+		}
+		BigDecimal seconds = durationField(duration, DatatypeConstants.DAYS).multiply(SECONDS_PER_DAY)
+				.add(durationField(duration, DatatypeConstants.HOURS).multiply(SECONDS_PER_HOUR))
+				.add(durationField(duration, DatatypeConstants.MINUTES).multiply(SECONDS_PER_MINUTE))
+				.add(durationField(duration, DatatypeConstants.SECONDS));
+		return duration.getSign() < 0 ? seconds.negate() : seconds; // the fields are unsigned
+	}
+
+	private static BigDecimal durationField(Duration duration, DatatypeConstants.Field field) {
+		Number value = duration.getField(field);
+		return value == null ? BigDecimal.ZERO : new BigDecimal(value.toString());
 	}
 
 	private static Collection<?> asCollection(Object value) {

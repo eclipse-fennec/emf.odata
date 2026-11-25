@@ -258,19 +258,14 @@ public class ApplyExecutor {
 		return sorted;
 	}
 
-	@SuppressWarnings("unchecked")
+	/**
+	 * The sort key of an $orderby value. The ordering semantics belong to the evaluator,
+	 * which also defines the relational operators — deriving the key anywhere else lets
+	 * sorting and filtering drift apart (an XSD calendar or duration value orders by its
+	 * instant/length there, and is not {@link Comparable} at all here, #144).
+	 */
 	private static Comparable<Object> asComparable(Object value) {
-		if (value == null) {
-			return null;
-		}
-		if (value instanceof Number number) { // uniform numeric ordering across Integer/BigDecimal/...
-			return (Comparable<Object>) (Comparable<?>) new BigDecimal(number.toString());
-		}
-		if (value instanceof Comparable<?> comparable) {
-			return (Comparable<Object>) comparable;
-		}
-		throw new IllegalArgumentException(
-				"orderby key is not comparable: " + value.getClass().getSimpleName());
+		return OclEvaluator.orderingKey(value);
 	}
 
 	// --- aggregation ---

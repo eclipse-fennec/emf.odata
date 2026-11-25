@@ -26,7 +26,11 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.Map;
 
+import javax.xml.datatype.DatatypeConstants;
+import javax.xml.datatype.XMLGregorianCalendar;
+
 import org.eclipse.emf.ecore.EAttribute;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.fennec.codec.value.CodecReaderContext;
 import org.eclipse.fennec.codec.value.CodecValueReader;
 import org.eclipse.fennec.codec.value.CodecValueWriter;
@@ -36,18 +40,23 @@ import org.eclipse.fennec.codec.value.CodecWriterContext;
  * OData-JSON value formats for {@code Edm.*} primitive types that JSON does not carry natively
  * (req §3.7): {@code Edm.Date} (ISO date without time), {@code Edm.TimeOfDay}, {@code Edm.DateTimeOffset}
  * (ISO 8601 with offset), {@code Edm.Binary} (base64url). Writers accept the attribute's Java value
- * ({@code java.util.Date} from {@code EDate}, or {@code String} when the Edm type was forced onto a
- * string attribute via {@code @OData.Type}) and always emit the spec string form; readers convert
- * back to the attribute's instance class.
+ * ({@code java.util.Date} from {@code EDate}, {@code XMLGregorianCalendar} from the XSD datatypes of
+ * {@code XMLTypePackage}, or {@code String} when the Edm type was forced onto a string attribute via
+ * {@code @OData.Type}) and always emit the spec string form; readers convert back to the attribute's
+ * instance class.
  *
- * <p>{@code Edm.Guid} and {@code Edm.Duration} need no custom codec: they live on string
- * attributes (pass through). {@code Edm.Decimal} gets an explicit NUMBER writer — the base
+ * <p>{@code Edm.Guid} and {@code Edm.Duration} need no custom codec: their Java values (a string,
+ * or a {@code javax.xml.datatype.Duration} from {@code xs:duration}) already convert to the spec
+ * form through the datatype itself. {@code Edm.Decimal} gets an explicit NUMBER writer — the base
  * codec would render {@code BigDecimal} as a string, but [OData-JSON] 7.1 wants numbers by
  * default. The exception is {@code IEEE754Compatible=true} ([OData-JSON] 8.1), which
  * serializes {@code Edm.Int64} and {@code Edm.Decimal} as STRINGS so JavaScript clients do
  * not lose precision to IEEE 754 doubles.
  */
 final class EdmJsonValues {
+
+	/** {@code uuuu-MM-ddTHH:mm:ss±HH:MM} ("Z" at zero offset) — valid Edm.DateTimeOffset AND xs:dateTime. */
+	private static final DateTimeFormatter EDM_DATE_TIME = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ssXXX");
 
 	/** {@code IEEE754Compatible=true}: Int64/Decimal in their exact lexical string form. */
 	private static final CodecValueWriter<Object, EAttribute> IEEE754_WRITER =
@@ -114,6 +123,10 @@ final class EdmJsonValues {
 		if (value instanceof Date date) {
 			return LocalDate.ofInstant(date.toInstant(), ZoneOffset.UTC).toString();
 		}
+		if (value instanceof XMLGregorianCalendar calendar) {
+			// an xs:date MAY carry a timezone, an Edm.Date never does — take the date fields
+			return hasDate(calendar) ? localDate(calendar).toString() : calendar.toXMLFormat();
+		}
 		return String.valueOf(value); // @OData.Type on a string attribute → already spec form
 	}
 
@@ -121,12 +134,21 @@ final class EdmJsonValues {
 		if (value instanceof Date date) {
 			return LocalTime.ofInstant(date.toInstant(), ZoneOffset.UTC).toString();
 		}
+		if (value instanceof XMLGregorianCalendar calendar) {
+			return hasTime(calendar) ? localTime(calendar).toString() : calendar.toXMLFormat();
+		}
 		return String.valueOf(value);
 	}
 
 	private static String writeDateTimeOffset(Object value) {
 		if (value instanceof Date date) {
 			return DateTimeFormatter.ISO_INSTANT.format(date.toInstant());
+		}
+		if (value instanceof XMLGregorianCalendar calendar) {
+			return hasDate(calendar) && hasTime(calendar)
+					? edmDateTime(OffsetDateTime.of(localDate(calendar), localTime(calendar),
+							offset(calendar)))
+					: calendar.toXMLFormat();
 		}
 		return String.valueOf(value);
 	}
@@ -148,6 +170,13 @@ final class EdmJsonValues {
 				throw new IllegalArgumentException("invalid Edm.Date value", e);
 			}
 		}
+		if (targetsCalendar(attribute)) {
+			try {
+				return calendar(attribute, LocalDate.parse(raw).toString());
+			} catch (DateTimeException e) {
+				throw new IllegalArgumentException("invalid Edm.Date value", e);
+			}
+		}
 		return raw;
 	}
 
@@ -159,6 +188,13 @@ final class EdmJsonValues {
 				throw new IllegalArgumentException("invalid Edm.TimeOfDay value", e);
 			}
 		}
+		if (targetsCalendar(attribute)) {
+			try {
+				return calendar(attribute, xsdTime(LocalTime.parse(raw)));
+			} catch (DateTimeException e) {
+				throw new IllegalArgumentException("invalid Edm.TimeOfDay value", e);
+			}
+		}
 		return raw;
 	}
 
@@ -166,6 +202,13 @@ final class EdmJsonValues {
 		if (targetsDate(attribute)) {
 			try {
 				return Date.from(OffsetDateTime.parse(raw).toInstant());
+			} catch (DateTimeException e) {
+				throw new IllegalArgumentException("invalid Edm.DateTimeOffset value", e);
+			}
+		}
+		if (targetsCalendar(attribute)) {
+			try {
+				return calendar(attribute, edmDateTime(OffsetDateTime.parse(raw)));
 			} catch (DateTimeException e) {
 				throw new IllegalArgumentException("invalid Edm.DateTimeOffset value", e);
 			}
@@ -189,6 +232,67 @@ final class EdmJsonValues {
 		Class<?> instanceClass = attribute.getEAttributeType().getInstanceClass();
 		return instanceClass != null && (Date.class.isAssignableFrom(instanceClass)
 				|| Instant.class.isAssignableFrom(instanceClass));
+	}
+
+	// --- XSD calendar values (XMLTypePackage: date, dateTime, time) ---
+
+	/** An attribute typed by an XSD date/time datatype — its value is an XMLGregorianCalendar. */
+	private static boolean targetsCalendar(EAttribute attribute) {
+		Class<?> instanceClass = attribute.getEAttributeType().getInstanceClass();
+		return instanceClass != null && XMLGregorianCalendar.class.isAssignableFrom(instanceClass);
+	}
+
+	/**
+	 * The XSD lexical form parsed by the DATATYPE'S OWN factory, so the value is the
+	 * XMLGregorianCalendar implementation EMF itself creates (XMI serialization and
+	 * {@code convertToString} expect it, a foreign implementation can break them).
+	 */
+	private static Object calendar(EAttribute attribute, String lexical) {
+		return EcoreUtil.createFromString(attribute.getEAttributeType(), lexical);
+	}
+
+	private static boolean hasDate(XMLGregorianCalendar calendar) {
+		return calendar.getYear() != DatatypeConstants.FIELD_UNDEFINED
+				&& calendar.getMonth() != DatatypeConstants.FIELD_UNDEFINED
+				&& calendar.getDay() != DatatypeConstants.FIELD_UNDEFINED;
+	}
+
+	private static boolean hasTime(XMLGregorianCalendar calendar) {
+		return calendar.getHour() != DatatypeConstants.FIELD_UNDEFINED
+				&& calendar.getMinute() != DatatypeConstants.FIELD_UNDEFINED;
+	}
+
+	private static LocalDate localDate(XMLGregorianCalendar calendar) {
+		return LocalDate.of(calendar.getYear(), calendar.getMonth(), calendar.getDay());
+	}
+
+	private static LocalTime localTime(XMLGregorianCalendar calendar) {
+		int second = calendar.getSecond() == DatatypeConstants.FIELD_UNDEFINED ? 0 : calendar.getSecond();
+		BigDecimal fraction = calendar.getFractionalSecond();
+		int nanos = fraction == null ? 0 : fraction.movePointRight(9).intValue();
+		return LocalTime.of(calendar.getHour(), calendar.getMinute(), second, nanos);
+	}
+
+	/** A timezone-less xs:dateTime is read as UTC — Edm.DateTimeOffset has no "local" form. */
+	private static ZoneOffset offset(XMLGregorianCalendar calendar) {
+		return calendar.getTimezone() == DatatypeConstants.FIELD_UNDEFINED
+				? ZoneOffset.UTC
+				: ZoneOffset.ofTotalSeconds(calendar.getTimezone() * 60);
+	}
+
+	/**
+	 * Edm.DateTimeOffset with the seconds field always present: OData allows omitting it, XSD
+	 * does not, and this form is both — so it round-trips through the XSD datatype unchanged.
+	 */
+	private static String edmDateTime(OffsetDateTime value) {
+		return value.getNano() == 0 ? value.format(EDM_DATE_TIME) : value.toString();
+	}
+
+	/** Edm.TimeOfDay in the xs:time lexical form (seconds are mandatory there). */
+	private static String xsdTime(LocalTime value) {
+		return value.getNano() == 0
+				? String.format("%02d:%02d:%02d", value.getHour(), value.getMinute(), value.getSecond())
+				: value.toString(); // a fractional part already forces the seconds field
 	}
 
 	// --- adapter plumbing ---
