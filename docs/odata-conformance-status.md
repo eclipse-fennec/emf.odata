@@ -228,6 +228,12 @@ Non-Containment-Writes, CSDL-JSON-`$metadata` (Q9), asynchrone Requests.**
 6. ~~`@odata.type`/`@odata.id` in falscher Form~~ ✅ behoben 2026-07-04: minimal-metadata-Semantik lässt berechenbare Control-Info weg; `#Ns.Type` wird erst mit abgeleiteten Typen (Vererbung) nötig.
 7. ~~Capabilities-Annotations im `$metadata`~~ ✅ 2026-07-06; CSDL-JSON (Q9) bleibt offen (SHOULD).
 8. ~~Parameter-Aliase, `divby`, `Prefer: maxpagesize`~~ ✅ 2026-07-06.
+9. ~~Key-Properties als `Nullable="true"` veröffentlicht~~ ✅ 2026-11-25 (#143): ein Modell mit
+   optionalem ID-Attribut (Key wird an der Write-Boundary gemünzt) erzeugte ein nicht-konformes
+   `$metadata` — „Key properties MUST NOT be nullable". Vom vendorten `edm.xsd` NICHT gefangen
+   (`Nullable` ist dort ein freies optionales Boolean), also auch nicht vom OASIS-XSL-Check; nur
+   ein semantischer Validator oder ein strikter Client merkt es. Behoben im `OdataResolver`, damit
+   für beide Repräsentationen und alle drei Key-Formen.
 
 ## Einordnung Q10 (Ziel-Level)
 

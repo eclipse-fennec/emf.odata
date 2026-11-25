@@ -82,6 +82,23 @@ the key from the resolved profile (`ODataClassProfile.getKeyPropertyNames()`), a
 from the same declaration via `CompositeIds`. A type with no key at all is a **complex type**, not
 an entity type.
 
+### A key is never nullable
+
+OData requires that a key property **MUST NOT be nullable**, so a key is published as
+`Nullable="false"` (`$metadata` XML) with no `$Nullable` flag (CSDL JSON) **whatever the Ecore
+`lowerBound` says** — the key declaration wins over the `lowerBound == 0` rule that types every
+other property.
+
+That matters for a model whose key is **minted at the write boundary**: a service that accepts a
+`POST` without the key and assigns one before saving has to keep `lowerBound="0"` in Ecore, or EMF
+validation would reject exactly the bodies the service accepts. Only the published contract has to
+state that the key is always present — and it is, in every response and every key predicate.
+
+The flag is metadata only: nothing in the request path consults it, so this never changes which
+requests the service accepts. One consequence worth knowing: a client that reads this `$metadata`
+back into Ecore (`EdmToEcoreConverter`) gets the key at `lowerBound="1"`, which is the right OData
+contract but means a client-side model will not accept the keyless body your server does.
+
 ## Primitive types
 
 `EdmTypes` maps the datatype of an attribute to the `Edm.*` primitive `$metadata` declares, and
