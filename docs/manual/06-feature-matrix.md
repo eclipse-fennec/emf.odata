@@ -63,7 +63,8 @@ Spec documents (OASIS OData **v4.01**):
 | Key-as-segment (`Set/key`, also for writes and bound functions) | MAY | ✅ (client opt-in `keyAsSegment()`) | URL Conv. §4.3.1 |
 | Key aliases `Set(@k)` (value from a query parameter) | 4.01 | ✅ | URL Conv. §4.3.1 |
 | Inline `/$filter(…)` path segment | 4.01 | ✅ (in-memory; keyed → 501) | URL Conv. §4.13 |
-| `$crossjoin` / `$all` / `$entity` | MAY | ◑ parse → 501 (no engine) | URL Conv. §4.10/4.14/4.15 |
+| `$entity?$id=` (address an entity by its id, cast form included) | MAY | ✅ | URL Conv. §4.3.4; Protocol §11.2.9 |
+| `$crossjoin` / `$all` | MAY | ◑ parse → 501 (no engine) | URL Conv. §4.15/4.16 |
 
 ## `$filter` / expression surface
 

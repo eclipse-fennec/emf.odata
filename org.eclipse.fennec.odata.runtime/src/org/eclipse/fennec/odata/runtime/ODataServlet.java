@@ -631,7 +631,11 @@ public class ODataServlet extends HttpServlet {
 			if (SUPPORTED_OPTIONS.contains(normalized)) {
 				continue;
 			}
-			if (KNOWN_UNSUPPORTED_OPTIONS.contains(normalized)) { // known but unsupported → 501
+			// $id is the ADDRESS of a $entity request (#151), not an option it does not support
+			if ("$id".equals(normalized) && addressesEntityById(request)) {
+				continue;
+			}
+			if (KNOWN_UNSUPPORTED_OPTIONS.contains(normalized)) {
 				error(response, 501, "system query option '" + ODataJson.sanitize(name)
 						+ "' is not implemented");
 				return;
@@ -1641,9 +1645,12 @@ public class ODataServlet extends HttpServlet {
 	/** Dispatches a parsed resource path: set, set/$count, keyed entity, navigation walk. */
 	private void resource(String rawPath, HttpServletRequest request, HttpServletResponse response)
 			throws IOException {
-		if (rawPath.startsWith("$crossjoin") || rawPath.startsWith("$all")
-				|| rawPath.startsWith("$entity")) {
-			// $crossjoin/$all/$entity ([OData-URL] 4.10/4.14/4.15) parse but have no engine yet
+		if (rawPath.startsWith("$entity")) {
+			entityById(rawPath, request, response); // $entity?$id= ([OData-URL] 4.3.4)
+			return;
+		}
+		if (rawPath.startsWith("$crossjoin") || rawPath.startsWith("$all")) {
+			// $crossjoin/$all ([OData-URL] 4.15/4.16) parse but have no engine yet
 			error(response, 501, "this URL form is not implemented");
 			return;
 		}
@@ -1674,7 +1681,7 @@ public class ODataServlet extends HttpServlet {
 			return;
 		}
 		if (path.entitySet().startsWith("$")) {
-			// $crossjoin/$all/$entity parse ([OData-URL] 4.10/4.14/4.15) but have no engine yet
+			// $crossjoin/$all ([OData-URL] 4.15/4.16) parse but have no engine yet
 			error(response, 501, "'" + ODataJson.sanitize(path.entitySet()) + "' is not implemented");
 			return;
 		}
@@ -1706,6 +1713,124 @@ public class ODataServlet extends HttpServlet {
 			}
 			return;
 		}
+		keyedResource(path, request, response);
+	}
+
+	/**
+	 * {@code GET /$entity?$id=<entity-id>} ([OData-URL] 4.3.4, [OData-Protocol] 11.2.9): the
+	 * entity the id addresses, answered exactly like {@code Set(key)} — same body, ETag, context
+	 * URL and 404. The id travels in the QUERY STRING, where {@code /} and {@code :} are legal
+	 * and no URI-compliance check of the container applies; the keyed form cannot carry a key
+	 * that contains a {@code /} at all, because a percent-encoded separator is rejected before
+	 * the servlet is reached (#151).
+	 *
+	 * <p>The ABNF admits {@code $select}/{@code $expand} only with a type cast
+	 * ({@code $entity/Ns.Type?$id=}); without one the request takes {@code $id} and
+	 * {@code $format} alone. {@code $id} itself is mandatory.
+	 */
+	private void entityById(String rawPath, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
+		ResourcePath form;
+		try {
+			form = resourceParser.parse(rawPath);
+		} catch (ODataQueryParseException e) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "malformed $entity request");
+			return;
+		}
+		ResourcePath.TypeCastSegment cast = form.segments().size() == 1
+				&& form.segments().get(0) instanceof ResourcePath.TypeCastSegment typed ? typed : null;
+		if (cast == null && !form.segments().isEmpty()) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"$entity takes at most a type cast");
+			return;
+		}
+		Set<String> allowed = cast == null ? ENTITY_OPTIONS : ENTITY_CAST_OPTIONS;
+		for (String name : request.getParameterMap().keySet()) {
+			String normalized = normalizeOption(name);
+			if (name.startsWith("$") && !allowed.contains(normalized)) {
+				error(response, HttpServletResponse.SC_BAD_REQUEST, "'"
+						+ ODataJson.sanitize(name) + "' is not allowed on $entity"
+						+ (cast == null ? " without a type cast" : ""));
+				return;
+			}
+		}
+		String id = option(request, "$id");
+		if (id == null || id.isBlank()) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST, "$entity requires $id");
+			return;
+		}
+		EClass castType = cast == null ? null : resolveCastType(cast.qualifiedName(), null);
+		if (cast != null && castType == null) {
+			error(response, HttpServletResponse.SC_NOT_FOUND, "unknown type '"
+					+ ODataJson.sanitize(cast.qualifiedName()) + "'");
+			return;
+		}
+		ResourcePath addressed = entityIdPath(id, castType, request);
+		if (addressed == null) {
+			error(response, HttpServletResponse.SC_BAD_REQUEST,
+					"$id does not address an entity of this service");
+			return;
+		}
+		if (cast != null) { // the cast travels on: the walk answers 404 for a foreign instance
+			addressed = new ResourcePath(addressed.entitySet(), addressed.key(),
+					addressed.namedKeys(), List.of(cast));
+		}
+		keyedResource(addressed, request, response);
+	}
+
+	/** Whether this request addresses an entity by its id ({@code /$entity[/Ns.Type]?$id=}). */
+	private static boolean addressesEntityById(HttpServletRequest request) {
+		String path = request.getPathInfo();
+		return path != null && (path.equals("/$entity") || path.startsWith("/$entity/"));
+	}
+
+	/** {@code $entity} without a cast: the ABNF allows the id, the format and custom options. */
+	private static final Set<String> ENTITY_OPTIONS = Set.of("$id", "$format");
+	/** {@code $entity/Ns.Type}: a cast re-types the request, so a shape may be asked for. */
+	private static final Set<String> ENTITY_CAST_OPTIONS =
+			Set.of("$id", "$format", "$select", "$expand");
+
+	/**
+	 * The resource this service addresses with an entity-id ([OData-Protocol] 4.1), or null when
+	 * the id addresses no entity of it. The id is a canonical URL — absolute, root-relative or
+	 * relative to the service root, key-as-segment included — resolved by the one path #152
+	 * built. Under {@code odata.entity.id=key} the id is the model's own IRI instead, which
+	 * names no set: that form resolves only with a type cast to say which set it belongs to.
+	 */
+	ResourcePath entityIdPath(String id, EClass castType, HttpServletRequest request) {
+		String relative = serviceRelative(id.trim(), request);
+		if (relative != null) {
+			try {
+				ResourcePath path = keyAsSegment(resourceParser.parse(relative));
+				if (path.key() != null && path.segments().isEmpty()
+						&& resolveEntityType(path.entitySet()) != null) {
+					return path;
+				}
+			} catch (ODataQueryParseException e) {
+				// not a resource path of this service — an IRI id may still resolve below
+			}
+		}
+		if (!keyValueEntityIds || castType == null || !isAbsoluteIri(id.trim())) {
+			return null;
+		}
+		List<EAttribute> keys = keyAttributes(castType);
+		if (keys.size() != 1 || keys.get(0).getEAttributeType() == null
+				|| !String.class.equals(keys.get(0).getEAttributeType().getInstanceClass())) {
+			return null;
+		}
+		String set = model.setNameOf(castType);
+		return resolveEntityType(set) == null ? null
+				: new ResourcePath(set, "'" + id.trim().replace("'", "''") + "'", List.of());
+	}
+
+	/**
+	 * A resolved keyed resource: {@code Set(key)} and everything that hangs off it (navigation,
+	 * property, {@code $value}, {@code $ref}, a cast). The entry point for the classic path AND
+	 * for {@code $entity?$id=} (#151), which is by definition the same request — resolving the
+	 * id is all that separates them, so both arrive here with a {@link ResourcePath}.
+	 */
+	private void keyedResource(ResourcePath path, HttpServletRequest request,
+			HttpServletResponse response) throws IOException {
 		if (option(request, "$deltatoken") != null) {
 			// a delta link addresses an entity SET — a keyed resource cannot carry a token
 			error(response, HttpServletResponse.SC_BAD_REQUEST,

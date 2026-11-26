@@ -20,6 +20,13 @@ Inserts (Containments) ✅ · 33 MAY offen. 4.01-Zusatz-MUST 13.2.1/19 (DELETE
 Collection-Member-Ref per Key im URL) ✅. Offen (SHOULDs/MAYs): PUT mit nested content,
 Deep Updates, `@odata.bind`, PATCH-Delta auf Sets.
 
+**Nachtrag 2026-11-26 (#151, `$entity?$id=`):** `GET /$entity?$id=` ist implementiert
+([OData-URL] 4.3.4, [OData-Protocol] 11.2.9) — dieselbe Antwort wie `Set(key)`, inklusive
+Cast-Form. Es ist ein MAY, aber der einzige Weg zu einer Entity, deren Key ein `/` enthält:
+die keyed URL scheitert vorher am Container (Jetty `UriCompliance.DEFAULT`). `$crossjoin`
+und `$all` bleiben 501. Die Spec-Verweise für das Tripel waren an fünf Stellen falsch
+(4.10/4.14/4.15); richtig sind `$entity` 4.3.4, `$crossjoin` 4.15, `$all` 4.16.
+
 **Nachtrag 2026-11-26 (#152/#153, Entity-Ids und Key-Encoding):** Emittierte Key-Literale
 sind jetzt percent-kodiert — ein Key mit `/`, `:`, `#`, `%` oder Leerzeichen ergab vorher eine
 URL, die kein Client dereferenzieren kann ([OData-URL] 4.3.4; Item 18/27/28 war damit für
