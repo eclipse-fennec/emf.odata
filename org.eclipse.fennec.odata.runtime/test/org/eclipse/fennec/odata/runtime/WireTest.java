@@ -13,11 +13,13 @@
 package org.eclipse.fennec.odata.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.Map;
 
+import org.eclipse.fennec.odata.query.WireView;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -77,5 +79,49 @@ class WireTest {
 				Wire.baseUrl(request("https", "h.example", 443, Map.of()), null, false));
 		assertEquals("http://[::1]:8181/sta/v1.1",
 				Wire.baseUrl(request("http", "::1", 8181, Map.of()), null, false));
+	}
+
+	@Test
+	@DisplayName("#152: a reference target is cut at the SERVICE ROOT, never at its last '/'")
+	void serviceRelative() {
+		HttpServletRequest request = request("http", "internal", 8080, Map.of());
+		// the root is published behind a gateway prefix, so the configured base URL and the
+		// request's own context root differ — a target may be spelled either way
+		Wire.CURRENT.set(Wire.of(ODataWireProfile.INSTANCE, "https://cfg.example/gateway/sta/v1.1",
+				WireView.NONE));
+		try {
+			assertEquals("Things('t1')", ODataServlet.serviceRelative(
+					"https://cfg.example/gateway/sta/v1.1/Things('t1')", request));
+			assertEquals("Things('t1')", ODataServlet.serviceRelative(
+					"http://internal:8080/sta/v1.1/Things('t1')", request), "the request's own root");
+			assertEquals("Things('t1')", ODataServlet.serviceRelative("/sta/v1.1/Things('t1')", request),
+					"a root-relative target");
+			assertEquals("Things('t1')", ODataServlet.serviceRelative("Things('t1')", request),
+					"a target already relative to the service root is untouched");
+			assertEquals("Things('http://ex.org/a/b')", ODataServlet.serviceRelative(
+					"https://cfg.example/gateway/sta/v1.1/Things('http://ex.org/a/b')", request),
+					"a key may contain slashes — only the ROOT is stripped");
+			assertEquals("Things/t1", ODataServlet.serviceRelative(
+					"http://internal:8080/sta/v1.1/Things/t1", request),
+					"key-as-segment survives to the parser, which folds it");
+			assertNull(ODataServlet.serviceRelative("https://other.example/odata/Things('t1')", request),
+					"a target below some OTHER root is not a resource of this service");
+			assertNull(ODataServlet.serviceRelative("https://cfg.example/gateway/sta/v1.1", request),
+					"the service root itself addresses no entity");
+		} finally {
+			Wire.CURRENT.remove();
+		}
+	}
+
+	@Test
+	@DisplayName("#152: percent-decoding a payload target is lenient (it is a path, not a form)")
+	void percentDecode() {
+		assertEquals("http://ex.org/a/b", ODataServlet.percentDecode("http%3A%2F%2Fex.org%2Fa%2Fb"));
+		assertEquals("ä", ODataServlet.percentDecode("%C3%A4"));
+		assertEquals("50%off", ODataServlet.percentDecode("50%off"),
+				"a '%' that is not an escape stays — the service's own @odata.id is unencoded");
+		assertEquals("a+b", ODataServlet.percentDecode("a+b"), "'+' is a plus, not a space");
+		assertEquals("done%", ODataServlet.percentDecode("done%"));
+		assertEquals("'c1'", ODataServlet.percentDecode("'c1'"));
 	}
 }

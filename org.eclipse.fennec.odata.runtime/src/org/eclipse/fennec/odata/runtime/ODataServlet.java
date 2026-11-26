@@ -3025,6 +3025,83 @@ public class ODataServlet extends HttpServlet {
 		return uri.replaceFirst("/[^/]*$", "");
 	}
 
+	private static final Pattern ABSOLUTE_URL = Pattern.compile("^[A-Za-z][A-Za-z0-9+.\\-]*://[^/?#]*");
+
+	/**
+	 * The service-root-relative resource path of a reference target ({@code @odata.id},
+	 * {@code @odata.bind}, {@code $id}) — null when the URL addresses no resource of this
+	 * service (#152). Splitting such a URL on its last {@code /} would be wrong: a key may
+	 * contain one (with an IRI key that is the normal case, not an edge), so the SERVICE ROOT
+	 * is stripped instead — the configured base URL, else the scheme and authority followed by
+	 * the base URL's path or this request's context root. The host is deliberately not
+	 * compared: a proxy, a scheme change or a second name of the same root all address this
+	 * service. A target that is already relative ({@code Category('c9')}) is returned as it
+	 * came.
+	 */
+	static String serviceRelative(String url, HttpServletRequest request) {
+		String rest = url.trim();
+		String base = Wire.current().baseUrl();
+		if (base != null && rest.startsWith(base + "/")) {
+			return rest.substring(base.length() + 1);
+		}
+		Matcher absolute = ABSOLUTE_URL.matcher(rest);
+		if (absolute.find()) {
+			rest = rest.substring(absolute.end());
+		} else if (!rest.startsWith("/")) {
+			return rest; // already relative to the service root
+		}
+		if (!rest.startsWith("/")) {
+			return null; // the service root itself — no resource path
+		}
+		String[] roots = { base == null ? null : urlPath(base), contextRoot(request) };
+		for (String root : roots) {
+			if (root != null && rest.startsWith(root + "/")) {
+				return rest.substring(root.length() + 1);
+			}
+		}
+		return null; // an absolute path below some OTHER root
+	}
+
+	/** The path of an absolute URL (scheme and authority dropped), for prefix comparison. */
+	private static String urlPath(String url) {
+		Matcher absolute = ABSOLUTE_URL.matcher(url);
+		return absolute.find() ? url.substring(absolute.end()) : url;
+	}
+
+	/**
+	 * Percent-decodes one layer of a URL component. Lenient by design: a {@code %} not followed
+	 * by two hex digits stays as it is (so the unencoded {@code @odata.id} this service itself
+	 * writes survives the decode), and {@code +} is a literal plus — this decodes a PATH
+	 * component, not a form field. Only payload-borne targets need it: the container decodes
+	 * the request path and the query string, nothing decodes a body (#152).
+	 */
+	static String percentDecode(String value) {
+		if (value.indexOf('%') < 0) {
+			return value;
+		}
+		ByteArrayOutputStream out = new ByteArrayOutputStream(value.length());
+		int i = 0;
+		while (i < value.length()) {
+			int escape = value.indexOf('%', i);
+			if (escape < 0) {
+				out.writeBytes(value.substring(i).getBytes(StandardCharsets.UTF_8));
+				break;
+			}
+			out.writeBytes(value.substring(i, escape).getBytes(StandardCharsets.UTF_8));
+			int high = escape + 2 < value.length() ? Character.digit(value.charAt(escape + 1), 16) : -1;
+			int low = escape + 2 < value.length() ? Character.digit(value.charAt(escape + 2), 16) : -1;
+			if (high < 0 || low < 0) {
+				out.write('%'); // not an escape — keep the character
+				i = escape + 1;
+			} else {
+				out.write(high << 4 | low);
+				i = escape + 3;
+			}
+		}
+		return out.toString(StandardCharsets.UTF_8);
+	}
+
+
 
 
 	void error(HttpServletResponse response, int status, String message) throws IOException {

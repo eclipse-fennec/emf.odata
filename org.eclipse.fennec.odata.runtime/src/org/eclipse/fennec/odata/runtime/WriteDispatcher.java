@@ -358,7 +358,7 @@ private void referenceWrite(ResourcePath path, EClass entityType, EReference ref
 				return;
 			}
 			String targetKey = refTargetKey(referenceUrlFromBody(request, response),
-					reference.getEReferenceType(), response);
+					reference.getEReferenceType(), request, response, true);
 			if (targetKey == null) {
 				return; // error already written
 			}
@@ -374,7 +374,7 @@ private void referenceWrite(ResourcePath path, EClass entityType, EReference ref
 							"removing a collection reference requires $id");
 					return;
 				}
-				targetKey = refTargetKey(id, reference.getEReferenceType(), response);
+				targetKey = refTargetKey(id, reference.getEReferenceType(), request, response, false);
 				if (targetKey == null) {
 					return; // error already written
 				}
@@ -538,16 +538,29 @@ private JsonNode readValueDocument(HttpServletRequest request,
  * Extracts the raw key of a reference-target URL ({@code @odata.id} / {@code $id}) and
  * validates that the addressed set matches the navigation's target type. Writes the error
  * response and returns null when the URL does not identify a matching entity.
+ *
+ * <p>The target is made relative to the service root ({@link ODataServlet#serviceRelative})
+ * and then routed like any other resource path, key-as-segment included — splitting it on
+ * its last {@code /} would cut a key that contains one in half (#152).
+ *
+ * @param encoded whether the URL still carries its percent-encoding: a payload does (nothing
+ *                decodes a body), a {@code $id} query option does not — the container and
+ *                {@link BatchHttpRequest} both decode a query string before it is read
  */
-private String refTargetKey(String url, EClass targetType, HttpServletResponse response)
-		throws IOException {
+private String refTargetKey(String url, EClass targetType, HttpServletRequest request,
+		HttpServletResponse response, boolean encoded) throws IOException {
 	if (url == null) {
 		return null; // error already written
 	}
-	String tail = url.substring(url.lastIndexOf('/') + 1);
+	String relative = ODataServlet.serviceRelative(url, request);
+	if (relative == null) {
+		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST,
+				"the reference target is not a resource of this service");
+		return null;
+	}
 	ResourcePath ref;
 	try {
-		ref = servlet.resourceParser.parse(tail);
+		ref = servlet.keyAsSegment(servlet.resourceParser.parse(relative));
 	} catch (ODataQueryParseException e) {
 		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "invalid reference target URL");
 		return null;
@@ -559,7 +572,7 @@ private String refTargetKey(String url, EClass targetType, HttpServletResponse r
 				"the reference target does not address an entity of the navigation's type");
 		return null;
 	}
-	return ref.key();
+	return encoded ? ODataServlet.percentDecode(ref.key()) : ref.key();
 }
 
 /** A decoded write payload: the entity plus {@code @odata.bind} targets per navigation. */
@@ -790,7 +803,7 @@ private WritePayload readPayload(HttpServletRequest request, HttpServletResponse
 	}
 	Map<EReference, List<String>> bindings = new LinkedHashMap<>();
 	if (containsAscii(body, ODATA_BIND_MARKER)) {
-		body = extractBindings(body, entityType, bindings, response);
+		body = extractBindings(body, entityType, bindings, request, response);
 		if (body == null) {
 			return null; // error already written
 		}
@@ -1103,8 +1116,8 @@ private EObject withClearedParts(EClass entityType, String key, WritePayload pay
  * (the codec only sees plain features). Null after a written error response.
  */
 private byte[] extractBindings(byte[] body, EClass entityType,
-		Map<EReference, List<String>> bindings, HttpServletResponse response)
-		throws IOException {
+		Map<EReference, List<String>> bindings, HttpServletRequest request,
+		HttpServletResponse response) throws IOException {
 	JsonNode document;
 	try {
 		document = ODataServlet.JSON.readTree(body);
@@ -1136,14 +1149,15 @@ private byte[] extractBindings(byte[] body, EClass entityType,
 					return null;
 				}
 				String key = refTargetKey(element.asString(),
-						reference.getEReferenceType(), response);
+						reference.getEReferenceType(), request, response, true);
 				if (key == null) {
 					return null; // error already written
 				}
 				targets.add(key);
 			}
 		} else if (value.isString() && !reference.isMany()) {
-			String key = refTargetKey(value.asString(), reference.getEReferenceType(), response);
+			String key = refTargetKey(value.asString(), reference.getEReferenceType(),
+					request, response, true);
 			if (key == null) {
 				return null; // error already written
 			}

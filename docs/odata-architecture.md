@@ -222,6 +222,15 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
   der XML-Writer nimmt `Nullable` von dort, der JSON-Writer lässt `$Nullable` weg (Default false).
   ACHTUNG Rückweg: `EdmToEcoreConverter.applyBounds` macht daraus wieder `lowerBound=1` — korrekt
   als OData-Kontrakt, aber ein Client-seitiges Ecore akzeptiert den keylosen POST-Body dann nicht.
+- Ein Key darf `/` und `:` ENTHALTEN (IRI-Keys sind in RDF-abgeleiteten Modellen der Normalfall,
+  nicht der Sonderfall). Referenz-Ziele (`@odata.id`, `@odata.bind`, `$id`) werden deshalb nie am
+  letzten `/` gespalten: `ODataServlet.serviceRelative` schneidet die SERVICE-ROOT ab (konfigurierte
+  Base-URL, sonst Schema+Authority plus Base-Pfad bzw. Context-Root), der Rest läuft durch denselben
+  Resource-Parser inklusive `keyAsSegment` wie jeder andere Pfad (#152). Der Host wird bewusst nicht
+  verglichen — Proxy, Schema-Wechsel und Zweitname adressieren dieselbe Root.
+- Die eigene `@odata.id` ist UNKODIERT (`WireProfile.keyLiteral` quotet nur), sie muss sich also
+  wörtlich als `$ref`-Ziel zurückfüttern lassen; das Percent-Dekodieren ist entsprechend
+  nachsichtig (einzelnes `%` bleibt stehen).
 - `ODataServlet.profiles` cacht Profile pro EPackage (WeakHashMap, keine Invalidierung).
   Ein Modell, das seinen Key zur Laufzeit ändert, wird aus dem alten Profil beantwortet —
   in Tests deshalb pro Test frisches Package, nicht mitten im Test mutieren.
@@ -274,6 +283,12 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
   braucht absolute URIs, Clients müssen gegen den Service-Host resolven.
 - Mockito-Stubs für `getParameterNames()` liefern EINE erschöpfbare Enumeration —
   Servlet-Code iteriert deshalb über `getParameterMap()`.
+- DEKODIER-GRENZE: Der Container dekodiert den PFAD (`getPathInfo`) und den Query-String
+  (`getParameter`; im `$batch` macht das `BatchHttpRequest.parseQuery` selbst) — einen BODY
+  dekodiert niemand. Eine Entity-URL aus einem Payload muss der Code deshalb selbst
+  percent-dekodieren (`ODataServlet.percentDecode`, nachsichtig: einzelnes `%` bleibt stehen,
+  `+` ist ein Plus und kein Space — das ist ein Pfad, kein Formularfeld), ein `$id` aus der Query
+  NICHT, sonst zweifach (#152).
 
 **JPA/EclipseLink:**
 - `CriteriaBuilder.extract` existiert erst ab Persistence 3.2 — Datums-Funktionen laufen

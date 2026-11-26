@@ -2411,6 +2411,75 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("#152: reference targets whose key contains '/' and ':' (IRI keys)")
+	void referenceTargetsWithSlashInTheKey() throws Exception {
+		String iri = "http://ex.org/dcat/datasets/air";
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		backendResult = List.of(product("p1", "Milk", "1.20", dairy));
+
+		// the @odata.id this service writes itself, absolute and fed back verbatim
+		assertEquals(204, callWrite("PUT", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"http://host/odata/Category('" + iri + "')\"}",
+				"application/json", Map.of()).status());
+		assertEquals("category:'" + iri + "'", lastLink.get(), "the key keeps its slashes");
+
+		// the correctly percent-encoded spelling decodes to the SAME key
+		assertEquals(204, callWrite("PUT", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"http://host/odata/"
+						+ "Category('http%3A%2F%2Fex.org%2Fdcat%2Fdatasets%2Fair')\"}",
+				"application/json", Map.of()).status());
+		assertEquals("category:'" + iri + "'", lastLink.get(), "a payload target is decoded once");
+
+		// relative to the service root, the canonical [OData-JSON] form
+		assertEquals(204, callWrite("PUT", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"Category('" + iri + "')\"}", "application/json",
+				Map.of()).status());
+		assertEquals("category:'" + iri + "'", lastLink.get());
+
+		// key-as-segment, which splitting on the last '/' could never recognise
+		assertEquals(204, callWrite("PUT", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"http://host/odata/Category/c9\"}", "application/json",
+				Map.of()).status());
+		assertEquals("category:'c9'", lastLink.get());
+
+		// a lone '%' is not an escape — a decode must not corrupt it
+		assertEquals(204, callWrite("PUT", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"Category('50%off')\"}", "application/json", Map.of()).status());
+		assertEquals("category:'50%off'", lastLink.get());
+
+		// a target below some OTHER root is not a resource of this service
+		assertEquals(400, callWrite("PUT", "/Product('p1')/category/$ref", Map.of(),
+				"{\"@odata.id\":\"http://host/elsewhere/Category('c9')\"}", "application/json",
+				Map.of()).status(), "a foreign service root is refused, not guessed at");
+
+		// @odata.bind: single-valued and collection-valued, encoded and verbatim
+		linkCalls.clear();
+		assertEquals(201, callWrite("POST", "/Product",
+				"{\"id\":\"n1\",\"category@odata.bind\":"
+						+ "\"Category('http%3A%2F%2Fex.org%2Fcat%2Fdairy')\"}",
+				"application/json").status());
+		assertEquals(List.of("'n1'→category:'http://ex.org/cat/dairy'"), linkCalls);
+
+		linkCalls.clear();
+		assertEquals(204, callWrite("PATCH", "/Product('p1')", Map.of(),
+				"{\"name\":\"x\",\"reviews@odata.bind\":[\"Review('" + iri + "')\"]}",
+				"application/json", Map.of("If-Match", "*")).status());
+		assertEquals(List.of("'p1'→reviews:'" + iri + "'"), linkCalls);
+
+		// DELETE …/$ref?$id=: the query string reaches us ALREADY decoded (the container, and
+		// BatchHttpRequest inside a $batch) — decoding it again would eat a literal '%'
+		assertEquals(204, callWrite("DELETE", "/Product('p1')/reviews/$ref",
+				Map.of("$id", "http://host/odata/Review('" + iri + "')"), null, null,
+				Map.of()).status());
+		assertEquals("reviews:'" + iri + "'", lastUnlink.get());
+		assertEquals(204, callWrite("DELETE", "/Product('p1')/reviews/$ref",
+				Map.of("$id", "Review('50%off')"), null, null, Map.of()).status());
+		assertEquals("reviews:'50%off'", lastUnlink.get(), "$id is not decoded a second time");
+	}
+
+	@Test
 	@DisplayName("related create and property-level writes")
 	void relatedCreateAndPropertyWrites() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));
