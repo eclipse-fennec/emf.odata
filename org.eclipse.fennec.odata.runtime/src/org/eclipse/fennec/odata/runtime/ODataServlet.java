@@ -177,6 +177,8 @@ import tools.jackson.databind.ObjectMapper;
 public class ODataServlet extends HttpServlet {
 
 	public static final String PID = "org.eclipse.fennec.odata.servlet";
+	/** The OData control information that carries the entity-id ([OData-JSON] 4.5.8). */
+	static final String ID_CONTROL = "@odata.id";
 	private static final long serialVersionUID = 1L;
 
 	private static final System.Logger LOGGER = System.getLogger(ODataServlet.class.getName());
@@ -258,6 +260,12 @@ public class ODataServlet extends HttpServlet {
 	private volatile String baseUrl;
 	/** Whether {@code X-Forwarded-*} may set the base URL ({@code odata.forwarded.trust}). */
 	private volatile boolean trustForwarded;
+	/**
+	 * Whether this root publishes the model's own IRI key as the entity-id instead of the
+	 * canonical URL ({@code odata.entity.id=key}, #153). Per root, like the wire profile: it is
+	 * a statement about the model this root serves, not about OData.
+	 */
+	private volatile boolean keyValueEntityIds;
 
 	@Activate
 	void activate(Map<String, Object> configuration) {
@@ -267,6 +275,8 @@ public class ODataServlet extends HttpServlet {
 		Object base = configuration.get("odata.base.url");
 		baseUrl = base == null || String.valueOf(base).isBlank() ? null : String.valueOf(base).trim();
 		trustForwarded = Boolean.parseBoolean(String.valueOf(configuration.get("odata.forwarded.trust")));
+		Object entityIdForm = configuration.get("odata.entity.id");
+		keyValueEntityIds = entityIdForm != null && "key".equalsIgnoreCase(String.valueOf(entityIdForm).trim());
 		selection = ServiceModel.Selection.fromConfiguration(configuration);
 		rebuildModel();
 		limits = RequestLimits.fromConfiguration(configuration);
@@ -1407,11 +1417,22 @@ public class ODataServlet extends HttpServlet {
 				.findFirst().map(c -> List.copyOf(c.getKeyPropertyNames())).orElse(List.of());
 	}
 
-	/** The canonical entity id ({@code Set(key)}) — used by `$ref` reads and reference payloads. */
+	/**
+	 * The entity-id of an entity ([OData-Protocol] 4.1): the canonical URL, or — where this root
+	 * publishes key-value ids and the key IS an absolute IRI — that IRI itself (#153). One entity
+	 * has ONE entity-id: whatever this returns is what {@code $ref}, full metadata, the delta
+	 * {@code @id} and {@code OData-EntityId} all carry.
+	 */
 	String entityIdOf(EObject entity) {
+		String iri = iriKeyOf(entity);
+		return iri != null ? iri : canonicalIdOf(entity);
+	}
+
+	/** The canonical entity id ({@code Set(key)}), whatever form the entity-id itself takes. */
+	String canonicalIdOf(EObject entity) {
 		Map<String, Object> keyValues = new LinkedHashMap<>();
 		for (EAttribute id : keyAttributes(entity.eClass())) {
-			keyValues.put(id.getName(), entity.eGet(id));
+			keyValues.put(id.getName(), urlKeyValue(entity.eGet(id)));
 		}
 		if (keyValues.isEmpty()) { // keyless (containment-only) types have no canonical URL
 			throw new UnsupportedOperationException(
@@ -1419,6 +1440,48 @@ public class ODataServlet extends HttpServlet {
 		}
 		return setNameOf(entity.eClass()) + "(" + Wire.current().profile().keyLiteral(keyValues) + ")";
 	}
+
+	/** Whether this root publishes the model's IRI keys as entity-ids ({@code odata.entity.id=key}). */
+	boolean keyValueEntityIds() {
+		return keyValueEntityIds;
+	}
+
+	/**
+	 * The key value of an entity when it may stand as the entity-id: this root is configured for
+	 * key-value ids, the type has ONE key property, and its value is an absolute IRI — otherwise
+	 * null, and the canonical URL is the entity-id. The per-entity fallback keeps a mixed model
+	 * conformant: [OData-Protocol] 4.1 requires an entity-id to BE an IRI, so a plain key such as
+	 * {@code p1} can never be one.
+	 */
+	String iriKeyOf(EObject entity) {
+		if (!keyValueEntityIds) {
+			return null;
+		}
+		List<EAttribute> keys = keyAttributes(entity.eClass());
+		if (keys.size() != 1) {
+			return null;
+		}
+		return entity.eGet(keys.get(0)) instanceof String text && isAbsoluteIri(text) ? text : null;
+	}
+
+	/**
+	 * The entity-id of a key the service holds as values rather than as an object (delta
+	 * removals): the same form {@link #entityIdOf(EObject)} gives the entities of this root.
+	 */
+	String entityIdOf(String setName, Map<String, Object> keyValues) {
+		if (keyValueEntityIds && keyValues.size() == 1
+				&& keyValues.values().iterator().next() instanceof String text && isAbsoluteIri(text)) {
+			return text;
+		}
+		return setName + "(" + keyLiteral(keyValues) + ")";
+	}
+
+	/** Whether the text is an absolute IRI ([RFC3987]: a scheme, then {@code :}). */
+	static boolean isAbsoluteIri(String text) {
+		return SCHEME.matcher(text).find();
+	}
+
+	private static final Pattern SCHEME = Pattern.compile("^[A-Za-z][A-Za-z0-9+.\\-]*:");
 
 	/**
 	 * One entity reference ([OData-JSON] 14): {@code {"@odata.id":"Set(key)"}}, or under a profile
@@ -1431,7 +1494,9 @@ public class ODataServlet extends HttpServlet {
 		if (selfLink == null) {
 			return "{\"@odata.id\":\"" + ODataJson.sanitize(id) + "\"}";
 		}
-		String link = wire.absoluteLinks() ? wire.baseUrl() + "/" + id : id;
+		// an IRI entity-id is absolute already — only a canonical URL is resolved against the root
+		String link = wire.absoluteLinks() && id.equals(canonicalIdOf(entity))
+				? wire.baseUrl() + "/" + id : id;
 		return "{\"" + ODataJson.sanitize(selfLink) + "\":\"" + ODataJson.sanitize(link) + "\"}";
 	}
 
@@ -1547,8 +1612,8 @@ public class ODataServlet extends HttpServlet {
 				literal.append(entry.getKey()).append('=');
 			}
 			Object value = entry.getValue();
-			if (value instanceof String string) {
-				literal.append('\'').append(string.replace("'", "''")).append('\'');
+			if (value instanceof String string) { // encode first: the doubling is BELOW the percent layer
+				literal.append('\'').append(percentEncodeKey(string).replace("'", "''")).append('\'');
 			} else {
 				literal.append(value);
 			}
@@ -2582,7 +2647,7 @@ public class ODataServlet extends HttpServlet {
 		int cast = set.indexOf('/');
 		Map<String, Object> keyValues = new LinkedHashMap<>();
 		for (EAttribute id : keys) {
-			keyValues.put(id.getName(), entity.eGet(id));
+			keyValues.put(id.getName(), urlKeyValue(entity.eGet(id)));
 		}
 		String literal = Wire.current().profile().keyLiteral(keyValues);
 		return (cast < 0 ? set : set.substring(0, cast)) + "(" + literal + ")";
@@ -3069,6 +3134,37 @@ public class ODataServlet extends HttpServlet {
 	}
 
 	/**
+	 * The URL form of a key VALUE ([OData-URL] 4.3.4, RFC 3986 3.3): a key may contain characters
+	 * that are no {@code pchar} — {@code /}, {@code ?}, {@code #}, {@code %}, a space — and with an
+	 * IRI key it normally does, which produced a URL no client could dereference (#153).
+	 * Everything outside the unreserved set is percent-encoded; the single quote is NOT, because
+	 * the literal builder doubles it ([OData-URL] 4.3.4) one layer below the percent encoding.
+	 * Only STRING values are encoded: a number, a date or a GUID literal admits nothing that would
+	 * need it, and encoding one would hide the literal's type from the parser on the way back.
+	 */
+	static Object urlKeyValue(Object value) {
+		return value instanceof CharSequence text ? percentEncodeKey(text.toString()) : value;
+	}
+
+	/** @see #urlKeyValue(Object) */
+	static String percentEncodeKey(String value) {
+		byte[] utf8 = value.getBytes(StandardCharsets.UTF_8);
+		StringBuilder encoded = new StringBuilder(utf8.length);
+		boolean changed = false;
+		for (byte raw : utf8) {
+			char c = (char) (raw & 0xFF);
+			if (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
+					|| c == '-' || c == '.' || c == '_' || c == '~' || c == '\'') {
+				encoded.append(c);
+			} else {
+				encoded.append('%').append(HexFormat.of().withUpperCase().toHexDigits(raw));
+				changed = true;
+			}
+		}
+		return changed ? encoded.toString() : value;
+	}
+
+	/**
 	 * Percent-decodes one layer of a URL component. Lenient by design: a {@code %} not followed
 	 * by two hex digits stays as it is (so the unencoded {@code @odata.id} this service itself
 	 * writes survives the decode), and {@code +} is a literal plus — this decodes a PATH
@@ -3100,7 +3196,6 @@ public class ODataServlet extends HttpServlet {
 		}
 		return out.toString(StandardCharsets.UTF_8);
 	}
-
 
 
 

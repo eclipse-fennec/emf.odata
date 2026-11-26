@@ -179,7 +179,7 @@ void deltaResponse(String setName, String castName, EClass castType, ODataServle
 			json.append(',');
 		}
 		first = false;
-		String id = setName + "(" + ODataServlet.keyLiteral(removal.keyValues()) + ")";
+		String id = servlet.entityIdOf(setName, removal.keyValues());
 		if (v40) { // 4.0 deleted-entity object: context fragment + plain id property
 			json.append("{\"@odata.context\":\"#").append(setName).append("/$deletedEntity\",")
 					.append("\"reason\":\"").append(removal.reason()).append("\",")

@@ -73,6 +73,29 @@ pattern under `org.eclipse.fennec.odata.request.filter`. Keys and an example are
 | `GET /odata/{Set}?$deltatoken=…` | delta link — changes since the token (see **Change tracking**) |
 | `POST /odata/$batch` | batch — OData JSON (4.01) **and** multipart/mixed (4.0) |
 
+### Entity-ids
+
+An entity has exactly one entity-id ([OData-Protocol] §4.1), and every place that names one —
+`$ref`, `@odata.id` under `odata.metadata=full`, the `@id` of a delta removal, the
+`OData-EntityId` of a create — carries that same value. Which form it takes is a property of
+the service root, set with `odata.entity.id`:
+
+| | `canonical` (default) | `key` |
+|---|---|---|
+| entity-id | the canonical URL `Set(key)` | the model's own IRI key |
+| `GET Set/$ref` | `{"@odata.id":"Dataset('http%3A%2F%2Fex.org%2Fair')"}` | `{"@odata.id":"http://ex.org/air"}` |
+| `odata.metadata=minimal` (the default) | no `@odata.id` — it is computable from the context URL | `@odata.id` on **every** entity: [OData-JSON] §4.5.8 requires it as soon as the entity-id is not the canonical URL |
+| `OData-EntityId` of a create | the edit URL | the IRI |
+
+`key` applies **per entity**: it needs a single string key whose value is an absolute IRI,
+because §4.1 requires an entity-id to *be* an IRI — a plain key such as `p1` keeps the
+canonical URL, so a model in which only some types are IRI-keyed stays correct. `Location`
+is always the edit URL, canonical and percent-encoded, whatever form the entity-id takes.
+
+Key values in an emitted URL are percent-encoded (`/`, `:`, `#`, `%` and a space are no
+`pchar`), with the single quote left doubled as [OData-URL] §4.3.4 spells it. The service
+accepts both the encoded and the unencoded spelling on the way back in.
+
 ## Query options
 
 ```
@@ -149,7 +172,7 @@ DELETE /odata/Product('p1')/category/$ref    # clear / remove
   point). Atomic when the backend is transactional; inside a `$batch` atomicity group it joins
   that transaction. Deeper new entities nest up to `odata.max.nesting.depth`.
 - **`@odata.bind`**: a `"nav@odata.bind": "Category('c1')"` member links to an existing entity; it is extracted and validated before the codec sees the body, then applied as a reference operation after the write (entity level only).
-- **Reference targets** (`{"@odata.id": …}`, `nav@odata.bind`, `DELETE …/$ref?$id=`) may be absolute (`http://host/odata/Category('c1')`) or relative to the service root (`Category('c1')`), and key-as-segment (`Category/c1`) is accepted here as everywhere else. Only the **service root** is stripped, so a key that itself contains `/` or `:` — an IRI key — survives; a URL below a different root is a `400`. A target carried in a **body** is percent-decoded once (`Category('http%3A%2F%2Fex.org%2Fa')` and `Category('http://ex.org/a')` name the same entity), while `$id` reaches the service already decoded from the container.
+- **Reference targets** (`{"@odata.id": …}`, `nav@odata.bind`, `DELETE …/$ref?$id=`) may be absolute (`http://host/odata/Category('c1')`) or relative to the service root (`Category('c1')`), and key-as-segment (`Category/c1`) is accepted here as everywhere else. Only the **service root** is stripped, so a key that itself contains `/` or `:` — an IRI key — survives; a URL below a different root is a `400`. A target carried in a **body** is percent-decoded once (`Category('http%3A%2F%2Fex.org%2Fa')` and `Category('http://ex.org/a')` name the same entity), while `$id` reaches the service already decoded from the container. Under `odata.entity.id=key` an absolute IRI that is no path of this service is read as the target's key value, so the entity-ids such a root publishes come back unchanged.
 - **Nested non-containment members with a key** (`"category": {"id": "c1"}`) reference an EXISTING entity: the backend binds the store row; an unknown target is a `400`. An omitted navigation keeps its binding under `PATCH` and `PUT` alike (PUT replace covers structural properties only, Protocol §11.4.3).
 - **ETags / If-Match**: weak ETags (SHA-256 over the serialized state) on single-entity GET; updates/deletes of existing entities require `If-Match` → `428`/`412`.
 - **`Prefer: return=minimal`** answers a create with `204` (headers only) and an update with `204`; **`return=representation`** returns the full entity (`201`/`200`). The honoured choice is echoed in `Preference-Applied`.

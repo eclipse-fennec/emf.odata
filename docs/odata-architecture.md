@@ -228,8 +228,17 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
   Base-URL, sonst Schema+Authority plus Base-Pfad bzw. Context-Root), der Rest läuft durch denselben
   Resource-Parser inklusive `keyAsSegment` wie jeder andere Pfad (#152). Der Host wird bewusst nicht
   verglichen — Proxy, Schema-Wechsel und Zweitname adressieren dieselbe Root.
-- Die eigene `@odata.id` ist UNKODIERT (`WireProfile.keyLiteral` quotet nur), sie muss sich also
-  wörtlich als `$ref`-Ziel zurückfüttern lassen; das Percent-Dekodieren ist entsprechend
+- Emittiert wird der Key percent-kodiert (`urlKeyValue` VOR dem Literal-Builder — Quotes, `=`
+  und `,` sind Struktur und müssen roh bleiben; das einfache Anführungszeichen verdoppelt der
+  Builder eine Schicht tiefer, wird also nicht kodiert; Zahlen/Daten/GUIDs gar nicht, sonst
+  verlieren sie beim Zurücklesen ihren Token-Typ). Der Key, den ein BACKEND adressiert, wird
+  NICHT kodiert — daher `rawKeyOf` (SPI) vs. `urlKeyOf` (URL) im `WriteDispatcher` (#153).
+- Eine Entity hat EINE Entity-Id ([OData-Protocol] 4.1). Der Codec kann sie nicht schreiben (er
+  kennt die Service-Root nicht und schrieb als `@odata.id` den rohen Key), deshalb setzt
+  `ResponseFormatter.entityId` sie dort, wo jeder JSON-Knoten noch seine `EObject` kennt. Ihre
+  FORM ist pro Root konfigurierbar (`odata.entity.id`, ADR-0011): kanonische URL oder IRI-Key;
+  bei IRI-Keys trägt auch `minimal` die Id, weil 4.5.8 sie dann verlangt. Altes Verhalten
+  (unkodierte `@odata.id`) bleibt eingangsseitig toleriert — das Percent-Dekodieren ist
   nachsichtig (einzelnes `%` bleibt stehen).
 - `ODataServlet.profiles` cacht Profile pro EPackage (WeakHashMap, keine Invalidierung).
   Ein Modell, das seinen Key zur Laufzeit ändert, wird aus dem alten Profil beantwortet —

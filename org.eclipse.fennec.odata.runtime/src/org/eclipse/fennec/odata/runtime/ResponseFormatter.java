@@ -23,7 +23,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,8 +32,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.eclipse.emf.common.util.URI;
-import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
-import org.eclipse.fennec.odata.persistence.api.ExpandSpec;
 import org.eclipse.emf.ecore.EAttribute;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
@@ -47,12 +44,16 @@ import org.eclipse.emf.ecore.xmi.XMLResource;
 import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
 import org.eclipse.fennec.m2x.model.ocl.OclExpression;
 import org.eclipse.fennec.odata.codec.json.ODataJsonResourceImpl;
+import org.eclipse.fennec.odata.persistence.api.ExpandPushdown;
+import org.eclipse.fennec.odata.persistence.api.ExpandSpec;
 import org.eclipse.fennec.odata.query.ODataQueryParseException;
 import org.eclipse.fennec.odata.query.OrderBySegment;
 import org.eclipse.fennec.odata.query.WireView;
-import org.eclipse.fennec.odata.wire.api.WireJson;
 import org.eclipse.fennec.odata.wire.api.ControlNames;
+import org.eclipse.fennec.odata.wire.api.WireJson;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -60,9 +61,6 @@ import tools.jackson.databind.cfg.JsonNodeFeature;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
-
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * Response shaping and formats for {@link ODataServlet}: {@code $select}/{@code $expand}
@@ -614,8 +612,38 @@ private void retainShaped(ObjectNode node, EObject copy, EntityShaper.Shape shap
 			}
 		});
 	}
+	entityId(node, copy);
 	wireMembers(node, copy, select);
 	decorate(node, copy, shape);
+}
+
+/**
+ * The entity-id member of an entity ([OData-JSON] 4.5.8): full metadata always carries it,
+ * minimal exactly when it is NOT the canonical URL — which is the case under key-value entity-ids
+ * (#153). The codec cannot write it: its id is the RAW key value, no URL at all, and the service
+ * root it would need is only known here. Each node still knows its {@code EObject}, so nested
+ * expanded entities get their own id.
+ */
+private void entityId(ObjectNode node, EObject copy) {
+	if (!Wire.current().odataControls()) {
+		return; // a profile writes its own control information (decorate)
+	}
+	if (servlet.entityPathOf(copy) == null) {
+		return; // keyless, or no set serves the type: there is no entity-id to state
+	}
+	String id = servlet.entityIdOf(copy);
+	if (node.has(ODataServlet.ID_CONTROL)) { // full metadata: the codec wrote the raw key
+		node.put(ODataServlet.ID_CONTROL, id);
+		return;
+	}
+	if (!id.equals(servlet.canonicalIdOf(copy))) {
+		// minimal metadata: the id is not computable from the context URL, so it MUST be written
+		ObjectNode ordered = node.objectNode();
+		ordered.put(ODataServlet.ID_CONTROL, id);
+		ordered.setAll(node);
+		node.removeAll();
+		node.setAll(ordered);
+	}
 }
 
 /**
@@ -653,7 +681,7 @@ static JsonNode wireValue(ObjectNode factory, WireView.Binding binding, EObject 
 	Object value = binding.handler().write(entity);
 	return switch (value) {
 	case null -> factory.nullNode();
-	case String text -> factory.textNode(text);
+	case String text -> factory.stringNode(text);
 	case Boolean bool -> factory.booleanNode(bool);
 	case BigDecimal decimal -> factory.numberNode(decimal);
 	case BigInteger integer -> factory.numberNode(integer);
