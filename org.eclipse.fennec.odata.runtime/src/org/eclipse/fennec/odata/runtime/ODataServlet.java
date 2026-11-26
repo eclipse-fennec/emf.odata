@@ -179,6 +179,14 @@ public class ODataServlet extends HttpServlet {
 	public static final String PID = "org.eclipse.fennec.odata.servlet";
 	/** The OData control information that carries the entity-id ([OData-JSON] 4.5.8). */
 	static final String ID_CONTROL = "@odata.id";
+	/** The OData control information that carries the type ([OData-JSON] 4.5.3). */
+	static final String TYPE_CONTROL = "@odata.type";
+	/**
+	 * The codec's own schema member under {@code TypeStrategy.SCHEMA_AND_TYPE} ({@code "_"} plus
+	 * the schema key, which this profile leaves at its default). It is not OData and never
+	 * reaches a response — {@code ResponseFormatter} drops it (#154).
+	 */
+	static final String SCHEMA_MEMBER = "_schema";
 	private static final long serialVersionUID = 1L;
 
 	private static final System.Logger LOGGER = System.getLogger(ODataServlet.class.getName());
@@ -1592,6 +1600,15 @@ public class ODataServlet extends HttpServlet {
 	/** {@code Namespace.Name} → {@code Name}. */
 	private static String localName(String qualifiedName) {
 		return qualifiedName == null ? "" : qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1);
+	}
+
+	/**
+	 * The type control information of an instance ([OData-JSON] 4.5.3): {@code #Namespace.Type},
+	 * the namespace from the same profile {@code $metadata} publishes. Null for a type without a
+	 * package, which no schema describes.
+	 */
+	String typeControlOf(EClass type) {
+		return type == null || type.getEPackage() == null ? null : "#" + qualifiedTypeName(type);
 	}
 
 	/** {@code Namespace.Type} as $metadata emits it — the schema namespace comes from the profile. */

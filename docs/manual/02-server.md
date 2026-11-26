@@ -118,7 +118,7 @@ GET /odata/Product?$filter=price lt 3.00 and startswith(name,'M')
 | `$apply` | aggregation (see below) |
 | `$format` | `json` (default), `xml` (EMF XMI) |
 | `$deltatoken` | follows a delta link (see **Change tracking** below) |
-| `odata.metadata=full`/`none` | via `Accept`/`$format` → per-entity `@odata.type`/`@odata.id` resp. no context/discriminators at all (default `minimal`) |
+| `odata.metadata=full`/`none` | via `Accept`/`$format` → per-entity `@odata.type` (`#Namespace.Type`, the spelling `$metadata` uses) and `@odata.id`, resp. no context/discriminators at all (default `minimal`) |
 | `IEEE754Compatible=true` | via `Accept`/`$format` → Int64/Decimal values, `@odata.count` and `$apply` rows as strings; echoed in the Content-Type |
 | `@name` | 4.01 parameter aliases referenced from `$filter`/`$orderby` |
 

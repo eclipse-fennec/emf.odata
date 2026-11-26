@@ -613,6 +613,7 @@ private void retainShaped(ObjectNode node, EObject copy, EntityShaper.Shape shap
 		});
 	}
 	entityId(node, copy);
+	typeControl(node, copy);
 	wireMembers(node, copy, select);
 	decorate(node, copy, shape);
 }
@@ -643,6 +644,29 @@ private void entityId(ObjectNode node, EObject copy) {
 		ordered.setAll(node);
 		node.removeAll();
 		node.setAll(ordered);
+	}
+}
+
+/**
+ * The type control information ([OData-JSON] 4.5.3): the qualified type name, prefixed with
+ * {@code #}. A generic EMF codec cannot write that — it knows no OData namespace — so under full
+ * metadata it writes the bare EClass name plus its own {@code _schema} member
+ * ({@code TypeStrategy.SCHEMA_AND_TYPE}), and neither of the two is OData (#154). Both are
+ * corrected here, per node, so collection members and expanded children are covered as well.
+ * Minimal metadata writes no type member at all; the discriminator a DERIVED instance needs
+ * there is spliced in by {@link #serializeEntity} and already carries the right form.
+ */
+private void typeControl(ObjectNode node, EObject copy) {
+	if (!Wire.current().odataControls()) {
+		return; // a profile writes its own control information (decorate)
+	}
+	node.remove(ODataServlet.SCHEMA_MEMBER);
+	if (!node.has(ODataServlet.TYPE_CONTROL)) {
+		return; // minimal/none metadata: the codec wrote no type
+	}
+	String type = servlet.typeControlOf(copy.eClass());
+	if (type != null) {
+		node.put(ODataServlet.TYPE_CONTROL, type);
 	}
 }
 
