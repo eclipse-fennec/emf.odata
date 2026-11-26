@@ -71,7 +71,31 @@ pattern under `org.eclipse.fennec.odata.request.filter`. Keys and an example are
 | `GET /odata/{Set}(@k)?@k=…` | key alias (value from a query parameter) |
 | `GET /odata/{Set}/{Ns.Type}` | derived-type cast segment |
 | `GET /odata/{Set}?$deltatoken=…` | delta link — changes since the token (see **Change tracking**) |
+| `GET /odata/$entity?$id=…` | the entity that id addresses — the keyed response, for a key a URL cannot carry |
 | `POST /odata/$batch` | batch — OData JSON (4.01) **and** multipart/mixed (4.0) |
+
+### Addressing an entity by its id
+
+`GET /$entity?$id=<entity-id>` ([OData-URL] §4.3.4, [OData-Protocol] §11.2.9) answers exactly
+what `Set(key)` answers — same body, ETag, `#Set/$entity` context, same `404`. It exists for
+keys the keyed URL **cannot carry**: OData requires a `/` inside a key literal to be
+percent-encoded, and a servlet container with default URI compliance (Jetty 12) rejects
+`Dataset('http%3A%2F%2F…')` as an ambiguous path separator before the servlet sees it. In the
+query string `/` and `:` need no encoding and no compliance check applies.
+
+```
+GET /odata/$entity?$id=Dataset('http://host/dcat/datasets/air')
+GET /odata/$entity/Ns.Dataset?$id=Dataset('…')&$select=title
+```
+
+- `$id` is **mandatory** and may be absolute, root-relative or relative to the service root;
+  key-as-segment works, and the `$`-less spelling `?id=` is grammatical too.
+- `$select`/`$expand` need the **cast form** — the ABNF allows no shaping without it, so the
+  uncast request takes `$id` and `$format` alone. The cast also checks the instance: an entity
+  that is not of that type is a `404`.
+- Under `odata.entity.id=key` the id is the model's own IRI, which names no entity set, so that
+  form resolves only with the cast to say which set it belongs to.
+- `$crossjoin` and `$all` remain `501`.
 
 ### Entity-ids
 

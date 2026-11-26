@@ -136,6 +136,9 @@ public class ODataHttpIntegrationTest {
 		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
 
 		EObject dairy = create(categoryClass, "id", "c1", "name", "Dairy");
+		// #151: a key that the keyed URL form cannot carry over HTTP ('/', ':' and '#'). A
+		// CATEGORY on purpose — the Product fixtures carry counts the other tests assert on.
+		EObject air = create(categoryClass, "id", "http://ex.org/dcat/datasets/air#a", "name", "Air");
 		EObject milk = create(productClass, "id", "p1", "name", "Milk",
 				"price", new BigDecimal("1.20"), "rating", 3, "active", true, "category", dairy);
 		EObject cheese = create(productClass, "id", "p2", "name", "Cheese",
@@ -146,7 +149,7 @@ public class ODataHttpIntegrationTest {
 		rs.getPackageRegistry().put(pkg.getNsURI(), pkg);
 		Resource resource = rs.createResource(
 				org.eclipse.emf.common.util.URI.createFileURI(dataDirectory.resolve("data.xmi").toString()));
-		resource.getContents().addAll(List.of(dairy, milk, cheese));
+		resource.getContents().addAll(List.of(dairy, air, milk, cheese));
 		resource.save(null);
 	}
 
@@ -369,6 +372,39 @@ public class ODataHttpIntegrationTest {
 		assertEquals("1", get("/Product/$count?$filter=" + encode("price lt 3.00")).body(),
 				"filtered count");
 		assertEquals(404, get("/Product('p1')/nosuch").statusCode());
+	}
+
+	@Test
+	@Order(22)
+	@DisplayName("#151: $entity?$id= addresses an entity whose key contains '/', ':' and '#'")
+	void entityById() throws Exception {
+		String iri = "http://ex.org/dcat/datasets/air#a";
+
+		// the premise: the keyed form does not survive the container. UriCompliance.DEFAULT
+		// allows no violations, so the percent-encoded separator is refused before the servlet
+		assertEquals(400, get("/Category('" + encode(iri) + "')").statusCode(),
+				"a key with a '/' cannot be addressed by the keyed URL");
+
+		// the id travels in the QUERY STRING, where '/' and ':' are legal and no URI-compliance
+		// check applies — the same response the keyed form would give
+		HttpResponse<String> byId = get("/$entity?$id=" + encode("Category('" + iri + "')"));
+		assertEquals(200, byId.statusCode(), byId.body());
+		assertTrue(byId.body().contains("\"name\":\"Air\""), byId.body());
+		assertTrue(byId.body().contains("$metadata#Category/$entity"), byId.body());
+		assertTrue(byId.headers().firstValue("ETag").isPresent(),
+				"an addressed entity carries its ETag: " + byId.headers());
+
+		// absolute and service-relative spellings, and the cast form
+		assertEquals(200, get("/$entity?$id=" + encode(BASE + "/Category('" + iri + "')")).statusCode());
+		assertEquals(200,
+				get("/$entity/webshop.Category?$id=" + encode("Category('" + iri + "')")
+						+ "&$select=name").statusCode());
+
+		// $id is mandatory, $select needs the cast form, an unknown id is a 404
+		assertEquals(400, get("/$entity?$format=json").statusCode());
+		assertEquals(400, get("/$entity?$id=" + encode("Category('" + iri + "')")
+				+ "&$select=name").statusCode());
+		assertEquals(404, get("/$entity?$id=" + encode("Category('nope')")).statusCode());
 	}
 
 	@Test

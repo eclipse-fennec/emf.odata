@@ -552,28 +552,20 @@ private String refTargetKey(String url, EClass targetType, HttpServletRequest re
 	if (url == null) {
 		return null; // error already written
 	}
-	String relative = ODataServlet.serviceRelative(url, request);
-	ResourcePath ref = null;
-	if (relative != null) {
-		try {
-			ref = servlet.keyAsSegment(servlet.resourceParser.parse(relative));
-		} catch (ODataQueryParseException e) {
-			ref = null; // not a path of this service — it may still be an IRI entity-id
-		}
-	}
+	// the entity-id is resolved by the ONE path $entity?$id= uses (#151), so a reference target
+	// and an addressed entity can never be read differently
+	ResourcePath ref = servlet.entityIdPath(url, targetType, request);
 	if (ref == null) {
 		String iri = iriTargetKey(url, targetType);
 		if (iri != null) {
 			return iri;
 		}
-		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, relative == null
-				? "the reference target is not a resource of this service"
-				: "invalid reference target URL");
+		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST,
+				"the reference target is not a resource of this service");
 		return null;
 	}
 	EClass set = servlet.resolveEntityType(ref.entitySet());
-	if (ref.key() == null || !ref.segments().isEmpty() || set == null
-			|| !(targetType.isSuperTypeOf(set) || set.isSuperTypeOf(targetType))) {
+	if (set == null || !(targetType.isSuperTypeOf(set) || set.isSuperTypeOf(targetType))) {
 		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST,
 				"the reference target does not address an entity of the navigation's type");
 		return null;

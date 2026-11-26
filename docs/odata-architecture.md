@@ -112,7 +112,7 @@ Weitere Grundsätze: **OCL ist das interne Predicate-IR** für `$filter`/`$order
    (ThreadLocals, save/restore wegen `$batch`-Sub-Requests).
 3. Routing: `/` Service-Doc · `/$metadata` CSDL XML/JSON · `/$async/<id>` Status-Monitor ·
    `/$batch` · sonst eigener Resource-Path-Parser (`Set(key)`, Walks, Casts, Key-as-Segment,
-   `$value`/`$count`/`$ref`, Operations, `$crossjoin`/`$all`/`$entity` → 501).
+   `$value`/`$count`/`$ref`, Operations, `$entity?$id=`; `$crossjoin`/`$all` → 501).
 4. Parsen: `$filter`/`$orderby`/`$apply`/nested Options → typisiertes OCL-IR gegen die
    Kontext-EClass (unbekannte Namen → 400). **Keys werden als Literal-AST GEBAUT, nie
    geparst** (Injection bleibt ein Literalwert). `@`-Aliase rekursiv mit Tiefen-Cap.

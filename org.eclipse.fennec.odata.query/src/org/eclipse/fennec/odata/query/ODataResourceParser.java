@@ -43,7 +43,7 @@ import org.eclipse.fennec.odata.query.antlr.ODataFilterParser;
  *
  * <p>Purely syntactic and stateless; malformed paths and paths exceeding
  * {@value #MAX_SEGMENTS} segments raise {@link ODataQueryParseException} (→ 400/404 at the
- * protocol layer). v1 gaps (documented, syntax rejects them): function-call segments, {@code $all}/{@code $crossjoin}/{@code $entity} forms.
+ * protocol layer). v1 gaps (documented, syntax rejects them): function-call segments, {@code $all}/{@code $crossjoin} forms ({@code $entity} is served, #151).
  */
 public class ODataResourceParser {
 
@@ -82,7 +82,7 @@ public class ODataResourceParser {
 		parser.addErrorListener(THROWING);
 
 		ODataFilterParser.ResourceContext parsed = parser.resource();
-		// $crossjoin/$all/$entity ([OData-URL] 4.10/4.14/4.15): parsed structurally, the
+		// $entity/$crossjoin/$all ([OData-URL] 4.3.4/4.15/4.16): parsed structurally, the
 		// special form travels as the "entity set" name — routing/501 is the servlet's job
 		if (parsed instanceof ODataFilterParser.CrossjoinResourceContext crossjoin) {
 			List<Segment> sets = new ArrayList<>();

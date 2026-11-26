@@ -952,11 +952,73 @@ class ODataServletTest {
 	}
 
 	@Test
-	@DisplayName("$crossjoin/$all/$entity parse but answer an honest 501")
+	@DisplayName("$crossjoin/$all parse but answer an honest 501 ($entity is implemented, #151)")
 	void advancedUrlForms() throws Exception {
 		assertEquals(501, get("/$crossjoin(Product,Category)", Map.of()).status());
 		assertEquals(501, get("/$all", Map.of()).status());
-		assertEquals(501, get("/$entity", Map.of("$id", "Product('p1')")).status());
+	}
+
+	@Test
+	@DisplayName("#151: $entity?$id= addresses an entity by its id, type cast included")
+	void entityById() throws Exception {
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+
+		// it IS the keyed request: same body, same context URL, same ETag
+		Response keyed = get("/Product('p1')", Map.of());
+		Response byId = get("/$entity", Map.of("$id", "Product('p1')"));
+		assertEquals(200, byId.status(), byId.body());
+		assertEquals(keyed.body(), byId.body(), "$entity?$id= answers the keyed response");
+		assertEquals(keyed.headers().get("ETag"), byId.headers().get("ETag"));
+		assertTrue(byId.body().contains("$metadata#Product/$entity"), byId.body());
+
+		// every spelling of the id: absolute, root-relative, service-relative, key-as-segment
+		assertEquals(200, get("/$entity",
+				Map.of("$id", "http://host/odata/Product('p1')")).status());
+		assertEquals(200, get("/$entity", Map.of("$id", "/odata/Product('p1')")).status());
+		assertEquals(200, get("/$entity", Map.of("$id", "Product/p1")).status());
+		assertEquals(200, get("/$entity", Map.of("id", "Product('p1')")).status(),
+				"the $-less spelling is grammatical too");
+
+		// the point of the form: a key the keyed URL cannot carry over HTTP
+		String iri = "http://ex.org/dcat/datasets/air#a";
+		backendResult = List.of(product(iri, "Air", "1.00", null));
+		Response byIri = get("/$entity", Map.of("$id", "Product('" + iri + "')"));
+		assertEquals(200, byIri.status(), byIri.body());
+		assertTrue(byIri.body().contains("\"id\":\"" + iri + "\""), byIri.body());
+		assertNotNull(lastQuery.get().filter(), "the id became a key filter for the backend");
+
+		// $id is mandatory ([OData-URL] 4.3.4: the uncast form takes $id and $format)
+		assertEquals(400, get("/$entity", Map.of()).status());
+		assertEquals(400, get("/$entity", Map.of("$format", "json")).status());
+		assertEquals(400, get("/$entity", Map.of("$id", "Product('p1')", "$select", "name")).status(),
+				"$select needs the cast form");
+		assertEquals(400, get("/$entity", Map.of("$id", "Product('p1')", "$filter", "true")).status());
+
+		// the host is not compared (#152): the same root seen through a proxy is this service
+		assertEquals(200, get("/$entity", Map.of("$id", "https://proxy.example/odata/Product('p1')"))
+				.status());
+		// an id below a FOREIGN root addresses nothing here, nor does an unknown set
+		assertEquals(400, get("/$entity", Map.of("$id", "http://other/elsewhere/Product('p1')")).status());
+		assertEquals(400, get("/$entity", Map.of("$id", "Nonsuch('p1')")).status());
+		assertEquals(400, get("/$entity", Map.of("$id", "Product")).status(), "a set is no entity-id");
+		backendResult = List.of();
+		assertEquals(404, get("/$entity", Map.of("$id", "Product('nope')")).status());
+
+		// the cast form takes a shape, and checks the instance
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		Response cast = get("/$entity/webshop.Product",
+				Map.of("$id", "Product('p1')", "$select", "name"));
+		assertEquals(200, cast.status(), cast.body());
+		assertTrue(cast.body().contains("$metadata#Product/$entity"),
+				"the cast form keeps the keyed context URL: " + cast.body());
+		assertTrue(cast.body().contains("\"name\":\"Milk\"") && !cast.body().contains("\"price\""),
+				"the cast form shapes with $select: " + cast.body());
+		assertEquals(404, get("/$entity/webshop.DiscountedProduct",
+				Map.of("$id", "Product('p1')")).status(), "not an instance of the cast type");
+		assertEquals(404, get("/$entity/webshop.Nonsuch", Map.of("$id", "Product('p1')")).status());
+
+		// $crossjoin/$all keep their 501, and $id stays unsupported elsewhere
+		assertEquals(501, get("/Product", Map.of("$id", "Product('p1')")).status());
 	}
 
 	@Test
