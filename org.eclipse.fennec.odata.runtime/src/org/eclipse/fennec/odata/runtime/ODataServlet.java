@@ -2015,17 +2015,22 @@ public class ODataServlet extends HttpServlet {
 	/** Folds a key value into the trailing keyless property/cast segment; false when keyed. */
 	private static boolean foldKey(List<ResourcePath.Segment> segments, String value) {
 		int last = segments.size() - 1;
-		if (segments.get(last) instanceof ResourcePath.PropertySegment(String name, String key)
-				&& key == null) {
-			segments.set(last, new ResourcePath.PropertySegment(name, value));
-			return true;
+		// the key is read through the ACCESSOR, not a deconstructed binding: some JDT builds
+		// treat a record pattern's binding as never-null and then call `binding == null` — and
+		// with it the whole branch — dead code
+		switch (segments.get(last)) {
+			case ResourcePath.PropertySegment property when property.key() == null -> {
+				segments.set(last, new ResourcePath.PropertySegment(property.name(), value));
+				return true;
+			}
+			case ResourcePath.TypeCastSegment cast when cast.key() == null -> {
+				segments.set(last, new ResourcePath.TypeCastSegment(cast.qualifiedName(), value));
+				return true;
+			}
+			default -> {
+				return false; // already keyed, or a terminal segment: nothing folds
+			}
 		}
-		if (segments.get(last) instanceof ResourcePath.TypeCastSegment(String qualified, String key)
-				&& key == null) {
-			segments.set(last, new ResourcePath.TypeCastSegment(qualified, value));
-			return true;
-		}
-		return false;
 	}
 
 	/**
