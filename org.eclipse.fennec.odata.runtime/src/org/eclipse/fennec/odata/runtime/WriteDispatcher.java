@@ -553,16 +553,22 @@ private String refTargetKey(String url, EClass targetType, HttpServletRequest re
 		return null; // error already written
 	}
 	String relative = ODataServlet.serviceRelative(url, request);
-	if (relative == null) {
-		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST,
-				"the reference target is not a resource of this service");
-		return null;
+	ResourcePath ref = null;
+	if (relative != null) {
+		try {
+			ref = servlet.keyAsSegment(servlet.resourceParser.parse(relative));
+		} catch (ODataQueryParseException e) {
+			ref = null; // not a path of this service — it may still be an IRI entity-id
+		}
 	}
-	ResourcePath ref;
-	try {
-		ref = servlet.keyAsSegment(servlet.resourceParser.parse(relative));
-	} catch (ODataQueryParseException e) {
-		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, "invalid reference target URL");
+	if (ref == null) {
+		String iri = iriTargetKey(url, targetType);
+		if (iri != null) {
+			return iri;
+		}
+		servlet.error(response, HttpServletResponse.SC_BAD_REQUEST, relative == null
+				? "the reference target is not a resource of this service"
+				: "invalid reference target URL");
 		return null;
 	}
 	EClass set = servlet.resolveEntityType(ref.entitySet());
@@ -573,6 +579,25 @@ private String refTargetKey(String url, EClass targetType, HttpServletRequest re
 		return null;
 	}
 	return encoded ? ODataServlet.percentDecode(ref.key()) : ref.key();
+}
+
+/**
+ * A reference target that is the model's own IRI KEY rather than a resource path — the form a
+ * root with {@code odata.entity.id=key} publishes, so it is also the form it gets back (#153).
+ * Null everywhere else, so the resource-path forms keep answering with their own error: the
+ * fallback only applies to an absolute IRI, and only where the navigation's target type has a
+ * single string key to hold one.
+ */
+private String iriTargetKey(String url, EClass targetType) {
+	if (!servlet.keyValueEntityIds() || !ODataServlet.isAbsoluteIri(url)) {
+		return null;
+	}
+	List<EAttribute> keys = servlet.keyAttributes(targetType);
+	if (keys.size() != 1 || keys.get(0).getEAttributeType() == null
+			|| !String.class.equals(keys.get(0).getEAttributeType().getInstanceClass())) {
+		return null;
+	}
+	return "'" + url.replace("'", "''") + "'";
 }
 
 /** A decoded write payload: the entity plus {@code @odata.bind} targets per navigation. */
@@ -1185,18 +1210,33 @@ private void applyBindings(WriteService writeService, EClass entityType, String 
 }
 
 /**
- * The entity's raw key literal (as it would appear in its edit URL), or null — the named-pair form
+ * The entity's raw key literal, as the SPI addresses it, or null — the named-pair form
  * {@code k1=v1,k2=v2} for a composite key, which used to be truncated to its first component.
+ * This is the key a backend stores by, not a URL: it is exactly what the resource path yields
+ * for the same entity (the container has decoded that one), so it must NOT be percent-encoded.
  */
 private String rawKeyOf(EObject entity, EClass entityType) {
+	return keyLiteralOf(entity, entityType, false);
+}
+
+/**
+ * The entity's key literal for a URL ({@code Location}, {@code OData-EntityId}): the raw key with
+ * its string values percent-encoded, so the edit URL is a legal OData URL even for a key that
+ * contains {@code /}, {@code %} or a space (#153).
+ */
+private String urlKeyOf(EObject entity, EClass entityType) {
+	return keyLiteralOf(entity, entityType, true);
+}
+
+private String keyLiteralOf(EObject entity, EClass entityType, boolean forUrl) {
 	List<EAttribute> ids = servlet.keyAttributes(entityType);
 	if (ids.isEmpty()) {
 		return null;
 	}
 	if (ids.size() == 1) {
-		return urlKeyLiteral(ids.get(0), entity.eGet(ids.get(0)));
+		return urlKeyLiteral(ids.get(0), entity.eGet(ids.get(0)), forUrl);
 	}
-	return ids.stream().map(id -> id.getName() + "=" + urlKeyLiteral(id, entity.eGet(id)))
+	return ids.stream().map(id -> id.getName() + "=" + urlKeyLiteral(id, entity.eGet(id), forUrl))
 			.collect(Collectors.joining(","));
 }
 
@@ -1207,11 +1247,14 @@ private String rawKeyOf(EObject entity, EClass entityType) {
  */
 private void respondCreated(String setName, EObject entity, EClass entityType,
 		HttpServletRequest request, HttpServletResponse response) throws IOException {
-	String rawKey = rawKeyOf(entity, entityType);
+	String urlKey = urlKeyOf(entity, entityType);
 	String editUrl = ODataServlet.contextRoot(request) + "/" + setName
-			+ (rawKey == null ? "" : "(" + rawKey + ")");
+			+ (urlKey == null ? "" : "(" + urlKey + ")");
 	response.setHeader("Location", editUrl);
-	response.setHeader("OData-EntityId", editUrl);
+	// [OData-Protocol] 8.3.2: OData-EntityId is the ENTITY-ID, which is the edit URL only while
+	// this root publishes canonical-URL ids; under key-value ids it is the key's own IRI (#153)
+	String entityId = servlet.iriKeyOf(entity);
+	response.setHeader("OData-EntityId", entityId != null ? entityId : editUrl);
 	if ("minimal".equals(returnPreference(request))) {
 		response.setHeader("Preference-Applied", "return=minimal");
 		response.setStatus(HttpServletResponse.SC_NO_CONTENT);
@@ -1270,12 +1313,19 @@ private static String returnPreference(HttpServletRequest request) {
 	return null;
 }
 
-/** URL form of a key value: quoted (with {@code ''} escape) for strings, raw otherwise. */
-private static String urlKeyLiteral(EAttribute id, Object value) {
+/**
+ * Literal form of a key value: quoted (with {@code ''} escape) for strings, raw otherwise.
+ *
+ * @param forUrl whether the literal goes into a URL — then a string value is percent-encoded
+ *               ({@link ODataServlet#percentEncodeKey}, which subsumes the control-character
+ *               defence); the key a BACKEND addresses by stays as it is (#153)
+ */
+private static String urlKeyLiteral(EAttribute id, Object value, boolean forUrl) {
 	String text = String.valueOf(value);
 	if (id.getEAttributeType() != null
 			&& String.class.equals(id.getEAttributeType().getInstanceClass())) {
-		return "'" + encodeControlChars(text.replace("'", "''")) + "'";
+		String body = forUrl ? ODataServlet.percentEncodeKey(text) : encodeControlChars(text);
+		return "'" + body.replace("'", "''") + "'";
 	}
 	return encodeControlChars(text);
 }

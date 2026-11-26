@@ -20,6 +20,16 @@ Inserts (Containments) ✅ · 33 MAY offen. 4.01-Zusatz-MUST 13.2.1/19 (DELETE
 Collection-Member-Ref per Key im URL) ✅. Offen (SHOULDs/MAYs): PUT mit nested content,
 Deep Updates, `@odata.bind`, PATCH-Delta auf Sets.
 
+**Nachtrag 2026-11-26 (#152/#153, Entity-Ids und Key-Encoding):** Emittierte Key-Literale
+sind jetzt percent-kodiert — ein Key mit `/`, `:`, `#`, `%` oder Leerzeichen ergab vorher eine
+URL, die kein Client dereferenzieren kann ([OData-URL] 4.3.4; Item 18/27/28 war damit für
+IRI-Keys nur formal erfüllt). `metadata=full` schrieb als `@odata.id` den ROHEN Key-Wert
+(`"@odata.id":"p1"`), also keine URL und keine Entity-Id; es schreibt jetzt dieselbe
+Entity-Id wie `$ref`, die Delta-Removal und `OData-EntityId` ([OData-JSON] 4.5.8,
+[OData-Protocol] 4.1). Die FORM der Entity-Id ist pro Root wählbar (`odata.entity.id`,
+ADR-0011): kanonische URL (Default) oder das IRI des Keys — im zweiten Fall trägt auch
+`minimal` die Id, wie 4.5.8 es verlangt.
+
 ## Gesamturteil (Neubewertung 2026-07-08, klauselweise gegen Spec §13)
 
 Bewertet gegen den vollständigen §13-Klauselkatalog (Part 1 Protocol, 4.0-Level §13.1.x,

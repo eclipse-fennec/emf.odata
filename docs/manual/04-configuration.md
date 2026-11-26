@@ -18,6 +18,7 @@ is the typed IR (no string concatenation), and errors never leak internals.
 | `Cache-Control` of `$metadata` and the service document (empty = no header) | `no-cache` | `odata.cache.control` |
 | Wire profile of the root and its request filter: target filter on the `odata.wire.profile` property of a `WireProfile` service (see [Wire profiles](/guides/02-server#wire-profiles)) | `(odata.wire.profile=odata)` — plain OData | `wireProfile.target` |
 | Absolute URL of the root for profile links | from the request | `odata.base.url` |
+| Form of the entity-id this root publishes: `canonical` (the canonical URL `Set(key)`) or `key` (the model's own IRI key, where a single string key holds an absolute IRI) — see [Entity-ids](/guides/02-server#entity-ids) | `canonical` | `odata.entity.id` |
 | Let `X-Forwarded-Host/Proto/Prefix` set the base URL of this root (only behind a proxy that overwrites them; prefer the container's proxy support, see [Wire profiles](/guides/02-server#wire-profiles)) | `false` | `odata.forwarded.trust` |
 
 For every limit, `<= 0` disables the protection — a deliberate, documented foot-gun, never

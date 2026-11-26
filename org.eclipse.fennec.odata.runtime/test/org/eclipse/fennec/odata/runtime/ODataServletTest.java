@@ -2480,6 +2480,96 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("#153: emitted key literals are percent-encoded, and one entity-id per entity")
+	void canonicalEntityIds() throws Exception {
+		String iri = "http://ex.org/dcat/datasets/air#a b";
+		String encoded = "http%3A%2F%2Fex.org%2Fdcat%2Fdatasets%2Fair%23a%20b";
+		backendResult = List.of(product(iri, "Air", "1.00", null));
+
+		// $ref: the canonical URL, now a legal OData URL ('/' and ':' are no pchar)
+		Response refs = get("/Product/$ref", Map.of());
+		assertTrue(refs.body().contains("{\"@odata.id\":\"Product('" + encoded + "')\"}"), refs.body());
+
+		// full metadata: the SAME id — the codec can only write the raw key value
+		Response full = call("GET", "/Product", Map.of(),
+				"application/json;odata.metadata=full", null, Map.of());
+		assertTrue(full.body().contains("\"@odata.id\":\"Product('" + encoded + "')\""), full.body());
+
+		// minimal: omitted, and now correctly so — the entity-id IS the canonical URL
+		assertFalse(get("/Product", Map.of()).body().contains("@odata.id"),
+				"minimal omits an id the client can compute from the context URL");
+
+		// a create answers with an edit URL a client can dereference
+		Response created = callWrite("POST", "/Product",
+				"{\"id\":\"" + iri + "\",\"name\":\"Air\"}", "application/json");
+		assertEquals(201, created.status(), created.body());
+		assertEquals("/odata/Product('" + encoded + "')", created.headers().get("Location"));
+		assertEquals("/odata/Product('" + encoded + "')", created.headers().get("OData-EntityId"));
+
+		// a delta removal id is a URL too
+		registerDeltaService();
+		deltaResult = new DeltaService.DeltaResult(List.of(),
+				List.of(new DeltaService.Removal(Map.of("id", iri), DeltaService.REASON_DELETED)), "77");
+		assertTrue(get("/Product", Map.of("$deltatoken", "42")).body()
+				.contains("\"@id\":\"Product('" + encoded + "')\""));
+
+		// and what the service emits resolves back to the key it was built from (#152)
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		assertEquals(204, callWrite("POST", "/Product('p1')/accessories/$ref", Map.of(),
+				"{\"@odata.id\":\"Product('" + encoded + "')\"}", "application/json",
+				Map.of()).status());
+		assertEquals("accessories:'" + iri + "'", lastLink.get(), "the round trip is the identity");
+	}
+
+	@Test
+	@DisplayName("#153: odata.entity.id=key publishes the model's own IRI key as the entity-id")
+	void keyValueEntityIds() throws Exception {
+		servlet.activate(Map.of("odata.entity.id", "key"));
+		String iri = "http://ex.org/dcat/datasets/air";
+		String encoded = "http%3A%2F%2Fex.org%2Fdcat%2Fdatasets%2Fair";
+		backendResult = List.of(product(iri, "Air", "1.00", null));
+
+		// $ref and full metadata carry the IRI itself
+		assertTrue(get("/Product/$ref", Map.of()).body().contains("{\"@odata.id\":\"" + iri + "\"}"));
+		Response full = call("GET", "/Product", Map.of(),
+				"application/json;odata.metadata=full", null, Map.of());
+		assertTrue(full.body().contains("\"@odata.id\":\"" + iri + "\""), full.body());
+
+		// [OData-JSON] 4.5.8: minimal MUST state an id that is not the canonical URL
+		assertTrue(get("/Product", Map.of()).body().contains("\"@odata.id\":\"" + iri + "\""),
+				"the entity-id is not computable from the context URL any more");
+
+		// a delta removal names the same id
+		registerDeltaService();
+		deltaResult = new DeltaService.DeltaResult(List.of(),
+				List.of(new DeltaService.Removal(Map.of("id", iri), DeltaService.REASON_DELETED)), "77");
+		assertTrue(get("/Product", Map.of("$deltatoken", "42")).body().contains("\"@id\":\"" + iri + "\""));
+
+		// Location stays the EDIT URL, OData-EntityId becomes the entity-id ([OData-Protocol] 8.3.2)
+		Response created = callWrite("POST", "/Product",
+				"{\"id\":\"" + iri + "\",\"name\":\"Air\"}", "application/json");
+		assertEquals(201, created.status(), created.body());
+		assertEquals("/odata/Product('" + encoded + "')", created.headers().get("Location"));
+		assertEquals(iri, created.headers().get("OData-EntityId"));
+
+		// the IRI comes back as a reference target and resolves by key value — as does the
+		// canonical URL, which stays addressable whatever the service publishes
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		assertEquals(204, callWrite("POST", "/Product('p1')/accessories/$ref", Map.of(),
+				"{\"@odata.id\":\"" + iri + "\"}", "application/json", Map.of()).status());
+		assertEquals("accessories:'" + iri + "'", lastLink.get());
+		assertEquals(204, callWrite("POST", "/Product('p1')/accessories/$ref", Map.of(),
+				"{\"@odata.id\":\"Product('" + encoded + "')\"}", "application/json",
+				Map.of()).status());
+		assertEquals("accessories:'" + iri + "'", lastLink.get());
+
+		// a key that is no IRI cannot be an entity-id ([OData-Protocol] 4.1) — canonical URL, and
+		// minimal says nothing again: a mixed model stays conformant per entity
+		assertTrue(get("/Product/$ref", Map.of()).body().contains("{\"@odata.id\":\"Product('p1')\"}"));
+		assertFalse(get("/Product", Map.of()).body().contains("@odata.id"));
+	}
+
+	@Test
 	@DisplayName("related create and property-level writes")
 	void relatedCreateAndPropertyWrites() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));
