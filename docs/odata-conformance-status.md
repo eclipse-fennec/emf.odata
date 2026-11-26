@@ -28,7 +28,11 @@ IRI-Keys nur formal erfüllt). `metadata=full` schrieb als `@odata.id` den ROHEN
 Entity-Id wie `$ref`, die Delta-Removal und `OData-EntityId` ([OData-JSON] 4.5.8,
 [OData-Protocol] 4.1). Die FORM der Entity-Id ist pro Root wählbar (`odata.entity.id`,
 ADR-0011): kanonische URL (Default) oder das IRI des Keys — im zweiten Fall trägt auch
-`minimal` die Id, wie 4.5.8 es verlangt.
+`minimal` die Id, wie 4.5.8 es verlangt. **#154 (gleicher Response):** `metadata=full`
+schrieb `@odata.type` als nackten EClass-Namen (`"Product"`) plus das Codec-eigene
+`_schema`-Member; beides ist keine OData-Kontrollinformation. Der Typ steht jetzt als
+`#Namespace.Type` dort ([OData-JSON] 4.5.3) — dieselbe Schreibweise, die `minimal` für
+abgeleitete Instanzen schon benutzte —, das Schema-Member entfällt.
 
 ## Gesamturteil (Neubewertung 2026-07-08, klauselweise gegen Spec §13)
 

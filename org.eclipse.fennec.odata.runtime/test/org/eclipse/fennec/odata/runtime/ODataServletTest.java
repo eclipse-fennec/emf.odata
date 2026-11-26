@@ -833,6 +833,57 @@ class ODataServletTest {
 	}
 
 	@Test
+	@DisplayName("#154: full metadata writes #Namespace.Type and no codec members")
+	void fullMetadataTypeControl() throws Exception {
+		EClass categoryClass = EcoreHelper.getEClass(pkg, "Category");
+		EObject dairy = pkg.getEFactoryInstance().create(categoryClass);
+		dairy.eSet(categoryClass.getEStructuralFeature("id"), "c1");
+		backendResult = List.of(product("p1", "Milk", "1.20", dairy));
+
+		Response full = call("GET", "/Product('p1')", Map.of("$expand", "category"),
+				"application/json;odata.metadata=full", null, Map.of());
+		assertEquals(200, full.status(), full.body());
+		assertTrue(full.body().contains("\"@odata.type\":\"#webshop.Product\""), full.body());
+		assertTrue(full.body().contains("\"@odata.type\":\"#webshop.Category\""),
+				"an expanded child carries its own qualified type: " + full.body());
+		assertFalse(full.body().contains("_schema"), "the codec's schema member is not OData: "
+				+ full.body());
+		// nothing else of the codec's own leaks either
+		ODataServlet.JSON.readTree(full.body()).propertyNames().forEach(
+				name -> assertFalse(name.startsWith("_"),
+						"codec-internal member '" + name + "' in an OData payload: " + full.body()));
+
+		// one spelling for the type: full and minimal agree on a derived instance
+		EClass discounted = EcoreHelper.getEClass(pkg, "DiscountedProduct");
+		EObject sale = pkg.getEFactoryInstance().create(discounted);
+		sale.eSet(discounted.getEStructuralFeature("id"), "d1");
+		sale.eSet(discounted.getEStructuralFeature("name"), "SaleMilk");
+		backendResult = List.of(sale);
+		String derivedFull = call("GET", "/Product", Map.of(),
+				"application/json;odata.metadata=full", null, Map.of()).body();
+		assertTrue(derivedFull.contains("\"@odata.type\":\"#webshop.DiscountedProduct\""), derivedFull);
+		assertTrue(get("/Product", Map.of()).body()
+				.contains("\"@odata.type\":\"#webshop.DiscountedProduct\""),
+				"minimal spells the discriminator the same way");
+
+		// metadata=none keeps omitting all of it
+		String none = call("GET", "/Product", Map.of(),
+				"application/json;odata.metadata=none", null, Map.of()).body();
+		assertFalse(none.contains("@odata.type"), none);
+		assertFalse(none.contains("_schema"), none);
+
+		// what the service writes under full metadata, it reads back
+		backendResult = List.of(product("p1", "Milk", "1.20", null));
+		String written = call("GET", "/Product('p1')", Map.of(),
+				"application/json;odata.metadata=full", null, Map.of()).body();
+		Response echoed = callWrite("POST", "/Product", written, "application/json");
+		assertEquals(201, echoed.status(), "a full-metadata payload is accepted back: "
+				+ echoed.body());
+		assertEquals("Milk", lastWritePayload.get()
+				.eGet(productClass.getEStructuralFeature("name")), "and decodes to the same entity");
+	}
+
+	@Test
 	@DisplayName("odata.metadata=none omits ALL control info except @odata.count/@odata.nextLink")
 	void metadataNone() throws Exception {
 		backendResult = List.of(product("p1", "Milk", "1.20", null));

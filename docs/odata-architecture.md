@@ -248,6 +248,15 @@ Backends (TX-fest: Seq-Vergabe erst beim Commit); Removals in 4.0- UND 4.01-Form
 - `EcoreUtil.Copier` default `useOriginalReferences=true` — nicht mitkopierte Ziele bleiben
   als ORIGINALE referenziert (Server-Objekt-Leak in die Serialisierung). `Copier(true, false)`:
   gedroppte Refs = Rekursions-Cutoff UND erzwungene Payload-Internität.
+- Der generische Codec kann OData-KONTROLLINFORMATION nicht schreiben: er kennt weder die
+  Service-Root (`@odata.id` wurde der rohe Key-Wert) noch den OData-Namespace (`@odata.type`
+  wurde der nackte EClass-Name, dazu das Codec-eigene `_schema`-Member aus
+  `TypeStrategy.SCHEMA_AND_TYPE`). `ResponseFormatter` setzt beides pro Knoten, wo jeder
+  JSON-Knoten noch seine `EObject` kennt — damit auch für Collection-Member und expandierte
+  Kinder (#153/#154). Die Codec-KONFIGURATION bleibt unangetastet, weil derselbe Resolver
+  auch den LESEWEG baut: `TypeStrategy` dort umzustellen änderte, wie Payloads dekodiert
+  werden. Gemessen: beide Schreibweisen werden eingangsseitig akzeptiert, inklusive
+  `#Ns.Type` für abgeleitete Typen.
 - Der Parser-Cache teilt AST-INSTANZEN (read-only-Kontrakt). Wer einen gecachten AST in ein
   EMF-Containment einbettet, REPARENTET ihn — vorher kopieren (biss beim JPA-Delta-Filter).
 - `EcorePackage.Literals.EOBJECT.isSuperTypeOf(…)` greift bei DYNAMISCHEN EClasses nicht
